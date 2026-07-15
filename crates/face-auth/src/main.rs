@@ -45,6 +45,10 @@ fn main() {
     eprintln!("TIMING config_load: {:?}", t1.elapsed());
     let t2 = Instant::now();
     
+    // Read scan parameters from config before it is moved into FaceAuth::new
+    let scan_duration = config.scan_duration_ms();
+    let scan_interval = config.scan_interval_ms();
+    
     let mut auth = match FaceAuth::new(config) {
         Ok(a) => a,
         Err(e) => {
@@ -56,20 +60,25 @@ fn main() {
     eprintln!("TIMING model_load: {:?}", t2.elapsed());
     let t3 = Instant::now();
     
-    match auth.authenticate(&user) {
+    eprintln!(
+        "SCAN: starting scan window (duration={}ms, interval={}ms) for user '{}'",
+        scan_duration, scan_interval, user
+    );
+    
+    match auth.authenticate_scan(&user, scan_duration, scan_interval) {
         Ok(true) => {
-            eprintln!("TIMING authenticate: {:?}", t3.elapsed());
+            eprintln!("TIMING authenticate_scan: {:?}", t3.elapsed());
             eprintln!("TIMING total: {:?}", t0.elapsed());
             std::process::exit(0);
         }
         Ok(false) => {
-            eprintln!("TIMING authenticate: {:?}", t3.elapsed());
+            eprintln!("TIMING authenticate_scan: {:?}", t3.elapsed());
             eprintln!("TIMING total: {:?}", t0.elapsed());
             eprintln!("Face verification failed for user '{}'", user);
             std::process::exit(1);
         }
         Err(e) => {
-            eprintln!("TIMING authenticate: {:?}", t3.elapsed());
+            eprintln!("TIMING authenticate_scan: {:?}", t3.elapsed());
             eprintln!("TIMING total: {:?}", t0.elapsed());
             eprintln!("Auth error: {}", e);
             std::process::exit(1);

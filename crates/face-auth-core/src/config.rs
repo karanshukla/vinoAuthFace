@@ -10,6 +10,13 @@ pub struct FaceAuthConfig {
     pub model_path: Option<String>,
     pub embeddings_dir: Option<String>,
     pub capture_timeout_ms: Option<u64>,
+    /// How long the auth scan window lasts, in milliseconds.
+    /// The scanner will keep capturing and checking frames until this
+    /// duration elapses or a match is found.
+    pub scan_duration_ms: Option<u64>,
+    /// Delay between successive capture attempts within a scan window,
+    /// in milliseconds.
+    pub scan_interval_ms: Option<u64>,
 }
 
 impl Default for FaceAuthConfig {
@@ -20,6 +27,8 @@ impl Default for FaceAuthConfig {
             model_path: None,
             embeddings_dir: None,
             capture_timeout_ms: Some(5000),
+            scan_duration_ms: Some(5000),
+            scan_interval_ms: Some(200),
         }
     }
 }
@@ -70,6 +79,20 @@ impl FaceAuthConfig {
 
     pub fn capture_timeout_ms(&self) -> i32 {
         self.capture_timeout_ms.unwrap_or(5000) as i32
+    }
+
+    /// Duration of the continuous scan window in milliseconds (default 5000).
+    /// Configurable via `scan_duration_ms` key or `FACE_AUTH_SCAN_DURATION_MS`
+    /// environment variable.
+    pub fn scan_duration_ms(&self) -> u64 {
+        self.scan_duration_ms.unwrap_or(5000)
+    }
+
+    /// Interval between capture attempts within a scan window in milliseconds
+    /// (default 200). Configurable via `scan_interval_ms` key or
+    /// `FACE_AUTH_SCAN_INTERVAL_MS` environment variable.
+    pub fn scan_interval_ms(&self) -> u64 {
+        self.scan_interval_ms.unwrap_or(200)
     }
 
     pub fn embeddings_dir(&self) -> PathBuf {
