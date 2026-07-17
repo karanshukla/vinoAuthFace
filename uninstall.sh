@@ -2,8 +2,29 @@
 set -euo pipefail
 
 PURGE=false
-if [[ "${1:-}" == "--purge" ]]; then
-    PURGE=true
+GUI_ONLY=false
+
+for arg in "$@"; do
+    case "$arg" in
+        --purge) PURGE=true ;;
+        --gui)   GUI_ONLY=true ;;
+    esac
+done
+
+# ---- Detect actual user (handles sudo) ----
+if [ -n "${SUDO_USER:-}" ]; then
+    ACTUAL_USER="$SUDO_USER"
+    ACTUAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+    ACTUAL_USER="$USER"
+    ACTUAL_HOME="$HOME"
+fi
+
+# ---- Check if /usr is writable (immutable FS detection) ----
+USR_WRITABLE=false
+if touch /usr/share/.face-auth-write-test 2>/dev/null; then
+    rm -f /usr/share/.face-auth-write-test
+    USR_WRITABLE=true
 fi
 
 BIN_DIR="/usr/local/bin"
@@ -11,15 +32,53 @@ SHARE_DIR="/usr/local/share/face-auth"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
 
+if [ "$USR_WRITABLE" = true ]; then
+    ICON_DIR="/usr/share/icons/hicolor/scalable/apps"
+    APP_DIR="/usr/share/applications"
+    GUI_DATA_DIR="/usr/local/share/face-auth-gtk"
+else
+    ICON_DIR="${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/icons/hicolor/scalable/apps"
+    APP_DIR="${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/applications"
+    GUI_DATA_DIR="${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/face-auth-gtk"
+fi
+
+if [ "$GUI_ONLY" = true ]; then
+    echo "Removing GUI binary..."
+    rm -f "$BIN_DIR/face-auth-gtk"
+    rm -f "${XDG_BIN_HOME:-$ACTUAL_HOME/.local/bin}/face-auth-gtk"
+
+    echo "Removing desktop file..."
+    rm -f "$APP_DIR/com.github.pfalkingham.face-auth-gtk.desktop"
+
+    echo "Removing icon..."
+    rm -f "$ICON_DIR/com.github.pfalkingham.face-auth-gtk.svg"
+
+    echo "Removing GUI data..."
+    rm -rf "$GUI_DATA_DIR"
+
+    echo ""
+    echo "GUI uninstall complete!"
+    exit 0
+fi
+
 echo "Removing binaries..."
 rm -f "$BIN_DIR/face-auth"
 rm -f "$BIN_DIR/face-enroll"
+rm -f "$BIN_DIR/face-auth-gtk"
 
 echo "Removing model and SELinux policy..."
 rm -rf "$SHARE_DIR"
 
 echo "Removing config..."
 rm -f "$CONFIG_DIR/face-auth.toml"
+
+echo "Removing desktop entry and icon..."
+rm -f "$APP_DIR/com.github.pfalkingham.face-auth-gtk.desktop"
+rm -f "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/applications/com.github.pfalkingham.face-auth-gtk.desktop"
+rm -f "$ICON_DIR/com.github.pfalkingham.face-auth-gtk.svg"
+rm -f "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/icons/hicolor/scalable/apps/com.github.pfalkingham.face-auth-gtk.svg"
+rm -rf "$GUI_DATA_DIR"
+rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/face-auth-gtk"
 
 echo "Restoring PAM configs..."
 for service in sudo swaylock gdm-password; do

@@ -1,22 +1,33 @@
-# authFace
+# authFace — IR Camera Face Unlock for Linux
 
-IR camera facial authentication for Linux. Inspired by Howdy, but built to work on immutable distros (Bluefin, Silverblue, etc.) because it's just a static binary + PAM config — no packages, no daemons, no layering.
+<p align="center">
+  <img src="data/com.github.pfalkingham.face-auth-gtk.svg" width="128" height="128" alt="authFace logo">
+</p>
 
-If it's useful, feel free to [BuyMeACoffee](buymeacoffee.com/pfalkingham)
+**Windows Hello–style biometric login for Linux.** IR camera facial authentication via PAM — works on **immutable distros** (Bazzite, Bluefin, Fedora Silverblue, Fedora Kinoite, etc.) with zero system packages, daemons, or layering.
+
+- **Face unlock for sudo, lock screen (GNOME/Sway), and `gdm-password`**
+- **~2 seconds** from camera poll to authenticated
+- **Static musl binary** — no dependencies, no runtime
+- **No daemon, no systemd units, no D-Bus**
+- **GUI settings panel** (optional GTK4 app) for camera selection and enrollment
+- **Immutable-first** — everything fits in `/usr/local` and `~/.local`, no `/usr` modifications needed
 
 ## Features
 
-- **Windows Hello–style IR camera auth** for sudo and GNOME lock screen
-- **Password fallback** — never get locked out
-- **Static musl binary** (~20 MB, zero runtime dependencies)
-- **No daemon, no systemd, no D-Bus** — just `pam_exec.so`
-- **Configurable** via `/etc/face-auth.toml`, `~/.config/face-auth.toml`, or env vars
+- **Windows Hello–compatible IR camera support** — raw GREY format, no RGB camera needed
+- **Automatic password fallback** — if face auth fails, times out, or no camera, PAM falls through to password
+- **Static musl binary** (~20 MB, zero runtime dependencies) — copy to any Linux system
+- **No daemon, no systemd, no D-Bus** — just `pam_exec.so` triggered by PAM
+- **Configurable** via `/etc/face-auth.toml`, `~/.config/face-auth.toml`, or environment variables
 - **Built-in capture timeout** (5s default) — camera hang won't lock you out
+- **GTK4 settings GUI** — select IR camera, adjust threshold, preview live feed, enroll and test face recognition
+- **Works on immutable distros** — no `rpm-ostree layer`, no package installs, no `/usr` modification
 
 ## Quick Start
 
 ```bash
-# 1. Install everything
+# 1. Install core authentication (PAM, models, binaries)
 sudo ./deploy.sh
 
 # 2. Enroll your face
@@ -25,15 +36,33 @@ face-enroll --user $USER
 # 3. Test sudo
 sudo true              # triggers IR camera → exit 0
 
-# 4. Test lock screen
-# Super+L, then press any key — camera fires, unlocks automatically
+# 4. (Optional) Install the settings GUI
+sudo ./deploy-gui.sh
+
+# 5. Launch the GUI from app menu: "Face Authentication Settings"
+#    or run: face-auth-gtk
 ```
+
+## GUI — Face Authentication Settings
+
+A native GTK4/libadwaita settings panel for configuring and testing face unlock:
+
+| Feature | Description |
+|---------|-------------|
+| **Live IR preview** | Real-time camera feed with face-detection overlay |
+| **Camera picker** | Dropdown to select between IR cameras |
+| **Threshold slider** | Adjust similarity threshold (0.1–0.95) — higher = stricter match |
+| **Enroll** | Captures 5 frames and stores face embeddings |
+| **Test** | Captures a single frame and compares against enrolled embeddings |
+| **Automatic config save** | Camera and threshold changes persist to `~/.config/face-auth.toml` |
+
+The GUI is optional and deployed separately (no GTK dependencies bundled with the core auth binary).
 
 ## Requirements
 
 ### Hardware
 
-- **IR camera** exposing GREY format (Windows Hello compatible, e.g. Shinetech ASUS FHD webcam)
+- **IR camera** exposing raw GREY format (Windows Hello compatible, e.g. Shinetech ASUS FHD webcam)
 - **Linux kernel** with `uvcvideo` (standard on all distros)
 
 ### Software (target system — where you deploy)
@@ -41,14 +70,16 @@ sudo true              # triggers IR camera → exit 0
 - PAM with `pam_exec.so` (standard on all distros)
 - SELinux (Fedora/Bluefin/Silverblue) — deploy script installs policy automatically
 - `policycoreutils` for SELinux policy compilation (installed by default on Fedora)
+- For the GUI: GTK4 + libadwaita runtime libraries (system-installed, not bundled)
 
 ### Software (build system — where you compile)
 
-You need a Rust toolchain with the `x86_64-unknown-linux-musl` target.
+You need a Rust toolchain. For the core auth (musl), add `x86_64-unknown-linux-musl` target.
+For the GUI (dynamic GTK), the host target is sufficient.
 
 ## Building from Source
 
-### On any Linux (direct)
+### Core auth (static musl — no runtime deps)
 
 ```bash
 # Install Rust if needed
@@ -66,6 +97,19 @@ cargo build --release --target x86_64-unknown-linux-musl -p face-auth -p face-en
 sudo ./deploy.sh
 ```
 
+### GUI (dynamic GTK — needs GTK4 + libadwaita devel packages)
+
+```bash
+# Install GTK development libraries (Fedora)
+sudo dnf install gtk4-devel libadwaita-devel
+
+# Build
+cargo build --release -p face-auth-gtk
+
+# Deploy
+sudo ./deploy-gui.sh
+```
+
 ### On immutable distros via distrobox
 
 ```bash
@@ -74,28 +118,28 @@ distrobox create --image docker.io/library/fedora:40 --name authface-dev
 distrobox enter authface-dev
 
 # Inside the container, install build deps (once)
-sudo dnf install -y rust cargo gcc gcc-c++ musl-gcc cmake
+sudo dnf install -y rust cargo gcc gcc-c++ musl-gcc cmake gtk4-devel libadwaita-devel
 
 # Clone and build
 cd ~/Projects
 git clone https://github.com/pfalkingham/authFace.git
 cd authFace
 cargo build --release --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
+cargo build --release -p face-auth-gtk
 
 # Exit container, then deploy on host
 exit
 sudo ./deploy.sh
+sudo ./deploy-gui.sh
 ```
 
 ## Deployment
 
-The `deploy.sh` script must be run as root:
+### Core (PAM authentication)
 
 ```bash
 sudo ./deploy.sh
 ```
-
-It does the following:
 
 | Step | What | Details |
 |------|------|---------|
@@ -109,13 +153,32 @@ It does the following:
 
 Each PAM file is backed up with a `.face-auth.bak` suffix.
 
+### GUI (optional settings panel)
+
+```bash
+sudo ./deploy-gui.sh
+```
+
+Automatically detects whether `/usr` is writable:
+- **Mutable systems**: installs to `/usr/local/bin`, `/usr/share/applications/`, `/usr/share/icons/`
+- **Immutable systems**: installs to `~/.local/bin`, `~/.local/share/applications/`, `~/.local/share/icons/`
+
+Launch from the application menu: **Face Authentication Settings**, or run `face-auth-gtk`.
+
 ### Uninstall
 
 ```bash
+# Remove everything (core + GUI + models + config)
 sudo ./uninstall.sh
+
+# Remove only the optional GUI
+sudo ./uninstall.sh --gui
+
+# Remove everything including face embeddings
+sudo ./uninstall.sh --purge
 ```
 
-Restores PAM backups, removes binaries, model, config, and SELinux policy. Use `--purge` to also remove embeddings.
+Restores PAM backups, removes binaries, models, config, SELinux policy, desktop entries, and icons.
 
 ## Configuration
 
@@ -135,13 +198,19 @@ embeddings_dir = "/var/lib/face-auth"
 capture_timeout_ms = 5000
 ```
 
+
+The GUI automatically writes camera and threshold changes to `~/.config/face-auth.toml`.
+
 ## Enrollment
 
 ```bash
+# CLI (works headless)
 face-enroll --user $USER
+
+# Or use the GUI: launch "Face Authentication Settings" and click "Enroll Face"
 ```
 
-Options: `--frames`, `--interval`, `--device`, `--threshold`, `--model`, `-v`.
+CLI options: `--frames`, `--interval`, `--device`, `--threshold`, `--model`, `-v`.
 
 ## PAM Integration
 
@@ -169,28 +238,21 @@ face-auth (static binary)
   ├─ V4L2 capture from IR camera (640×400 GREY, /dev/video3)
   │   └─ poll() with 5s timeout — exits cleanly if camera hangs
   ├─ Histogram equalization
+  ├─ Face detection (RetinaFace-derived ONNX model)
   ├─ Resize to 112×112, normalize to [-1, 1]
   ├─ tract-onnx inference (MobileFaceNet, 512-d embedding)
   ├─ Cosine similarity vs stored embeddings (default threshold 0.6)
   └─ Exit 0 (match) or exit 1 (no match → password prompt)
 ```
 
-### Model
+## Model
 
 Uses InsightFace **`w600k_mbf.onnx`** (MobileFaceNet @ WebFace600K, ~13 MB, 512-d output)
-from the `buffalo_sc` model pack. Licensed under MIT (InsightFace is MIT-licensed).
+from the `buffalo_sc` model pack, plus **`version-slim-320.onnx`** for face detection.
+Licensed under MIT (InsightFace is MIT-licensed).
 
-The model is **not bundled** in this repository. `deploy.sh` downloads it directly from
-InsightFace's official GitHub releases and verifies the SHA-256 checksum. You can also
-download it manually:
-
-```bash
-sudo mkdir -p /usr/local/share/face-auth
-curl -Lo /tmp/buffalo_sc.zip \
-  https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip
-unzip -p /tmp/buffalo_sc.zip w600k_mbf.onnx | \
-  sudo tee /usr/local/share/face-auth/w600k_mbf.onnx > /dev/null
-```
+The models are **not bundled** in this repository. `deploy.sh` downloads them directly from
+InsightFace's official GitHub releases and verifies the SHA-256 checksum.
 
 ## SELinux
 
@@ -215,7 +277,7 @@ sudo semodule -i face_auth.pp
 ## Troubleshooting
 
 ```bash
-# Find your IR camera
+# List available IR cameras
 ls /sys/class/video4linux/*/name
 
 # Grant video group access (log out/in after)
@@ -236,6 +298,9 @@ echo $?   # 0 = success, 1 = failure
 
 # Increase capture timeout (default 5000ms)
 FACE_AUTH_CAPTURE_TIMEOUT=10000 sudo -k && sudo true
+
+# GUI not launching from app menu?
+face-auth-gtk    # run from terminal to see errors
 ```
 
 ## Security & Limitations
@@ -255,30 +320,30 @@ FACE_AUTH_CAPTURE_TIMEOUT=10000 sudo -k && sudo true
 ```
 authFace/
   crates/
-    face-auth-core/        # Core library
+    face-auth-core/          # Core library
       src/
-        capture.rs         # V4L2 capture + poll() timeout
-        config.rs          # Layered config (system -> user -> env)
-        error.rs           # Error types
-        inference.rs       # tract-onnx model loading + encoding
-        lib.rs             # FaceAuth struct, auth + enroll
-        preprocess.rs      # Histogram equalize, resize, normalize
-        storage.rs         # Binary embedding I/O (versioned, atomic)
-        verify.rs          # Cosine similarity
-    face-auth/             # PAM binary (stdin-less, PAM_USER fallback)
-    face-enroll/           # Enrollment CLI
+        capture.rs           # V4L2 capture + poll() timeout
+        config.rs            # Layered config (system → user → env)
+        detector.rs          # Face detection (RetinaFace-based ONNX model)
+        error.rs             # Error types
+        inference.rs         # tract-onnx model loading + encoding
+        lib.rs               # FaceAuth struct, auth + enroll + scan
+        preprocess.rs        # Histogram equalize, resize, normalize
+        storage.rs           # Binary embedding I/O (versioned, atomic)
+        verify.rs            # Cosine similarity
+    face-auth/               # PAM binary (stdin-less, PAM_USER fallback)
+    face-enroll/             # Enrollment CLI
+    face-auth-gtk/           # GTK4 settings GUI
   config/
-    face-auth.toml.example # Documented config template
-  pam/                     # PAM stanza templates
+    face-auth.toml.example   # Documented config template
+  data/
+    desktop file + icon      # App launcher assets
   selinux/
-    face-auth.te           # SELinux policy source
-  deploy.sh                # Installation script
-  uninstall.sh             # Removal script
+    face-auth.te             # SELinux policy source
+  deploy.sh                  # Core auth installer
+  deploy-gui.sh              # Optional GUI installer
+  uninstall.sh               # Removal script (--gui, --purge flags)
 ```
-
-## TODO
-
-A UI for setup would probably be good.
 
 ## License
 

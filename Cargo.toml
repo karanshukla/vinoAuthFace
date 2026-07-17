@@ -3,6 +3,7 @@ members = [
     "crates/face-auth-core",
     "crates/face-auth",
     "crates/face-enroll",
+    "crates/face-auth-gtk",
 ]
 resolver = "2"
 
