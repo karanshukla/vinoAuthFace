@@ -44,7 +44,10 @@ fn main() {
     
     eprintln!("TIMING config_load: {:?}", t1.elapsed());
     let t2 = Instant::now();
-    
+
+    let scan_duration = config.scan_duration_ms();
+    let scan_interval = config.scan_interval_ms();
+
     let mut auth = match FaceAuth::new(config) {
         Ok(a) => a,
         Err(e) => {
@@ -52,11 +55,16 @@ fn main() {
             std::process::exit(1);
         }
     };
-    
+
     eprintln!("TIMING model_load: {:?}", t2.elapsed());
     let t3 = Instant::now();
-    
-    match auth.authenticate(&user) {
+
+    eprintln!(
+        "SCAN: window={}ms interval={}ms user='{}'",
+        scan_duration, scan_interval, user
+    );
+
+    match auth.authenticate_scan(&user, scan_duration, scan_interval) {
         Ok(true) => {
             eprintln!("TIMING authenticate: {:?}", t3.elapsed());
             eprintln!("TIMING total: {:?}", t0.elapsed());

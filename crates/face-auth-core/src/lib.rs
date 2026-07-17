@@ -14,7 +14,7 @@ use crate::inference::FaceEncoder;
 use crate::storage::EmbeddingStore;
 use crate::verify::verify_embedding;
 use anyhow::Result;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub struct FaceAuth {
     config: FaceAuthConfig,
@@ -32,7 +32,7 @@ impl FaceAuth {
         Ok(Self { config, encoder, detector })
     }
 
-    pub fn authenticate(&mut self, user: &str) -> Result<bool> {
+    pub fn authenticate_once(&mut self, user: &str) -> Result<bool> {
         let t0 = Instant::now();
         let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
         eprintln!("TIMING store_load: {:?}", t0.elapsed());
@@ -41,7 +41,6 @@ impl FaceAuth {
         let frame = crate::capture::capture_ir_frame(&self.config.device(), self.config.capture_timeout_ms())?;
         eprintln!("TIMING capture: {:?}", t1.elapsed());
 
-        // Quick content check on raw frame — rejects uniform/noise frames
         if !crate::detector::raw_frame_has_content(&frame) {
             return Err(crate::error::FaceAuthError::NoFaceDetected.into());
         }
@@ -65,8 +64,90 @@ impl FaceAuth {
         let embedding = self.encoder.encode(input.view())?;
         eprintln!("TIMING encode: {:?}", t4.elapsed());
 
-        let result = verify_embedding(&embedding, &store, self.config.threshold());
-        result
+        verify_embedding(&embedding, &store, self.config.threshold())
+    }
+
+    pub fn authenticate_scan(
+        &mut self,
+        user: &str,
+        duration_ms: u64,
+        interval_ms: u64,
+    ) -> Result<bool> {
+        let t0 = Instant::now();
+        let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
+        eprintln!("TIMING store_load: {:?}", t0.elapsed());
+
+        let t_cam = Instant::now();
+        let mut cam = Camera::open(&self.config.device())?;
+        eprintln!("TIMING camera_open: {:?}", t_cam.elapsed());
+
+        let deadline = Instant::now() + Duration::from_millis(duration_ms);
+        let mut frame_num: usize = 0;
+        let mut consecutive_errors = 0u32;
+
+        loop {
+            if Instant::now() >= deadline {
+                eprintln!("SCAN: window elapsed ({} frames)", frame_num);
+                return Ok(false);
+            }
+
+            frame_num += 1;
+            let t_cap = Instant::now();
+            let frame = match cam.capture_frame(self.config.capture_timeout_ms()) {
+                Ok(f) => {
+                    consecutive_errors = 0;
+                    f
+                }
+                Err(e) => {
+                    consecutive_errors += 1;
+                    eprintln!("SCAN: frame {} capture error — {}", frame_num, e);
+                    if consecutive_errors >= 3 {
+                        return Err(e);
+                    }
+                    let sleep = Duration::from_millis(interval_ms)
+                        .min(deadline.saturating_duration_since(Instant::now()));
+                    std::thread::sleep(sleep);
+                    continue;
+                }
+            };
+            eprintln!("TIMING frame_{} capture: {:?}", frame_num, t_cap.elapsed());
+
+            if !crate::detector::raw_frame_has_content(&frame) {
+                let sleep = Duration::from_millis(interval_ms)
+                    .min(deadline.saturating_duration_since(Instant::now()));
+                std::thread::sleep(sleep);
+                continue;
+            }
+
+            let t2 = Instant::now();
+            let mut frame = frame;
+            crate::preprocess::histogram_equalize(&mut frame);
+            eprintln!("TIMING frame_{} equalize: {:?}", frame_num, t2.elapsed());
+
+            if !self.detector.detect(&frame)? {
+                let sleep = Duration::from_millis(interval_ms)
+                    .min(deadline.saturating_duration_since(Instant::now()));
+                std::thread::sleep(sleep);
+                continue;
+            }
+
+            let t3 = Instant::now();
+            let input = crate::preprocess::preprocess_ir_frame(&frame)?;
+            let embedding = self.encoder.encode(input.view())?;
+            eprintln!("TIMING frame_{} encode: {:?}", frame_num, t3.elapsed());
+
+            let matched = verify_embedding(&embedding, &store, self.config.threshold())?;
+            if matched {
+                eprintln!("SCAN: match on frame {} after {:?}", frame_num, t0.elapsed());
+                return Ok(true);
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let sleep = Duration::from_millis(interval_ms).min(remaining);
+            if !sleep.is_zero() {
+                std::thread::sleep(sleep);
+            }
+        }
     }
 
     pub fn enroll(&mut self, user: &str, frames: usize, interval_ms: u64) -> Result<()> {

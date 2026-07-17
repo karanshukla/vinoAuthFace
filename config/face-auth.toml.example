@@ -23,3 +23,11 @@ capture_timeout_ms = 5000
 
 # Face detection confidence threshold (0.0 - 1.0, higher = stricter)
 detector_threshold = 0.5
+
+# How long the face scan window lasts, in milliseconds (default: 5000)
+# The scanner keeps capturing and checking frames until this elapses
+# or a match is found. Like Windows Hello behaviour.
+scan_duration_ms = 5000
+
+# Delay between capture attempts within a scan window, in milliseconds (default: 200)
+scan_interval_ms = 200

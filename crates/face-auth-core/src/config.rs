@@ -12,6 +12,8 @@ pub struct FaceAuthConfig {
     pub capture_timeout_ms: Option<u64>,
     pub detector_model_path: Option<String>,
     pub detector_threshold: Option<f32>,
+    pub scan_duration_ms: Option<u64>,
+    pub scan_interval_ms: Option<u64>,
 }
 
 impl Default for FaceAuthConfig {
@@ -24,6 +26,8 @@ impl Default for FaceAuthConfig {
             capture_timeout_ms: Some(5000),
             detector_model_path: None,
             detector_threshold: Some(0.5),
+            scan_duration_ms: Some(5000),
+            scan_interval_ms: Some(200),
         }
     }
 }
@@ -92,6 +96,14 @@ impl FaceAuthConfig {
 
     pub fn detector_threshold(&self) -> f32 {
         self.detector_threshold.unwrap_or(0.5)
+    }
+
+    pub fn scan_duration_ms(&self) -> u64 {
+        self.scan_duration_ms.unwrap_or(5000)
+    }
+
+    pub fn scan_interval_ms(&self) -> u64 {
+        self.scan_interval_ms.unwrap_or(200)
     }
 }
 
