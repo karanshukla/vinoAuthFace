@@ -26,6 +26,9 @@ struct Args {
     #[arg(long, help = "Embeddings directory (overrides config)")]
     embeddings_dir: Option<String>,
     
+    #[arg(long, help = "Append to existing embeddings instead of replacing")]
+    improve: bool,
+
     #[arg(short, long, help = "Verbose output")]
     verbose: bool,
 }
@@ -71,7 +74,11 @@ fn main() -> anyhow::Result<()> {
     println!("Embeddings dir: {}", config.embeddings_dir().display());
     
     let mut auth = FaceAuth::new(config)?;
-    auth.enroll(&args.user, args.frames, args.interval)?;
-    
+    if args.improve {
+        auth.enroll_append(&args.user, args.frames, args.interval)?;
+    } else {
+        auth.enroll(&args.user, args.frames, args.interval)?;
+    }
+
     Ok(())
 }

@@ -150,9 +150,13 @@ impl FaceAuth {
         }
     }
 
-    pub fn enroll(&mut self, user: &str, frames: usize, interval_ms: u64) -> Result<()> {
-        let mut store = EmbeddingStore::default();
-        let mut cam = Camera::open(&self.config.device())?;
+    fn capture_embeddings(
+        &mut self,
+        cam: &mut Camera,
+        store: &mut EmbeddingStore,
+        frames: usize,
+        interval_ms: u64,
+    ) -> Result<()> {
         let mut captured = 0usize;
         let mut attempts = 0usize;
         let max_attempts = frames * 3;
@@ -191,9 +195,33 @@ impl FaceAuth {
             return Err(anyhow::anyhow!("No face detected in any frame during enrollment"));
         }
 
+        Ok(())
+    }
+
+    pub fn enroll(&mut self, user: &str, frames: usize, interval_ms: u64) -> Result<()> {
+        let mut store = EmbeddingStore::default();
+        let mut cam = Camera::open(&self.config.device())?;
+        self.capture_embeddings(&mut cam, &mut store, frames, interval_ms)?;
+
         let saved = store.embeddings.len();
         store.save(user, &self.config.embeddings_dir())?;
         println!("Saved {} embeddings for user '{}'", saved, user);
+
+        Ok(())
+    }
+
+    pub fn enroll_append(&mut self, user: &str, frames: usize, interval_ms: u64) -> Result<()> {
+        let mut store = match EmbeddingStore::load(user, &self.config.embeddings_dir()) {
+            Ok(s) => s,
+            Err(_) => EmbeddingStore::default(),
+        };
+        let existing = store.embeddings.len();
+        let mut cam = Camera::open(&self.config.device())?;
+        self.capture_embeddings(&mut cam, &mut store, frames, interval_ms)?;
+
+        let total = store.embeddings.len();
+        store.save(user, &self.config.embeddings_dir())?;
+        println!("Added {} new embeddings for user '{}' ({} total)", total - existing, user, total);
 
         Ok(())
     }

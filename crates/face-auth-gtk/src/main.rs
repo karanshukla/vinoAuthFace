@@ -112,6 +112,11 @@ fn build_ui(app: &libadwaita::Application) {
         .css_classes(vec!["suggested-action".to_string()])
         .build();
 
+    let improve_button = gtk4::Button::builder()
+        .label("Improve Matching")
+        .tooltip_text("Append new embeddings to improve recognition")
+        .build();
+
     let test_button = gtk4::Button::builder()
         .label("Test Authentication")
         .build();
@@ -122,6 +127,7 @@ fn build_ui(app: &libadwaita::Application) {
         .halign(gtk4::Align::Center)
         .build();
     button_box.append(&enroll_button);
+    button_box.append(&improve_button);
     button_box.append(&test_button);
 
     let prefs_group = libadwaita::PreferencesGroup::new();
@@ -184,7 +190,7 @@ fn build_ui(app: &libadwaita::Application) {
         toast_overlay,
     });
 
-    setup_callbacks(&state, &enroll_button, &test_button);
+    setup_callbacks(&state, &enroll_button, &improve_button, &test_button);
     state.controller.borrow_mut().start();
 
     let state_clone = state.clone();
@@ -196,7 +202,7 @@ fn build_ui(app: &libadwaita::Application) {
     window.present();
 }
 
-fn setup_callbacks(state: &Rc<GuiState>, enroll_button: &gtk4::Button, test_button: &gtk4::Button) {
+fn setup_callbacks(state: &Rc<GuiState>, enroll_button: &gtk4::Button, improve_button: &gtk4::Button, test_button: &gtk4::Button) {
     let s = state.clone();
     state.device_row.connect_selected_notify(move |row| {
         let idx = row.selected() as usize;
@@ -229,6 +235,25 @@ fn setup_callbacks(state: &Rc<GuiState>, enroll_button: &gtk4::Button, test_butt
             s.controller.borrow_mut().start();
             btn.set_sensitive(true);
             btn.set_label("Enroll Face");
+        });
+    });
+
+    let s = state.clone();
+    improve_button.connect_clicked(move |btn| {
+        btn.set_sensitive(false);
+        btn.set_label("Improving...");
+        let s = s.clone();
+        let btn = btn.clone();
+        glib::MainContext::default().spawn_local(async move {
+            s.controller.borrow_mut().stop();
+            let result = run_improve();
+            match result {
+                Ok(n) => show_toast(&s, &format!("Added {} new embeddings", n)),
+                Err(e) => show_toast(&s, &format!("Improve failed: {}", e)),
+            }
+            s.controller.borrow_mut().start();
+            btn.set_sensitive(true);
+            btn.set_label("Improve Matching");
         });
     });
 
@@ -304,6 +329,25 @@ fn run_enroll() -> Result<usize, String> {
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         Err(format!("Enrollment failed: {}", stderr.trim()))
+    }
+}
+
+fn run_improve() -> Result<usize, String> {
+    let user = whoami();
+    let frames = 5;
+    let output = std::process::Command::new("face-enroll")
+        .arg("--user")
+        .arg(&user)
+        .arg("--frames")
+        .arg(frames.to_string())
+        .arg("--improve")
+        .output()
+        .map_err(|e| format!("Failed to run face-enroll: {}", e))?;
+    if output.status.success() {
+        Ok(frames)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("Improve failed: {}", stderr.trim()))
     }
 }
 

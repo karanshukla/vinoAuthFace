@@ -21,7 +21,7 @@
 - **No daemon, no systemd, no D-Bus** — just `pam_exec.so` triggered by PAM
 - **Configurable** via `/etc/face-auth.toml`, `~/.config/face-auth.toml`, or environment variables
 - **Built-in capture timeout** (5s default) — camera hang won't lock you out
-- **GTK4 settings GUI** — select IR camera, adjust threshold, preview live feed, enroll and test face recognition
+- **GTK4 settings GUI** — select IR camera, adjust threshold, preview live feed, enroll, improve matching, and test face recognition
 - **Works on immutable distros** — no `rpm-ostree layer`, no package installs, no `/usr` modification
 
 ## Quick Start
@@ -52,7 +52,8 @@ A native GTK4/libadwaita settings panel for configuring and testing face unlock:
 | **Live IR preview** | Real-time camera feed with face-detection overlay |
 | **Camera picker** | Dropdown to select between IR cameras |
 | **Threshold slider** | Adjust similarity threshold (0.1–0.95) — higher = stricter match |
-| **Enroll** | Captures 5 frames and stores face embeddings |
+| **Enroll** | Captures 5 frames and stores face embeddings (replaces existing) |
+| **Improve Matching** | Captures 5 more frames and appends to existing embeddings |
 | **Test** | Captures a single frame and compares against enrolled embeddings |
 | **Automatic config save** | Camera and threshold changes persist to `~/.config/face-auth.toml` |
 
@@ -204,13 +205,16 @@ The GUI automatically writes camera and threshold changes to `~/.config/face-aut
 ## Enrollment
 
 ```bash
-# CLI (works headless)
+# Replace existing embeddings with new capture
 face-enroll --user $USER
 
-# Or use the GUI: launch "Face Authentication Settings" and click "Enroll Face"
+# Append new embeddings to improve recognition across lighting/angles
+face-enroll --improve --user $USER
 ```
 
-CLI options: `--frames`, `--interval`, `--device`, `--threshold`, `--model`, `-v`.
+CLI options: `--frames`, `--interval`, `--device`, `--threshold`, `--model`, `--improve`, `-v`.
+
+The GUI's **Enroll Face** button replaces embeddings; **Improve Matching** appends to them.
 
 ## PAM Integration
 
