@@ -17,3 +17,9 @@ threshold = 0.6
 # Camera capture timeout in milliseconds (default: 5000)
 # Set to 0 for infinite wait (not recommended)
 capture_timeout_ms = 5000
+
+# Face detection ONNX model path (default: /usr/local/share/face-auth/version-slim-320.onnx)
+# detector_model_path = "/usr/local/share/face-auth/version-slim-320.onnx"
+
+# Face detection confidence threshold (0.0 - 1.0, higher = stricter)
+detector_threshold = 0.5

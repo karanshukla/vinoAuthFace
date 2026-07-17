@@ -1,7 +1,7 @@
 use nix::fcntl::{open, OFlag};
 use nix::sys::stat::Mode;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use libc::{c_void, mmap, munmap, PROT_READ, MAP_SHARED, MAP_FAILED};
+use libc::{c_void, mmap, munmap, pollfd, PROT_READ, MAP_SHARED, MAP_FAILED, POLLIN};
 use anyhow::Result;
 use std::time::Instant;
 
@@ -152,7 +152,7 @@ impl Camera {
         Ok(Self { fd, mmap_ptr, length, width, height, stream_on: false })
     }
 
-    pub fn capture_frame(&mut self, _timeout_ms: i32) -> Result<IrFrame> {
+    pub fn capture_frame(&mut self, timeout_ms: i32) -> Result<IrFrame> {
         if !self.stream_on {
             let buf = v4l2_buffer {
                 index: 0,
@@ -166,28 +166,35 @@ impl Camera {
             self.stream_on = true;
         }
 
-        let mut frame_data = None;
-        for _ in 0..3 {
-            let mut buf = v4l2_buffer {
-                index: 0,
-                type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
-                memory: V4L2_MEMORY_MMAP,
-                ..unsafe { std::mem::zeroed() }
-            };
-            if ioctl(self.fd.as_raw_fd(), VIDIOC_DQBUF, &mut buf as *mut _ as *mut c_void).is_ok() {
-                let bytes_used = buf.bytesused as usize;
-                let data_slice = unsafe { std::slice::from_raw_parts(self.mmap_ptr as *const u8, bytes_used) };
-                frame_data = Some(data_slice.iter().map(|&b| (b as u16) * 257).collect());
-
-                let _ = ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &mut buf as *mut _ as *mut c_void);
-                break;
-            }
+        // Use poll() to wait for data with the configured timeout
+        let mut pfd = pollfd {
+            fd: self.fd.as_raw_fd(),
+            events: POLLIN,
+            revents: 0,
+        };
+        let poll_ret = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+        if poll_ret < 0 {
+            return Err(anyhow::anyhow!("poll failed: {}", std::io::Error::last_os_error()));
+        }
+        if poll_ret == 0 {
+            return Err(anyhow::anyhow!("Capture timed out after {}ms", timeout_ms));
         }
 
-        if let Some(data) = frame_data {
+        let mut buf = v4l2_buffer {
+            index: 0,
+            type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
+            memory: V4L2_MEMORY_MMAP,
+            ..unsafe { std::mem::zeroed() }
+        };
+        if ioctl(self.fd.as_raw_fd(), VIDIOC_DQBUF, &mut buf as *mut _ as *mut c_void).is_ok() {
+            let bytes_used = buf.bytesused as usize;
+            let data_slice = unsafe { std::slice::from_raw_parts(self.mmap_ptr as *const u8, bytes_used) };
+            let data = data_slice.iter().map(|&b| (b as u16) * 257).collect();
+
+            let _ = ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &mut buf as *mut _ as *mut c_void);
             Ok(IrFrame { data, width: self.width, height: self.height })
         } else {
-            Err(anyhow::anyhow!("Failed to capture frame (timeout)"))
+            Err(anyhow::anyhow!("Failed to capture frame: {}", std::io::Error::last_os_error()))
         }
     }
 

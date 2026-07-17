@@ -63,7 +63,20 @@ else
     echo "Model downloaded and installed"
 fi
 
-# ---- Install config ----
+# ---- Install face detector model ----
+echo "Installing face detector model..."
+DETECTOR_NAME="version-slim-320.onnx"
+if [ -f "$SHARE_DIR/$DETECTOR_NAME" ]; then
+    echo "Detector model already installed at $SHARE_DIR/$DETECTOR_NAME"
+elif [ -f "models/$DETECTOR_NAME" ]; then
+    install -Dm644 "models/$DETECTOR_NAME" "$SHARE_DIR/$DETECTOR_NAME"
+    echo "Installed detector model from models/$DETECTOR_NAME"
+else
+    echo "Error: $DETECTOR_NAME not found in models/"
+    echo "Run inside the dev distrobox: python3 -m onnxsim version-slim-320.onnx version-slim-320.onnx"
+    exit 1
+fi
+
 echo "Installing config..."
 install -Dm644 config/face-auth.toml.example "$CONFIG_DIR/face-auth.toml"
 

@@ -25,6 +25,9 @@ pub enum FaceAuthError {
 
     #[error("Invalid embedding format")]
     InvalidEmbeddingFormat,
+
+    #[error("No face detected in frame")]
+    NoFaceDetected,
 }
 
 pub type Result<T> = std::result::Result<T, FaceAuthError>;

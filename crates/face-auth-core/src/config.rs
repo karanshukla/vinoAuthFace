@@ -10,6 +10,8 @@ pub struct FaceAuthConfig {
     pub model_path: Option<String>,
     pub embeddings_dir: Option<String>,
     pub capture_timeout_ms: Option<u64>,
+    pub detector_model_path: Option<String>,
+    pub detector_threshold: Option<f32>,
 }
 
 impl Default for FaceAuthConfig {
@@ -20,6 +22,8 @@ impl Default for FaceAuthConfig {
             model_path: None,
             embeddings_dir: None,
             capture_timeout_ms: Some(5000),
+            detector_model_path: None,
+            detector_threshold: Some(0.5),
         }
     }
 }
@@ -77,6 +81,17 @@ impl FaceAuthConfig {
             .clone()
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/var/lib/face-auth"))
+    }
+
+    pub fn detector_model_path(&self) -> String {
+        self.detector_model_path
+            .clone()
+            .or_else(|| std::env::var("FACE_AUTH_DETECTOR_MODEL_PATH").ok())
+            .unwrap_or_else(|| "/usr/local/share/face-auth/version-slim-320.onnx".to_string())
+    }
+
+    pub fn detector_threshold(&self) -> f32 {
+        self.detector_threshold.unwrap_or(0.5)
     }
 }
 
