@@ -14,6 +14,9 @@ pub struct FaceAuthConfig {
     pub detector_threshold: Option<f32>,
     pub scan_duration_ms: Option<u64>,
     pub scan_interval_ms: Option<u64>,
+    pub backend: Option<String>,
+    pub npu_device: Option<String>,
+    pub liveness_motion_threshold: Option<f32>,
 }
 
 impl Default for FaceAuthConfig {
@@ -28,6 +31,9 @@ impl Default for FaceAuthConfig {
             detector_threshold: Some(0.5),
             scan_duration_ms: Some(5000),
             scan_interval_ms: Some(200),
+            backend: Some("tract".to_string()),
+            npu_device: Some("NPU".to_string()),
+            liveness_motion_threshold: Some(0.01),
         }
     }
 }
@@ -104,6 +110,24 @@ impl FaceAuthConfig {
 
     pub fn scan_interval_ms(&self) -> u64 {
         self.scan_interval_ms.unwrap_or(200)
+    }
+
+    /// Inference backend: "tract" (default, pure-Rust CPU) or "openvino" (requires the `npu`
+    /// build feature; runs on the device named by `npu_device()`).
+    pub fn backend(&self) -> String {
+        self.backend.clone().unwrap_or_else(|| "tract".to_string())
+    }
+
+    /// OpenVINO device string used when `backend() == "openvino"`, e.g. "NPU", "GPU", "CPU".
+    pub fn npu_device(&self) -> String {
+        self.npu_device.clone().unwrap_or_else(|| "NPU".to_string())
+    }
+
+    /// Minimum fraction of pixels that must change between consecutive face frames (during a
+    /// scan) for the subject to be considered live rather than a static photo. See
+    /// `preprocess::frame_motion_fraction`.
+    pub fn liveness_motion_threshold(&self) -> f32 {
+        self.liveness_motion_threshold.unwrap_or(0.01)
     }
 }
 

@@ -82,6 +82,7 @@ struct v4l2_buffer {
     reserved: u32,
 }
 
+#[derive(Clone)]
 pub struct IrFrame {
     pub data: Vec<u16>,
     pub width: u32,

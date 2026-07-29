@@ -24,10 +24,14 @@ pub struct FaceAuth {
 
 impl FaceAuth {
     pub fn new(config: FaceAuthConfig) -> Result<Self> {
-        let encoder = FaceEncoder::new(&config.model_path())?;
+        let backend = config.backend();
+        let device = config.npu_device();
+        let encoder = FaceEncoder::new(&config.model_path(), &backend, &device)?;
         let detector = FaceDetector::new(
             &config.detector_model_path(),
             config.detector_threshold(),
+            &backend,
+            &device,
         )?;
         Ok(Self { config, encoder, detector })
     }
@@ -84,6 +88,9 @@ impl FaceAuth {
         let deadline = Instant::now() + Duration::from_millis(duration_ms);
         let mut frame_num: usize = 0;
         let mut consecutive_errors = 0u32;
+        let motion_threshold = self.config.liveness_motion_threshold();
+        let mut prev_face_frame: Option<crate::capture::IrFrame> = None;
+        let mut motion_observed = false;
 
         loop {
             if Instant::now() >= deadline {
@@ -131,6 +138,15 @@ impl FaceAuth {
                 continue;
             }
 
+            if let Some(prev) = &prev_face_frame {
+                let motion = crate::preprocess::frame_motion_fraction(prev, &frame);
+                if motion >= motion_threshold {
+                    motion_observed = true;
+                }
+                tracing::debug!(frame_num, motion, motion_threshold, motion_observed, "liveness: motion check");
+            }
+            prev_face_frame = Some(frame.clone());
+
             let t3 = Instant::now();
             let input = crate::preprocess::preprocess_ir_frame(&frame)?;
             let embedding = self.encoder.encode(input.view())?;
@@ -138,6 +154,16 @@ impl FaceAuth {
 
             let matched = verify_embedding(&embedding, &store, self.config.threshold())?;
             if matched {
+                if !motion_observed {
+                    eprintln!(
+                        "SCAN: frame {} matched embedding but no liveness motion observed yet — treating as possible spoof, continuing scan",
+                        frame_num
+                    );
+                    let sleep = Duration::from_millis(interval_ms)
+                        .min(deadline.saturating_duration_since(Instant::now()));
+                    std::thread::sleep(sleep);
+                    continue;
+                }
                 eprintln!("SCAN: match on frame {} after {:?}", frame_num, t0.elapsed());
                 return Ok(true);
             }

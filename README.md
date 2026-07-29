@@ -1,16 +1,11 @@
 # authFace — IR Camera Face Unlock for Linux
 
-<p align="center">
-  <img src="data/com.github.pfalkingham.face-auth-gtk.svg" width="128" height="128" alt="authFace logo">
-</p>
-
 **Windows Hello–style biometric login for Linux.** IR camera facial authentication via PAM — works on **immutable distros** (Bazzite, Bluefin, Fedora Silverblue, Fedora Kinoite, etc.) with zero system packages, daemons, or layering.
 
 - **Face unlock for sudo, lock screen (GNOME/Sway), and `gdm-password`**
 - **~2 seconds** from camera poll to authenticated
 - **Static musl binary** — no dependencies, no runtime
 - **No daemon, no systemd units, no D-Bus**
-- **GUI settings panel** (optional GTK4 app) for camera selection and enrollment
 - **Immutable-first** — everything fits in `/usr/local` and `~/.local`, no `/usr` modifications needed
 
 ## Features
@@ -21,7 +16,6 @@
 - **No daemon, no systemd, no D-Bus** — just `pam_exec.so` triggered by PAM
 - **Configurable** via `/etc/face-auth.toml`, `~/.config/face-auth.toml`, or environment variables
 - **Built-in capture timeout** (5s default) — camera hang won't lock you out
-- **GTK4 settings GUI** — select IR camera, adjust threshold, preview live feed, enroll, improve matching, and test face recognition
 - **Works on immutable distros** — no `rpm-ostree layer`, no package installs, no `/usr` modification
 
 ## Quick Start
@@ -35,29 +29,7 @@ face-enroll --user $USER
 
 # 3. Test sudo
 sudo true              # triggers IR camera → exit 0
-
-# 4. (Optional) Install the settings GUI
-sudo ./deploy-gui.sh
-
-# 5. Launch the GUI from app menu: "Face Authentication Settings"
-#    or run: face-auth-gtk
 ```
-
-## GUI — Face Authentication Settings
-
-A native GTK4/libadwaita settings panel for configuring and testing face unlock:
-
-| Feature | Description |
-|---------|-------------|
-| **Live IR preview** | Real-time camera feed with face-detection overlay |
-| **Camera picker** | Dropdown to select between IR cameras |
-| **Threshold slider** | Adjust similarity threshold (0.1–0.95) — higher = stricter match |
-| **Enroll** | Captures 5 frames and stores face embeddings (replaces existing) |
-| **Improve Matching** | Captures 5 more frames and appends to existing embeddings |
-| **Test** | Captures a single frame and compares against enrolled embeddings |
-| **Automatic config save** | Camera and threshold changes persist to `~/.config/face-auth.toml` |
-
-The GUI is optional and deployed separately (no GTK dependencies bundled with the core auth binary).
 
 ## Requirements
 
@@ -71,12 +43,10 @@ The GUI is optional and deployed separately (no GTK dependencies bundled with th
 - PAM with `pam_exec.so` (standard on all distros)
 - SELinux (Fedora/Bluefin/Silverblue) — deploy script installs policy automatically
 - `policycoreutils` for SELinux policy compilation (installed by default on Fedora)
-- For the GUI: GTK4 + libadwaita runtime libraries (system-installed, not bundled)
 
 ### Software (build system — where you compile)
 
-You need a Rust toolchain. For the core auth (musl), add `x86_64-unknown-linux-musl` target.
-For the GUI (dynamic GTK), the host target is sufficient.
+You need a Rust toolchain with the `x86_64-unknown-linux-musl` target added.
 
 ## Building from Source
 
@@ -98,19 +68,6 @@ cargo build --release --target x86_64-unknown-linux-musl -p face-auth -p face-en
 sudo ./deploy.sh
 ```
 
-### GUI (dynamic GTK — needs GTK4 + libadwaita devel packages)
-
-```bash
-# Install GTK development libraries (Fedora)
-sudo dnf install gtk4-devel libadwaita-devel
-
-# Build
-cargo build --release -p face-auth-gtk
-
-# Deploy
-sudo ./deploy-gui.sh
-```
-
 ### On immutable distros via distrobox
 
 ```bash
@@ -119,19 +76,17 @@ distrobox create --image docker.io/library/fedora:40 --name authface-dev
 distrobox enter authface-dev
 
 # Inside the container, install build deps (once)
-sudo dnf install -y rust cargo gcc gcc-c++ musl-gcc cmake gtk4-devel libadwaita-devel
+sudo dnf install -y rust cargo gcc gcc-c++ musl-gcc cmake
 
 # Clone and build
 cd ~/Projects
 git clone https://github.com/pfalkingham/authFace.git
 cd authFace
 cargo build --release --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
-cargo build --release -p face-auth-gtk
 
 # Exit container, then deploy on host
 exit
 sudo ./deploy.sh
-sudo ./deploy-gui.sh
 ```
 
 ## Deployment
@@ -154,32 +109,17 @@ sudo ./deploy.sh
 
 Each PAM file is backed up with a `.face-auth.bak` suffix.
 
-### GUI (optional settings panel)
-
-```bash
-sudo ./deploy-gui.sh
-```
-
-Automatically detects whether `/usr` is writable:
-- **Mutable systems**: installs to `/usr/local/bin`, `/usr/share/applications/`, `/usr/share/icons/`
-- **Immutable systems**: installs to `~/.local/bin`, `~/.local/share/applications/`, `~/.local/share/icons/`
-
-Launch from the application menu: **Face Authentication Settings**, or run `face-auth-gtk`.
-
 ### Uninstall
 
 ```bash
-# Remove everything (core + GUI + models + config)
+# Remove everything (core + models + config)
 sudo ./uninstall.sh
-
-# Remove only the optional GUI
-sudo ./uninstall.sh --gui
 
 # Remove everything including face embeddings
 sudo ./uninstall.sh --purge
 ```
 
-Restores PAM backups, removes binaries, models, config, SELinux policy, desktop entries, and icons.
+Restores PAM backups, removes binaries, models, config, and SELinux policy.
 
 ## Configuration
 
@@ -199,9 +139,6 @@ embeddings_dir = "/var/lib/face-auth"
 capture_timeout_ms = 5000
 ```
 
-
-The GUI automatically writes camera and threshold changes to `~/.config/face-auth.toml`.
-
 ## Enrollment
 
 ```bash
@@ -213,8 +150,6 @@ face-enroll --improve --user $USER
 ```
 
 CLI options: `--frames`, `--interval`, `--device`, `--threshold`, `--model`, `--improve`, `-v`.
-
-The GUI's **Enroll Face** button replaces embeddings; **Improve Matching** appends to them.
 
 ## PAM Integration
 
@@ -302,9 +237,6 @@ echo $?   # 0 = success, 1 = failure
 
 # Increase capture timeout (default 5000ms)
 FACE_AUTH_CAPTURE_TIMEOUT=10000 sudo -k && sudo true
-
-# GUI not launching from app menu?
-face-auth-gtk    # run from terminal to see errors
 ```
 
 ## Security & Limitations
@@ -337,16 +269,12 @@ authFace/
         verify.rs            # Cosine similarity
     face-auth/               # PAM binary (stdin-less, PAM_USER fallback)
     face-enroll/             # Enrollment CLI
-    face-auth-gtk/           # GTK4 settings GUI
   config/
     face-auth.toml.example   # Documented config template
-  data/
-    desktop file + icon      # App launcher assets
   selinux/
     face-auth.te             # SELinux policy source
   deploy.sh                  # Core auth installer
-  deploy-gui.sh              # Optional GUI installer
-  uninstall.sh               # Removal script (--gui, --purge flags)
+  uninstall.sh               # Removal script (--purge flag)
 ```
 
 ## License
