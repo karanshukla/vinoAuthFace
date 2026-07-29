@@ -139,15 +139,26 @@ embeddings_dir = "/var/lib/face-auth"
 capture_timeout_ms = 5000
 ```
 
+`scan_interval_ms` (delay between scan attempts during `authenticate_scan`) is not hardcoded:
+if unset, it's queried from the camera's own reported native frame interval via V4L2
+(`VIDIOC_G_PARM`), so it adapts automatically to whatever hardware it's running on rather than
+assuming one machine's frame rate. Set `scan_interval_ms` explicitly (TOML or
+`FACE_AUTH_SCAN_INTERVAL_MS`) to override.
+
 ## Enrollment
 
 ```bash
-# Replace existing embeddings with new capture
+# Replace existing embeddings with new capture (default: 30 frames)
 face-enroll --user $USER
 
 # Append new embeddings to improve recognition across lighting/angles
 face-enroll --improve --user $USER
 ```
+
+`--frames` defaults to 30: enough pose/expression variation from a single sitting for
+reliable matching against a fixed similarity threshold. Fewer frames enroll faster but
+match less reliably; run `--improve` again in different lighting/angles for the biggest
+accuracy gain beyond that.
 
 CLI options: `--frames`, `--interval`, `--device`, `--threshold`, `--model`, `--improve`, `-v`.
 
@@ -241,9 +252,21 @@ FACE_AUTH_CAPTURE_TIMEOUT=10000 sudo -k && sudo true
 
 ## Security & Limitations
 
-- **IR-only, no liveness detection:** Uses IR camera (not RGB), which resists casual
-  photo spoofing. Does not perform structured-light or dot-projection depth checks.
-  High-quality IR-transparent prints or 3D masks may bypass verification.
+- **Anti-spoofing:** Uses an active-NIR IR camera (not RGB), which resists casual photo
+  spoofing structurally rather than statistically. Two layers:
+  - **Screen-based spoofing (phone/tablet showing a photo or video of the victim) is blocked
+    by sensor physics, not software**: OLED/most LCD panels emit essentially no near-infrared
+    and barely reflect the camera's own IR illuminator, so a screen held up to the camera
+    produces no face-shaped IR signal at all — confirmed empirically (zero detections across
+    100 capture attempts against a phone screen). The attack fails at the face-detection
+    stage, before recognition or liveness ever runs.
+  - **Motion-based liveness check** requires observed pixel-level motion between consecutive
+    face-detected frames before accepting a match, defeating a rigidly-held static image.
+  - Does not perform structured-light or dot-projection depth checks (no depth-capable
+    hardware). **Printed photos remain an open risk** — paper does reflect some NIR unlike
+    OLED, and a gently-moved (not perfectly rigid) printed photo could pass the motion check.
+    High-quality IR-transparent prints or 3D masks may also bypass verification. Untested;
+    revisit if/when calibration data against real printed photos becomes available.
 - **SELinux policy scope:** The lock-screen policy grants `xdm_t` mmap access to all
   V4L2 devices. This is a trade-off for drop-in compatibility; narrowing it requires
   custom udev device types.

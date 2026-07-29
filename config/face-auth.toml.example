@@ -29,5 +29,8 @@ detector_threshold = 0.5
 # or a match is found. Like Windows Hello behaviour.
 scan_duration_ms = 5000
 
-# Delay between capture attempts within a scan window, in milliseconds (default: 200)
-scan_interval_ms = 200
+# Delay between capture attempts within a scan window, in milliseconds.
+# If unset, this is queried from the camera's own reported native frame interval via V4L2 —
+# there's no point sleeping longer than the driver's own frame rate, and different hardware
+# reports very different native rates. Uncomment to force a fixed value instead.
+# scan_interval_ms = 200

@@ -15,6 +15,9 @@ const VIDIOC_QBUF: u64 = 0xc058560f;
 const VIDIOC_DQBUF: u64 = 0xc0585611;
 const VIDIOC_STREAMON: u64 = 0x40045612;
 const VIDIOC_STREAMOFF: u64 = 0x40045613;
+const VIDIOC_G_PARM: u64 = 0xc0cc5615;
+
+const V4L2_CAP_TIMEPERFRAME: u32 = 0x1000;
 
 const V4L2_BUF_TYPE_VIDEO_CAPTURE: u32 = 1;
 const V4L2_MEMORY_MMAP: u32 = 1;
@@ -54,6 +57,15 @@ struct v4l2_pix_format {
     ycbcr_enc: u32,
     quantization: u32,
     xfer_func: u32,
+}
+
+// Kernel struct v4l2_streamparm: type(4) + union{capture,output,raw_data[200]} = 204 bytes.
+// Unlike v4l2_format, this union holds no pointer-typed members, so it needs no extra
+// alignment padding after `type_`.
+#[repr(C)]
+struct v4l2_streamparm {
+    type_: u32,
+    raw: [u8; 200],
 }
 
 #[repr(C)]
@@ -229,6 +241,37 @@ fn ioctl(fd: i32, request: u64, arg: *mut c_void) -> Result<i32> {
     } else {
         Ok(ret)
     }
+}
+
+/// Queries the driver for the camera's native frame interval via `VIDIOC_G_PARM`, rather than
+/// assuming any particular hardware's frame rate. Different IR sensors run at very different
+/// native rates (this project's dev hardware is 15fps/~66ms; others may be 30fps/~33ms or
+/// faster), so hardcoding a single "safe" sleep interval would either throttle faster cameras
+/// unnecessarily or hammer slower ones with no benefit. Returns `None` if the driver doesn't
+/// report `V4L2_CAP_TIMEPERFRAME` or the query otherwise fails — callers should fall back to a
+/// conservative default in that case.
+pub fn query_frame_interval_ms(device_path: &str) -> Option<u64> {
+    let fd = open(device_path, OFlag::O_RDWR, Mode::empty()).ok()?;
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+
+    let mut param = v4l2_streamparm {
+        type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
+        raw: [0; 200],
+    };
+    ioctl(fd.as_raw_fd(), VIDIOC_G_PARM, &mut param as *mut _ as *mut c_void).ok()?;
+
+    let capability = u32::from_ne_bytes(param.raw[0..4].try_into().ok()?);
+    if capability & V4L2_CAP_TIMEPERFRAME == 0 {
+        return None;
+    }
+
+    let numerator = u32::from_ne_bytes(param.raw[8..12].try_into().ok()?);
+    let denominator = u32::from_ne_bytes(param.raw[12..16].try_into().ok()?);
+    if denominator == 0 {
+        return None;
+    }
+
+    Some((numerator as u64 * 1000) / denominator as u64)
 }
 
 pub fn detect_ir_camera() -> Option<String> {

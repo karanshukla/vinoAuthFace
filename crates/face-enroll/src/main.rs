@@ -8,7 +8,12 @@ struct Args {
     #[arg(short, long, help = "Username to enroll")]
     user: String,
     
-    #[arg(short, long, help = "Number of frames to capture", default_value = "5")]
+    #[arg(
+        short,
+        long,
+        help = "Number of frames to capture. 30 gives enough pose/expression variation for reliable matching; lower counts enroll faster but match less reliably",
+        default_value = "30"
+    )]
     frames: usize,
     
     #[arg(long, help = "Interval between frames (ms)", default_value = "400")]

@@ -30,7 +30,7 @@ impl Default for FaceAuthConfig {
             detector_model_path: None,
             detector_threshold: Some(0.5),
             scan_duration_ms: Some(5000),
-            scan_interval_ms: Some(200),
+            scan_interval_ms: None,
             backend: Some("tract".to_string()),
             npu_device: Some("NPU".to_string()),
             liveness_motion_threshold: Some(0.01),
@@ -108,8 +108,17 @@ impl FaceAuthConfig {
         self.scan_duration_ms.unwrap_or(5000)
     }
 
+    /// Delay between scan attempts. If explicitly configured (`scan_interval_ms` in TOML or
+    /// `FACE_AUTH_SCAN_INTERVAL_MS`), that value always wins. Otherwise this queries the
+    /// currently configured camera's native frame interval via V4L2 and uses that directly —
+    /// there's no point sleeping longer than the driver's own frame rate, and different
+    /// hardware reports very different native rates, so no single hardcoded default is portable
+    /// across machines. Falls back to a conservative 100ms if the query fails (e.g. driver
+    /// doesn't report `V4L2_CAP_TIMEPERFRAME`).
     pub fn scan_interval_ms(&self) -> u64 {
-        self.scan_interval_ms.unwrap_or(200)
+        self.scan_interval_ms
+            .or_else(|| crate::capture::query_frame_interval_ms(&self.device()))
+            .unwrap_or(100)
     }
 
     /// Inference backend: "tract" (default, pure-Rust CPU) or "openvino" (requires the `npu`
