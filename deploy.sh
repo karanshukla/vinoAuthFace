@@ -1,8 +1,35 @@
 #!/bin/bash
 set -euo pipefail
 
-MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
-MODEL_CHECKSUM="9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f"
+# Recognition model registry. "mbf" (MobileFaceNet, buffalo_sc pack) is the default: small
+# (~14MB) and fast, chosen for interactive PAM latency. "r50" (ResNet50, buffalo_l pack) is
+# larger (~175MB) and noticeably more accurate (wider genuine-match similarity margin observed
+# in local benchmarking) at a small, fixed extra cost per auth attempt (a few ms/frame on top of
+# mbf's ~1ms, plus a one-time NPU compile-cache-miss the first time it's ever loaded) — not a
+# scan-time regression, since the scan loop is paced by camera frame interval either way.
+# Select with: FACE_AUTH_RECOGNITION_MODEL=r50 sudo -E ./deploy.sh
+#
+# Switching models requires re-enrolling (`face-enroll --user $USER`) — different recognition
+# models produce numerically incompatible embedding spaces despite the same 512-d shape, so
+# face-auth-core refuses to compare embeddings across a model change rather than silently
+# producing meaningless similarity scores (see crates/face-auth-core/src/storage.rs model_tag).
+RECOGNITION_MODEL="${FACE_AUTH_RECOGNITION_MODEL:-mbf}"
+case "$RECOGNITION_MODEL" in
+    mbf)
+        MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
+        MODEL_NAME="w600k_mbf.onnx"
+        MODEL_CHECKSUM="9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f"
+        ;;
+    r50)
+        MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
+        MODEL_NAME="w600k_r50.onnx"
+        MODEL_CHECKSUM="4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
+        ;;
+    *)
+        echo "Error: unknown FACE_AUTH_RECOGNITION_MODEL '$RECOGNITION_MODEL' (expected 'mbf' or 'r50')"
+        exit 1
+        ;;
+esac
 
 BIN_DIR="/usr/local/bin"
 SHARE_DIR="/usr/local/share/face-auth"
@@ -108,9 +135,8 @@ EOF
     echo "OpenVINO runtime libraries registered system-wide via ldconfig"
 fi
 
-# ---- Install model ----
-echo "Installing model..."
-MODEL_NAME="w600k_mbf.onnx"
+# ---- Install recognition model (mbf or r50, selected above via RECOGNITION_MODEL) ----
+echo "Installing recognition model ($RECOGNITION_MODEL: $MODEL_NAME)..."
 if [ -f "$SHARE_DIR/$MODEL_NAME" ]; then
     echo "Model already installed at $SHARE_DIR/$MODEL_NAME"
 elif [ -f "models/$MODEL_NAME" ]; then
@@ -119,8 +145,8 @@ elif [ -f "models/$MODEL_NAME" ]; then
 else
     echo "Downloading model from InsightFace..."
     mkdir -p /tmp/face-auth-model
-    curl -L -o /tmp/face-auth-model/buffalo_sc.zip "$MODEL_URL"
-    unzip -o /tmp/face-auth-model/buffalo_sc.zip -d /tmp/face-auth-model/
+    curl -L -o /tmp/face-auth-model/model.zip "$MODEL_URL"
+    unzip -o /tmp/face-auth-model/model.zip -d /tmp/face-auth-model/
     echo "Verifying checksum..."
     echo "$MODEL_CHECKSUM  /tmp/face-auth-model/$MODEL_NAME" | sha256sum -c - || {
         echo "Error: Checksum mismatch! The model may be corrupted or tampered."
@@ -173,6 +199,23 @@ if [ "$NPU_ACTIVE" = "1" ]; then
 elif grep -q '^backend\s*=\s*"openvino"' "$CONFIG_DIR/face-auth.toml" 2>/dev/null; then
     sed -i 's/^backend.*/backend = "tract"/' "$CONFIG_DIR/face-auth.toml"
     echo "Warning: NPU build not active this run — reverted backend to \"tract\" in $CONFIG_DIR/face-auth.toml"
+fi
+
+# Keep model_path in face-auth.toml pointed at whatever RECOGNITION_MODEL was actually
+# installed this run — only touched when a non-default model is explicitly requested, so a
+# plain (default) `sudo ./deploy.sh` never rewrites a user's existing config, matching how
+# the rest of this script treats an already-present /etc/face-auth.toml as hands-off.
+if [ "$RECOGNITION_MODEL" != "mbf" ]; then
+    if grep -q '^model_path' "$CONFIG_DIR/face-auth.toml"; then
+        sed -i "s#^model_path.*#model_path = \"$SHARE_DIR/$MODEL_NAME\"#" "$CONFIG_DIR/face-auth.toml"
+    elif grep -q '^# model_path' "$CONFIG_DIR/face-auth.toml"; then
+        sed -i "s#^# model_path = .*#model_path = \"$SHARE_DIR/$MODEL_NAME\"#" "$CONFIG_DIR/face-auth.toml"
+    else
+        [ -s "$CONFIG_DIR/face-auth.toml" ] && [ "$(tail -c1 "$CONFIG_DIR/face-auth.toml" | wc -l)" -eq 0 ] && echo >> "$CONFIG_DIR/face-auth.toml"
+        echo "model_path = \"$SHARE_DIR/$MODEL_NAME\"" >> "$CONFIG_DIR/face-auth.toml"
+    fi
+    echo "Set model_path = \"$SHARE_DIR/$MODEL_NAME\" in $CONFIG_DIR/face-auth.toml"
+    echo "NOTE: switching recognition models requires re-enrolling: face-enroll --user $ACTUAL_USER"
 fi
 
 # ---- PAM setup ----

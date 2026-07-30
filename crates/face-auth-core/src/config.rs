@@ -92,6 +92,18 @@ impl FaceAuthConfig {
             .unwrap_or_else(|| "/usr/local/share/face-auth/w600k_mbf.onnx".to_string())
     }
 
+    /// Identity tag stored alongside saved embeddings (see `storage::EmbeddingStore`) so a
+    /// `model_path` change without re-enrolling is caught as a clear error instead of silently
+    /// comparing embeddings from two numerically incompatible recognition models. Just the
+    /// filename, not the full path — swapping `/usr/local/share/face-auth/w600k_r50.onnx` for
+    /// a copy at a different path shouldn't look like a different model.
+    pub fn model_tag(&self) -> String {
+        std::path::Path::new(&self.model_path())
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| self.model_path())
+    }
+
     pub fn capture_timeout_ms(&self) -> i32 {
         self.capture_timeout_ms.unwrap_or(5000) as i32
     }

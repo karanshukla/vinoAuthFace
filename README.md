@@ -245,11 +245,45 @@ face-auth (static binary)
 ## Model
 
 Uses InsightFace **`w600k_mbf.onnx`** (MobileFaceNet @ WebFace600K, ~13 MB, 512-d output)
-from the `buffalo_sc` model pack, plus **`version-slim-320.onnx`** for face detection.
-Licensed under MIT (InsightFace is MIT-licensed).
+from the `buffalo_sc` model pack by default, plus **`version-slim-320.onnx`** for face
+detection. Licensed under MIT (InsightFace is MIT-licensed).
 
 The models are **not bundled** in this repository. `deploy.sh` downloads them directly from
 InsightFace's official GitHub releases and verifies the SHA-256 checksum.
+
+### Recognition model: mbf (default) vs r50
+
+`deploy.sh` can install either recognition model from InsightFace's model zoo:
+
+| | `mbf` (default) | `r50` |
+|---|---|---|
+| Backbone | MobileFaceNet | ResNet50 |
+| Pack | `buffalo_sc` | `buffalo_l` |
+| Size | ~13 MB | ~175 MB |
+| Encode latency (this project's NPU benchmark) | ~1.2ms/frame | ~4.2ms/frame |
+| Genuine-match similarity (same benchmark) | mean 0.815, min 0.759 | mean 0.875, min 0.830 |
+
+`r50` is InsightFace's larger, more accurate recognition model — noticeably wider match
+margin in local NPU benchmarking, for a few extra milliseconds per frame that don't show up
+in practice (the scan loop is paced by the camera's own frame interval either way, not by
+encode time). The only real cost is a one-time ~1s NPU compile-cache-miss the first time it's
+ever loaded (subsequent loads are back to double-digit ms, same as `mbf`).
+
+Install it with:
+
+```bash
+FACE_AUTH_RECOGNITION_MODEL=r50 sudo -E ./deploy.sh
+```
+
+**Switching models requires re-enrolling** (`face-enroll --user $USER`) — `mbf` and `r50`
+produce numerically incompatible embedding spaces despite the same 512-d shape, so cosine
+similarity between them would be meaningless, not just less accurate. To make this a loud
+failure instead of a silent one, every saved embeddings file is tagged with the recognition
+model that produced it (`storage::EmbeddingStore`'s `model_tag`, the model's filename);
+authenticating or `--improve`-enrolling against a mismatched `model_path` is refused with an
+explicit error rather than comparing embeddings across models. Existing installs are
+unaffected — files saved before this existed have no tag and are treated as compatible with
+whatever's currently configured, same as always.
 
 ## SELinux
 
