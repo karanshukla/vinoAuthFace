@@ -84,7 +84,7 @@ impl FaceAuth {
 
         let t2 = Instant::now();
         let mut frame = frame;
-        crate::preprocess::histogram_equalize(&mut frame);
+        crate::preprocess::clahe(&mut frame);
         eprintln!("TIMING equalize: {:?}", t2.elapsed());
 
         let t_detect = Instant::now();
@@ -184,7 +184,7 @@ impl FaceAuth {
 
             let t2 = Instant::now();
             let mut frame = frame;
-            crate::preprocess::histogram_equalize(&mut frame);
+            crate::preprocess::clahe(&mut frame);
             eprintln!("TIMING frame_{} equalize: {:?}", frame_num, t2.elapsed());
 
             let face_box = match self.detector.detect(&frame)? {
@@ -299,7 +299,7 @@ impl FaceAuth {
             }
 
             let mut frame = frame;
-            crate::preprocess::histogram_equalize(&mut frame);
+            crate::preprocess::clahe(&mut frame);
 
             let face_box = match self.detector.detect(&frame)? {
                 Some(b) => b,

@@ -113,25 +113,144 @@ pub fn frame_motion_fraction(a: &super::capture::IrFrame, b: &super::capture::Ir
     changed as f32 / a.data.len() as f32
 }
 
-pub fn histogram_equalize(frame: &mut super::capture::IrFrame) {
-    let mut hist = [0u32; 65536];
-    
-    for &val in &frame.data {
-        hist[val as usize] += 1;
+const CLAHE_TILES_X: u32 = 8;
+const CLAHE_TILES_Y: u32 = 8;
+/// Bins are clipped at this multiple of a tile's average bin height before the clipped excess
+/// is redistributed evenly across the tile's histogram. Global equalization over-amplifies flat
+/// regions (most of an IR frame outside the face) into visible noise; a moderate clip keeps the
+/// local contrast boost from doing the same to the sensor's own read noise.
+const CLAHE_CLIP_FACTOR: f32 = 4.0;
+
+/// Contrast-Limited Adaptive Histogram Equalization. Unlike a single frame-wide histogram, this
+/// computes a separate tone mapping per tile (so per-region IR falloff — e.g. dimmer toward the
+/// edges of the face — gets corrected locally) and bilinearly interpolates between neighboring
+/// tiles' mappings so tile boundaries don't show up as visible seams.
+///
+/// Bins on the true 8-bit sample value (`val / 257`), not the full `u16` range: `capture_frame`
+/// upscales each raw byte by `* 257` to fill `u16`'s range, so the source data only ever has 256
+/// distinct levels — binning across 65536 mostly-empty buckets would waste work without adding
+/// resolution.
+pub fn clahe(frame: &mut super::capture::IrFrame) {
+    let width = frame.width;
+    let height = frame.height;
+    if width == 0 || height == 0 || frame.data.is_empty() {
+        return;
     }
-    
-    let total = frame.data.len() as f32;
-    let mut cdf = [0f32; 65536];
-    let mut sum = 0f32;
-    
-    for i in 0..65536 {
-        sum += hist[i] as f32;
-        cdf[i] = sum / total;
+
+    let tiles_x = CLAHE_TILES_X.min(width).max(1);
+    let tiles_y = CLAHE_TILES_Y.min(height).max(1);
+
+    let col_bounds = tile_bounds(width, tiles_x);
+    let row_bounds = tile_bounds(height, tiles_y);
+
+    let mappings: Vec<Vec<[u8; 256]>> = row_bounds
+        .iter()
+        .map(|&(y0, y1)| {
+            col_bounds
+                .iter()
+                .map(|&(x0, x1)| tile_mapping(frame, x0, x1, y0, y1))
+                .collect()
+        })
+        .collect();
+
+    let col_centers: Vec<f32> = col_bounds.iter().map(|&(s, e)| (s + e) as f32 / 2.0).collect();
+    let row_centers: Vec<f32> = row_bounds.iter().map(|&(s, e)| (s + e) as f32 / 2.0).collect();
+
+    let mut out = vec![0u16; frame.data.len()];
+    for y in 0..height {
+        let (ty0, ty1, wy) = neighbor_weights(y as f32, &row_centers);
+        for x in 0..width {
+            let (tx0, tx1, wx) = neighbor_weights(x as f32, &col_centers);
+            let idx = (y * width + x) as usize;
+            let val = (frame.data[idx] / 257) as usize;
+
+            let v00 = mappings[ty0][tx0][val] as f32;
+            let v01 = mappings[ty0][tx1][val] as f32;
+            let v10 = mappings[ty1][tx0][val] as f32;
+            let v11 = mappings[ty1][tx1][val] as f32;
+
+            let top = v00 * (1.0 - wx) + v01 * wx;
+            let bottom = v10 * (1.0 - wx) + v11 * wx;
+            let mapped = top * (1.0 - wy) + bottom * wy;
+
+            out[idx] = (mapped.round() as u16) * 257;
+        }
     }
-    
-    for val in &mut frame.data {
-        *val = (cdf[*val as usize] * 65535.0) as u16;
+
+    frame.data = out;
+}
+
+/// Partitions `dim` into `tiles` contiguous, roughly-equal ranges (`[start, end)`), with any
+/// remainder absorbed into whichever tiles land on it rather than piled onto the last one.
+fn tile_bounds(dim: u32, tiles: u32) -> Vec<(u32, u32)> {
+    (0..tiles).map(|i| (i * dim / tiles, (i + 1) * dim / tiles)).collect()
+}
+
+/// Clip-limited histogram equalization mapping (256 -> 256) for one tile.
+fn tile_mapping(frame: &super::capture::IrFrame, x0: u32, x1: u32, y0: u32, y1: u32) -> [u8; 256] {
+    let mut hist = [0u32; 256];
+    let mut count = 0u32;
+    for y in y0..y1 {
+        let row_start = (y * frame.width) as usize;
+        for x in x0..x1 {
+            let val = (frame.data[row_start + x as usize] / 257) as usize;
+            hist[val] += 1;
+            count += 1;
+        }
     }
+    if count == 0 {
+        let mut identity = [0u8; 256];
+        for (i, m) in identity.iter_mut().enumerate() {
+            *m = i as u8;
+        }
+        return identity;
+    }
+
+    let avg = count as f32 / 256.0;
+    let clip = (CLAHE_CLIP_FACTOR * avg).max(1.0) as u32;
+
+    let mut excess = 0u32;
+    for bin in hist.iter_mut() {
+        if *bin > clip {
+            excess += *bin - clip;
+            *bin = clip;
+        }
+    }
+    let redistribute = excess / 256;
+    let remainder = excess % 256;
+    for (i, bin) in hist.iter_mut().enumerate() {
+        *bin += redistribute + if (i as u32) < remainder { 1 } else { 0 };
+    }
+
+    let mut mapping = [0u8; 256];
+    let mut cumulative = 0u32;
+    let total = count as f32;
+    for (i, &bin) in hist.iter().enumerate() {
+        cumulative += bin;
+        mapping[i] = ((cumulative as f32 / total) * 255.0).round() as u8;
+    }
+    mapping
+}
+
+/// For a pixel coordinate along one axis, the two neighboring tile-center indices to
+/// interpolate between and the interpolation weight toward the second one. Coordinates at or
+/// beyond the outermost tile centers clamp to that tile with zero weight (no extrapolation).
+fn neighbor_weights(pos: f32, centers: &[f32]) -> (usize, usize, f32) {
+    let n = centers.len();
+    if n <= 1 || pos <= centers[0] {
+        return (0, 0, 0.0);
+    }
+    if pos >= centers[n - 1] {
+        return (n - 1, n - 1, 0.0);
+    }
+    for i in 0..n - 1 {
+        if pos >= centers[i] && pos <= centers[i + 1] {
+            let span = centers[i + 1] - centers[i];
+            let w = if span > 0.0 { (pos - centers[i]) / span } else { 0.0 };
+            return (i, i + 1, w);
+        }
+    }
+    (n - 1, n - 1, 0.0)
 }
 
 #[cfg(test)]
