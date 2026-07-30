@@ -20,8 +20,9 @@ use std::time::{Duration, Instant};
 /// Fraction of the detected face box's own width/height added as margin on
 /// each side before cropping, so the encoder sees the same kind of
 /// forehead-to-chin framing MobileFaceNet-style models are trained on
-/// instead of a razor-tight bounding box.
-const FACE_CROP_MARGIN: f32 = 0.3;
+/// instead of a razor-tight bounding box. Public so out-of-tree tooling
+/// (e.g. face-similarity-check) can reproduce the exact same crop.
+pub const FACE_CROP_MARGIN: f32 = 0.3;
 
 pub struct FaceAuth {
     config: FaceAuthConfig,
@@ -43,6 +44,24 @@ impl FaceAuth {
         Ok(Self { config, encoder, detector })
     }
 
+    /// Refuses to proceed if `store` was enrolled under a different recognition model than
+    /// the one currently configured — their embedding spaces aren't comparable, so a mismatch
+    /// here would otherwise degrade into meaningless (not just less accurate) cosine
+    /// similarities. Unknown-origin stores (legacy pre-model-tag files) always pass; see
+    /// `EmbeddingStore::model_tag_matches`.
+    fn check_model_tag(&self, store: &EmbeddingStore) -> Result<()> {
+        let current_tag = self.config.model_tag();
+        if !store.model_tag_matches(&current_tag) {
+            anyhow::bail!(
+                "Enrolled embeddings were created with a different recognition model ({:?}) than \
+                 the one currently configured ({current_tag}) — re-run face-enroll to regenerate \
+                 them for this model.",
+                store.model_tag
+            );
+        }
+        Ok(())
+    }
+
     pub fn authenticate_once(&mut self, user: &str) -> Result<bool> {
         self.config.verify_pinned_camera()?;
 
@@ -53,6 +72,7 @@ impl FaceAuth {
 
         let t0 = Instant::now();
         let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
+        self.check_model_tag(&store)?;
         eprintln!("TIMING store_load: {:?}", t0.elapsed());
 
         let t1 = Instant::now();
@@ -65,7 +85,7 @@ impl FaceAuth {
 
         let t2 = Instant::now();
         let mut frame = frame;
-        crate::preprocess::histogram_equalize(&mut frame);
+        crate::preprocess::clahe(&mut frame);
         eprintln!("TIMING equalize: {:?}", t2.elapsed());
 
         let t_detect = Instant::now();
@@ -108,6 +128,7 @@ impl FaceAuth {
 
         let t0 = Instant::now();
         let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
+        self.check_model_tag(&store)?;
         eprintln!("TIMING store_load: {:?}", t0.elapsed());
 
         let t_cam = Instant::now();
@@ -164,7 +185,7 @@ impl FaceAuth {
 
             let t2 = Instant::now();
             let mut frame = frame;
-            crate::preprocess::histogram_equalize(&mut frame);
+            crate::preprocess::clahe(&mut frame);
             eprintln!("TIMING frame_{} equalize: {:?}", frame_num, t2.elapsed());
 
             let face_box = match self.detector.detect(&frame)? {
@@ -279,7 +300,7 @@ impl FaceAuth {
             }
 
             let mut frame = frame;
-            crate::preprocess::histogram_equalize(&mut frame);
+            crate::preprocess::clahe(&mut frame);
 
             let face_box = match self.detector.detect(&frame)? {
                 Some(b) => b,
@@ -316,8 +337,9 @@ impl FaceAuth {
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms)?;
 
         let saved = store.embeddings.len();
-        store.save(user, &self.config.embeddings_dir())?;
-        println!("Saved {} embeddings for user '{}'", saved, user);
+        let model_tag = self.config.model_tag();
+        store.save(user, &self.config.embeddings_dir(), &model_tag)?;
+        println!("Saved {} embeddings for user '{}' (model: {})", saved, user, model_tag);
 
         Ok(())
     }
@@ -329,13 +351,20 @@ impl FaceAuth {
             Ok(s) => s,
             Err(_) => EmbeddingStore::default(),
         };
+        // Appending is meant to add more samples under the *same* model — mixing in embeddings
+        // from a different one would silently corrupt the gallery with numerically incompatible
+        // vectors (same 512-d shape, different space) rather than actually improving anything.
+        // Switching models is a fresh start, not an improvement: use plain `enroll`, not
+        // `--improve`, when `model_path` has changed.
+        self.check_model_tag(&store)?;
         let existing = store.embeddings.len();
         let mut cam = Camera::open(&self.config.device())?;
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms)?;
 
         let total = store.embeddings.len();
-        store.save(user, &self.config.embeddings_dir())?;
-        println!("Added {} new embeddings for user '{}' ({} total)", total - existing, user, total);
+        let model_tag = self.config.model_tag();
+        store.save(user, &self.config.embeddings_dir(), &model_tag)?;
+        println!("Added {} new embeddings for user '{}' ({} total, model: {})", total - existing, user, total, model_tag);
 
         Ok(())
     }

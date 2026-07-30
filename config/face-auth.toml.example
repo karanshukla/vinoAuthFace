@@ -8,7 +8,12 @@
 # Cosine similarity threshold (0.0 - 1.0, lower = more permissive)
 threshold = 0.6
 
-# ONNX model path (default: /usr/local/share/face-auth/w600k_mbf.onnx)
+# ONNX recognition model path (default: /usr/local/share/face-auth/w600k_mbf.onnx, fast
+# MobileFaceNet). deploy.sh can also install w600k_r50.onnx (ResNet50, larger/more accurate —
+# see README's "Recognition model" section) via FACE_AUTH_RECOGNITION_MODEL=r50, and will set
+# this line for you when it does. Changing this by hand requires re-enrolling
+# (`face-enroll --user $USER`) — face-auth refuses to compare embeddings enrolled under a
+# different model instead of silently producing meaningless similarity scores.
 # model_path = "/usr/local/share/face-auth/w600k_mbf.onnx"
 
 # Embeddings storage directory

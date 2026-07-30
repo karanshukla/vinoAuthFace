@@ -1,27 +1,35 @@
 use crate::storage::EmbeddingStore;
 use crate::error::FaceAuthError;
 
-pub fn verify_embedding(
-    probe: &[f32],
-    store: &EmbeddingStore,
-    threshold: f32,
-) -> anyhow::Result<bool> {
+/// Highest cosine similarity between `probe` and any embedding in `store`. Exposed (not just
+/// `verify_embedding`'s pass/fail) so tooling that wants the raw score — e.g.
+/// face-similarity-check, for gauging margin rather than a bare yes/no — doesn't have to
+/// duplicate this loop.
+pub fn max_similarity(probe: &[f32], store: &EmbeddingStore) -> anyhow::Result<f32> {
     if store.embeddings.is_empty() {
         return Err(FaceAuthError::NoEmbeddings.into());
     }
-    
+
     let mut max_similarity = 0.0f32;
-    
+
     for stored in &store.embeddings {
         let similarity = cosine_similarity(probe, stored);
         if similarity > max_similarity {
             max_similarity = similarity;
         }
     }
-    
-    tracing::debug!("Max similarity: {:.4}, threshold: {:.4}", max_similarity, threshold);
-    
-    Ok(max_similarity >= threshold)
+
+    Ok(max_similarity)
+}
+
+pub fn verify_embedding(
+    probe: &[f32],
+    store: &EmbeddingStore,
+    threshold: f32,
+) -> anyhow::Result<bool> {
+    let similarity = max_similarity(probe, store)?;
+    tracing::debug!("Max similarity: {:.4}, threshold: {:.4}", similarity, threshold);
+    Ok(similarity >= threshold)
 }
 
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
