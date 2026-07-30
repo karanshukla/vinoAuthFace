@@ -182,6 +182,7 @@ The deploy script adds a `sufficient` `pam_exec.so` line to:
 | `sudo` | `/etc/pam.d/sudo` | After `#%PAM-1.0` |
 | `gdm-password` | `/etc/pam.d/gdm-password` | After `pam_selinux_permit.so` |
 | `swaylock` | `/etc/pam.d/swaylock` | After `#%PAM-1.0` |
+| `polkit-1` | `/etc/pam.d/polkit-1` | After `#%PAM-1.0` |
 
 `sufficient` means: if face-auth exits 0, the user is authenticated immediately.
 If it fails (no match, no camera, timeout), PAM falls through to password prompt.
@@ -189,10 +190,45 @@ If it fails (no match, no camera, timeout), PAM falls through to password prompt
 No `timeout`, `setenv`, or `env_pass` flags are needed — face-auth reads the camera
 (not stdin) and resolves `PAM_USER` via its own fallback chain.
 
+**`polkit-1`** covers every polkit `auth_self` prompt system-wide, not just one app —
+`pkexec`, package-manager GUIs, desktop-settings changes, and any app (Bitwarden included,
+see below) that asks polkit to re-authenticate the active user. This is the same PAM
+service most distros already wire a fingerprint reader into via `system-auth`; face-auth
+is added as a second `sufficient` biometric method ahead of it, not a replacement. If
+`/etc/pam.d/polkit-1` doesn't already exist as an admin override (the common case — most
+distros ship only the vendor default under `/usr/lib/pam.d/polkit-1`), `deploy.sh`
+materializes one first so there's something to back up and patch; `uninstall.sh` removes
+that file outright in this case rather than trying to restore a prior state that never
+existed, falling back to the vendor default again.
+
+Known UX gap: sudo's terminal prompt and polkit's graphical dialog give no visual cue that
+a biometric method is available or being attempted (unlike Windows Hello, which shows a
+camera icon while scanning) — auth just silently succeeds within the scan window or falls
+through to the normal password prompt. Purely cosmetic; doesn't affect whether it works.
+
+### Bitwarden biometric unlock
+
+If a Bitwarden desktop client is detected (native binary, Flatpak, or Snap), `deploy.sh`
+also installs Bitwarden's own polkit action file
+(`/usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy`) — required for Flatpak/Snap
+installs, which are sandboxed and can't write it themselves. The content is transcribed
+verbatim from Bitwarden's official source (`os-biometrics-linux.service.ts` in
+[`bitwarden/clients`](https://github.com/bitwarden/clients)), not downloaded from a URL, so
+there's no separate checksum step. Once installed, enable **File → Settings → Unlock with
+system authentication** in Bitwarden — it'll prompt through `polkit-1` like any other
+polkit action, so a face scan (or fingerprint, or password) satisfies it.
+
+Not covered: KWallet. Its auto-unlock happens once at login (`pam_kwallet5.so` capturing
+the typed password), not at the lock screen, and most desktops leave the wallet unlocked
+across screen lock/unlock regardless of auth method — so there's nothing for face-auth to
+gate there today. Making face-auth *drive* KWallet's own unlock would need KWallet to grow
+a pluggable-auth backend, which it doesn't have yet (there's an open upstream feature
+request for FIDO2/biometric-backed KWallet storage, not implemented as of this writing).
+
 ## How It Works
 
 ```
-PAM (sudo / gdm-password / swaylock)
+PAM (sudo / gdm-password / swaylock / polkit-1)
   │
   ▼
 face-auth (static binary)

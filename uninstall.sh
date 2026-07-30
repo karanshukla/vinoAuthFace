@@ -66,8 +66,16 @@ rm -rf "/usr/local/share/face-auth-gtk"
 rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/face-auth-gtk"
 
 echo "Restoring PAM configs..."
-for service in sudo swaylock gdm-password; do
+for service in sudo swaylock gdm-password polkit-1; do
     conf="$PAM_DIR/$service"
+    if [ "$service" = "polkit-1" ] && [ -f "$PAM_DIR/.face-auth-polkit-1-created" ]; then
+        # deploy.sh synthesized this file from scratch (no admin override existed before it),
+        # so there's no prior state to restore to — just remove it and fall back to whatever
+        # vendor default (/usr/lib/pam.d/polkit-1) polkit used before face-auth touched it.
+        rm -f "$conf" "$conf.face-auth.bak"
+        echo "Removed $conf (face-auth created this file; no prior admin override existed)"
+        continue
+    fi
     if [ -f "$conf.face-auth.bak" ]; then
         mv "$conf.face-auth.bak" "$conf"
         echo "Restored $conf from backup"
@@ -76,6 +84,10 @@ for service in sudo swaylock gdm-password; do
         echo "Cleaned $conf"
     fi
 done
+rm -f "$PAM_DIR/.face-auth-polkit-1-created"
+
+echo "Removing Bitwarden polkit policy (if installed by face-auth)..."
+rm -f /usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy
 
 echo "Removing SELinux policy module..."
 semodule -r face_auth 2>/dev/null || true

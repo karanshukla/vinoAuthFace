@@ -18,7 +18,7 @@ ACTUAL_HOME=$(getent passwd "$ACTUAL_USER" | cut -d: -f6)
 # ---- Undo any previous partial setup ----
 echo "Cleaning up any previous partial setup..."
 
-for service in sudo swaylock gdm-password; do
+for service in sudo swaylock gdm-password polkit-1; do
     if [ -f "$PAM_DIR/$service" ]; then
         sed -i '/^auth\s\s*sufficient\s\s*pam_exec\.so.*face-auth/d' "$PAM_DIR/$service" 2>/dev/null || true
     fi
@@ -177,7 +177,28 @@ fi
 
 # ---- PAM setup ----
 echo "Installing PAM configs..."
-for service in sudo swaylock gdm-password; do
+
+# polkit-1 usually has no /etc/pam.d override out of the box — it falls back to the vendor
+# default (/usr/lib/pam.d/polkit-1, typically just `include system-auth`). Materialize that
+# default as a real file first, so the loop below has something to back up and patch, and so
+# uninstall.sh can tell "we created this from scratch" apart from "we edited an existing admin
+# override" (the former gets deleted outright on uninstall, the latter gets restored).
+if [ ! -f "$PAM_DIR/polkit-1" ]; then
+    if [ -f "/usr/lib/pam.d/polkit-1" ]; then
+        cp "/usr/lib/pam.d/polkit-1" "$PAM_DIR/polkit-1"
+    else
+        cat > "$PAM_DIR/polkit-1" <<'EOF'
+#%PAM-1.0
+auth       include      system-auth
+account    include      system-auth
+password   include      system-auth
+session    include      system-auth
+EOF
+    fi
+    touch "$PAM_DIR/.face-auth-polkit-1-created"
+fi
+
+for service in sudo swaylock gdm-password polkit-1; do
     conf="$PAM_DIR/$service"
     if [ ! -f "$conf" ]; then
         echo "Warning: $conf not found, skipping"
@@ -195,6 +216,59 @@ for service in sudo swaylock gdm-password; do
     fi
     echo "Updated $conf (backup at $conf.face-auth.bak)"
 done
+
+# ---- Bitwarden polkit policy (only if Bitwarden is actually installed) ----
+# Bitwarden's Linux biometric unlock is a polkit action (com.bitwarden.Bitwarden.unlock,
+# allow_active=auth_self) that re-authenticates the active user through the polkit-1 PAM
+# service wired above. The action definition itself normally needs installing manually for
+# Flatpak/Snap builds (sandboxed, can't self-install) — see
+# https://bitwarden.com/help/biometrics/#tab-linux. Content below is transcribed verbatim
+# from Bitwarden's own official source (the same string their native, non-sandboxed builds
+# write via pkexec at runtime), not downloaded from a URL, so there's no separate integrity
+# check needed: apps/desktop/src/key-management/biometrics/native-v2/os-biometrics-linux.service.ts
+# in https://github.com/bitwarden/clients.
+BITWARDEN_DETECTED=false
+if command -v bitwarden &>/dev/null || command -v bitwarden-desktop &>/dev/null; then
+    BITWARDEN_DETECTED=true
+elif flatpak info com.bitwarden.desktop &>/dev/null 2>&1; then
+    BITWARDEN_DETECTED=true
+elif snap list bitwarden-desktop &>/dev/null 2>&1; then
+    BITWARDEN_DETECTED=true
+fi
+
+if [ "$BITWARDEN_DETECTED" = true ]; then
+    BW_POLICY="/usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy"
+    if [ -f "$BW_POLICY" ]; then
+        echo "Bitwarden polkit policy already installed at $BW_POLICY"
+    else
+        echo "Installing Bitwarden polkit action (enables Bitwarden's 'Unlock with system authentication', including via face-auth)..."
+        cat > "$BW_POLICY" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+
+<policyconfig>
+    <action id="com.bitwarden.Bitwarden.unlock">
+      <description>Unlock Bitwarden</description>
+      <message>Authenticate to unlock Bitwarden</message>
+      <defaults>
+        <allow_any>no</allow_any>
+        <allow_inactive>no</allow_inactive>
+        <allow_active>auth_self</allow_active>
+      </defaults>
+    </action>
+</policyconfig>
+EOF
+        chown root:root "$BW_POLICY"
+        chmod 644 "$BW_POLICY"
+        command -v restorecon &>/dev/null && restorecon "$BW_POLICY" 2>/dev/null
+        echo "Installed $BW_POLICY — polkitd picks up new actions automatically, no restart needed."
+        echo "In Bitwarden: File > Settings > check 'Unlock with system authentication'."
+    fi
+else
+    echo "Bitwarden not detected, skipping its polkit policy (polkit-1 PAM hook above still covers pkexec/other polkit prompts)."
+fi
 
 # ---- SELinux policy (for lock screen) ----
 if command -v checkmodule &>/dev/null && command -v semodule_package &>/dev/null; then
