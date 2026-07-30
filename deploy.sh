@@ -207,9 +207,12 @@ fi
 # the rest of this script treats an already-present /etc/face-auth.toml as hands-off.
 if [ "$RECOGNITION_MODEL" != "mbf" ]; then
     if grep -q '^model_path' "$CONFIG_DIR/face-auth.toml"; then
-        sed -i "s#^model_path.*#model_path = \"$SHARE_DIR/$MODEL_NAME\"#" "$CONFIG_DIR/face-auth.toml"
+        sed -i "s@^model_path.*@model_path = \"$SHARE_DIR/$MODEL_NAME\"@" "$CONFIG_DIR/face-auth.toml"
     elif grep -q '^# model_path' "$CONFIG_DIR/face-auth.toml"; then
-        sed -i "s#^# model_path = .*#model_path = \"$SHARE_DIR/$MODEL_NAME\"#" "$CONFIG_DIR/face-auth.toml"
+        # Delimiter is @, not # — the pattern itself contains a literal '#' (matching the
+        # commented-out example line), which would otherwise terminate the sed pattern early
+        # and get misparsed as trailing flags ("unknown option to `s'").
+        sed -i "s@^# model_path = .*@model_path = \"$SHARE_DIR/$MODEL_NAME\"@" "$CONFIG_DIR/face-auth.toml"
     else
         [ -s "$CONFIG_DIR/face-auth.toml" ] && [ "$(tail -c1 "$CONFIG_DIR/face-auth.toml" | wc -l)" -eq 0 ] && echo >> "$CONFIG_DIR/face-auth.toml"
         echo "model_path = \"$SHARE_DIR/$MODEL_NAME\"" >> "$CONFIG_DIR/face-auth.toml"
