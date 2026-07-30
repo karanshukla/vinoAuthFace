@@ -2,12 +2,10 @@
 set -euo pipefail
 
 PURGE=false
-GUI_ONLY=false
 
 for arg in "$@"; do
     case "$arg" in
         --purge) PURGE=true ;;
-        --gui)   GUI_ONLY=true ;;
     esac
 done
 
@@ -35,36 +33,14 @@ PAM_DIR="/etc/pam.d"
 if [ "$USR_WRITABLE" = true ]; then
     ICON_DIR="/usr/share/icons/hicolor/scalable/apps"
     APP_DIR="/usr/share/applications"
-    GUI_DATA_DIR="/usr/local/share/face-auth-gtk"
 else
     ICON_DIR="${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/icons/hicolor/scalable/apps"
     APP_DIR="${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/applications"
-    GUI_DATA_DIR="${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/face-auth-gtk"
-fi
-
-if [ "$GUI_ONLY" = true ]; then
-    echo "Removing GUI binary..."
-    rm -f "$BIN_DIR/face-auth-gtk"
-    rm -f "${XDG_BIN_HOME:-$ACTUAL_HOME/.local/bin}/face-auth-gtk"
-
-    echo "Removing desktop file..."
-    rm -f "$APP_DIR/com.github.pfalkingham.face-auth-gtk.desktop"
-
-    echo "Removing icon..."
-    rm -f "$ICON_DIR/com.github.pfalkingham.face-auth-gtk.svg"
-
-    echo "Removing GUI data..."
-    rm -rf "$GUI_DATA_DIR"
-
-    echo ""
-    echo "GUI uninstall complete!"
-    exit 0
 fi
 
 echo "Removing binaries..."
 rm -f "$BIN_DIR/face-auth"
 rm -f "$BIN_DIR/face-enroll"
-rm -f "$BIN_DIR/face-auth-gtk"
 
 echo "Removing model and SELinux policy..."
 rm -rf "$SHARE_DIR"
@@ -72,12 +48,21 @@ rm -rf "$SHARE_DIR"
 echo "Removing config..."
 rm -f "$CONFIG_DIR/face-auth.toml"
 
-echo "Removing desktop entry and icon..."
+if [ -f /etc/udev/rules.d/99-face-auth-camera.rules ]; then
+    echo "Removing pinned-camera udev rule..."
+    rm -f /etc/udev/rules.d/99-face-auth-camera.rules
+    udevadm control --reload-rules 2>/dev/null || true
+fi
+
+# Cleans up remnants of the old GTK GUI (deploy-gui.sh/face-auth-gtk), removed from this repo.
+echo "Removing any leftover GUI files from an older install..."
+rm -f "$BIN_DIR/face-auth-gtk"
+rm -f "${XDG_BIN_HOME:-$ACTUAL_HOME/.local/bin}/face-auth-gtk"
 rm -f "$APP_DIR/com.github.pfalkingham.face-auth-gtk.desktop"
 rm -f "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/applications/com.github.pfalkingham.face-auth-gtk.desktop"
 rm -f "$ICON_DIR/com.github.pfalkingham.face-auth-gtk.svg"
 rm -f "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/icons/hicolor/scalable/apps/com.github.pfalkingham.face-auth-gtk.svg"
-rm -rf "$GUI_DATA_DIR"
+rm -rf "/usr/local/share/face-auth-gtk"
 rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/face-auth-gtk"
 
 echo "Restoring PAM configs..."

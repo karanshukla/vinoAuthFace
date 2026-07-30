@@ -8,7 +8,12 @@ struct Args {
     #[arg(short, long, help = "Username to enroll")]
     user: String,
     
-    #[arg(short, long, help = "Number of frames to capture", default_value = "5")]
+    #[arg(
+        short,
+        long,
+        help = "Number of frames to capture. 30 gives enough pose/expression variation for reliable matching; lower counts enroll faster but match less reliably",
+        default_value = "30"
+    )]
     frames: usize,
     
     #[arg(long, help = "Interval between frames (ms)", default_value = "400")]
@@ -73,11 +78,22 @@ fn main() -> anyhow::Result<()> {
     println!("Threshold: {}", config.threshold());
     println!("Embeddings dir: {}", config.embeddings_dir().display());
     
+    let already_pinned = config.pinned_camera_path.is_some();
+    let device_used = config.device();
+
     let mut auth = FaceAuth::new(config)?;
     if args.improve {
         auth.enroll_append(&args.user, args.frames, args.interval)?;
     } else {
         auth.enroll(&args.user, args.frames, args.interval)?;
+
+        if !already_pinned {
+            println!();
+            println!("Enrollment succeeded — this confirms {} is the right camera.", device_used);
+            println!("Recommended: run 'sudo ./pin-camera.sh' now to lock face-auth to this exact");
+            println!("camera, so a spoofed USB device claiming the same VID/PID can't be used to");
+            println!("inject frames. See README.md's Security & Limitations section.");
+        }
     }
 
     Ok(())

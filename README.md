@@ -1,16 +1,11 @@
 # authFace — IR Camera Face Unlock for Linux
 
-<p align="center">
-  <img src="data/com.github.pfalkingham.face-auth-gtk.svg" width="128" height="128" alt="authFace logo">
-</p>
-
 **Windows Hello–style biometric login for Linux.** IR camera facial authentication via PAM — works on **immutable distros** (Bazzite, Bluefin, Fedora Silverblue, Fedora Kinoite, etc.) with zero system packages, daemons, or layering.
 
 - **Face unlock for sudo, lock screen (GNOME/Sway), and `gdm-password`**
 - **~2 seconds** from camera poll to authenticated
 - **Static musl binary** — no dependencies, no runtime
 - **No daemon, no systemd units, no D-Bus**
-- **GUI settings panel** (optional GTK4 app) for camera selection and enrollment
 - **Immutable-first** — everything fits in `/usr/local` and `~/.local`, no `/usr` modifications needed
 
 ## Features
@@ -21,7 +16,6 @@
 - **No daemon, no systemd, no D-Bus** — just `pam_exec.so` triggered by PAM
 - **Configurable** via `/etc/face-auth.toml`, `~/.config/face-auth.toml`, or environment variables
 - **Built-in capture timeout** (5s default) — camera hang won't lock you out
-- **GTK4 settings GUI** — select IR camera, adjust threshold, preview live feed, enroll, improve matching, and test face recognition
 - **Works on immutable distros** — no `rpm-ostree layer`, no package installs, no `/usr` modification
 
 ## Quick Start
@@ -35,29 +29,7 @@ face-enroll --user $USER
 
 # 3. Test sudo
 sudo true              # triggers IR camera → exit 0
-
-# 4. (Optional) Install the settings GUI
-sudo ./deploy-gui.sh
-
-# 5. Launch the GUI from app menu: "Face Authentication Settings"
-#    or run: face-auth-gtk
 ```
-
-## GUI — Face Authentication Settings
-
-A native GTK4/libadwaita settings panel for configuring and testing face unlock:
-
-| Feature | Description |
-|---------|-------------|
-| **Live IR preview** | Real-time camera feed with face-detection overlay |
-| **Camera picker** | Dropdown to select between IR cameras |
-| **Threshold slider** | Adjust similarity threshold (0.1–0.95) — higher = stricter match |
-| **Enroll** | Captures 5 frames and stores face embeddings (replaces existing) |
-| **Improve Matching** | Captures 5 more frames and appends to existing embeddings |
-| **Test** | Captures a single frame and compares against enrolled embeddings |
-| **Automatic config save** | Camera and threshold changes persist to `~/.config/face-auth.toml` |
-
-The GUI is optional and deployed separately (no GTK dependencies bundled with the core auth binary).
 
 ## Requirements
 
@@ -71,12 +43,10 @@ The GUI is optional and deployed separately (no GTK dependencies bundled with th
 - PAM with `pam_exec.so` (standard on all distros)
 - SELinux (Fedora/Bluefin/Silverblue) — deploy script installs policy automatically
 - `policycoreutils` for SELinux policy compilation (installed by default on Fedora)
-- For the GUI: GTK4 + libadwaita runtime libraries (system-installed, not bundled)
 
 ### Software (build system — where you compile)
 
-You need a Rust toolchain. For the core auth (musl), add `x86_64-unknown-linux-musl` target.
-For the GUI (dynamic GTK), the host target is sufficient.
+You need a Rust toolchain with the `x86_64-unknown-linux-musl` target added.
 
 ## Building from Source
 
@@ -98,19 +68,6 @@ cargo build --release --target x86_64-unknown-linux-musl -p face-auth -p face-en
 sudo ./deploy.sh
 ```
 
-### GUI (dynamic GTK — needs GTK4 + libadwaita devel packages)
-
-```bash
-# Install GTK development libraries (Fedora)
-sudo dnf install gtk4-devel libadwaita-devel
-
-# Build
-cargo build --release -p face-auth-gtk
-
-# Deploy
-sudo ./deploy-gui.sh
-```
-
 ### On immutable distros via distrobox
 
 ```bash
@@ -119,19 +76,17 @@ distrobox create --image docker.io/library/fedora:40 --name authface-dev
 distrobox enter authface-dev
 
 # Inside the container, install build deps (once)
-sudo dnf install -y rust cargo gcc gcc-c++ musl-gcc cmake gtk4-devel libadwaita-devel
+sudo dnf install -y rust cargo gcc gcc-c++ musl-gcc cmake
 
 # Clone and build
 cd ~/Projects
 git clone https://github.com/pfalkingham/authFace.git
 cd authFace
 cargo build --release --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
-cargo build --release -p face-auth-gtk
 
 # Exit container, then deploy on host
 exit
 sudo ./deploy.sh
-sudo ./deploy-gui.sh
 ```
 
 ## Deployment
@@ -154,32 +109,28 @@ sudo ./deploy.sh
 
 Each PAM file is backed up with a `.face-auth.bak` suffix.
 
-### GUI (optional settings panel)
+### Pin camera (recommended)
 
 ```bash
-sudo ./deploy-gui.sh
+sudo ./pin-camera.sh
 ```
 
-Automatically detects whether `/usr` is writable:
-- **Mutable systems**: installs to `/usr/local/bin`, `/usr/share/applications/`, `/usr/share/icons/`
-- **Immutable systems**: installs to `~/.local/bin`, `~/.local/share/applications/`, `~/.local/share/icons/`
-
-Launch from the application menu: **Face Authentication Settings**, or run `face-auth-gtk`.
+Confirm the camera works first (`face-enroll` succeeds, `sudo true` unlocks) — this pins
+whatever `device` is currently configured, so run it after enrollment, not before. See
+[Security & Limitations](#security--limitations) for what this does and does not defend
+against.
 
 ### Uninstall
 
 ```bash
-# Remove everything (core + GUI + models + config)
+# Remove everything (core + models + config)
 sudo ./uninstall.sh
-
-# Remove only the optional GUI
-sudo ./uninstall.sh --gui
 
 # Remove everything including face embeddings
 sudo ./uninstall.sh --purge
 ```
 
-Restores PAM backups, removes binaries, models, config, SELinux policy, desktop entries, and icons.
+Restores PAM backups, removes binaries, models, config, and SELinux policy.
 
 ## Configuration
 
@@ -199,22 +150,28 @@ embeddings_dir = "/var/lib/face-auth"
 capture_timeout_ms = 5000
 ```
 
-
-The GUI automatically writes camera and threshold changes to `~/.config/face-auth.toml`.
+`scan_interval_ms` (delay between scan attempts during `authenticate_scan`) is not hardcoded:
+if unset, it's queried from the camera's own reported native frame interval via V4L2
+(`VIDIOC_G_PARM`), so it adapts automatically to whatever hardware it's running on rather than
+assuming one machine's frame rate. Set `scan_interval_ms` explicitly (TOML or
+`FACE_AUTH_SCAN_INTERVAL_MS`) to override.
 
 ## Enrollment
 
 ```bash
-# Replace existing embeddings with new capture
+# Replace existing embeddings with new capture (default: 30 frames)
 face-enroll --user $USER
 
 # Append new embeddings to improve recognition across lighting/angles
 face-enroll --improve --user $USER
 ```
 
-CLI options: `--frames`, `--interval`, `--device`, `--threshold`, `--model`, `--improve`, `-v`.
+`--frames` defaults to 30: enough pose/expression variation from a single sitting for
+reliable matching against a fixed similarity threshold. Fewer frames enroll faster but
+match less reliably; run `--improve` again in different lighting/angles for the biggest
+accuracy gain beyond that.
 
-The GUI's **Enroll Face** button replaces embeddings; **Improve Matching** appends to them.
+CLI options: `--frames`, `--interval`, `--device`, `--threshold`, `--model`, `--improve`, `-v`.
 
 ## PAM Integration
 
@@ -302,16 +259,40 @@ echo $?   # 0 = success, 1 = failure
 
 # Increase capture timeout (default 5000ms)
 FACE_AUTH_CAPTURE_TIMEOUT=10000 sudo -k && sudo true
-
-# GUI not launching from app menu?
-face-auth-gtk    # run from terminal to see errors
 ```
 
 ## Security & Limitations
 
-- **IR-only, no liveness detection:** Uses IR camera (not RGB), which resists casual
-  photo spoofing. Does not perform structured-light or dot-projection depth checks.
-  High-quality IR-transparent prints or 3D masks may bypass verification.
+- **Anti-spoofing:** Uses an active-NIR IR camera (not RGB), which resists casual photo
+  spoofing structurally rather than statistically. Two layers:
+  - **Screen-based spoofing (phone/tablet showing a photo or video of the victim) is blocked
+    by sensor physics, not software**: OLED/most LCD panels emit essentially no near-infrared
+    and barely reflect the camera's own IR illuminator, so a screen held up to the camera
+    produces no face-shaped IR signal at all — confirmed empirically (zero detections across
+    100 capture attempts against a phone screen). The attack fails at the face-detection
+    stage, before recognition or liveness ever runs.
+  - **Motion-based liveness check** requires observed pixel-level motion between consecutive
+    face-detected frames before accepting a match, defeating a rigidly-held static image.
+  - Does not perform structured-light or dot-projection depth checks (no depth-capable
+    hardware). **Printed photos remain an open risk** — paper does reflect some NIR unlike
+    OLED, and a gently-moved (not perfectly rigid) printed photo could pass the motion check.
+    High-quality IR-transparent prints or 3D masks may also bypass verification. Untested;
+    revisit if/when calibration data against real printed photos becomes available.
+- **Camera identity / frame-injection:** By default face-auth opens whatever V4L2 device
+  `device` resolves to and trusts frames from it — a USB device that claims the real camera's
+  VID/PID (which any device can do; it's just a string) could be substituted and used to feed
+  synthetic or replayed frames. Run `sudo ./pin-camera.sh` once to close this: it pins
+  face-auth to the camera's exact physical USB port path and V4L2 function index (not VID/PID),
+  read from sysfs — a property a spoofed device can't replicate without physically intercepting
+  that exact internal bus segment. It writes a udev rule (`/etc/udev/rules.d/99-face-auth-
+  camera.rules`) so `device` can point at a stable `/dev/face-auth-ir` symlink instead of a
+  `/dev/videoN` index that isn't guaranteed stable across reboots, and records the pinned
+  identity in `face-auth.toml` (`pinned_camera_path`, `pinned_camera_index`) so face-auth
+  re-verifies it directly from sysfs on every authenticate/enroll call — independent of the
+  udev rule staying correct. Opt-in and unset by default, so existing installs aren't affected
+  until you run it. This closes the *injection* vector specifically; it's unrelated to the
+  motion-liveness and IR-physics checks above, which defend against *presentation* attacks
+  (something held up to the real, legitimate camera) — you want both.
 - **SELinux policy scope:** The lock-screen policy grants `xdm_t` mmap access to all
   V4L2 devices. This is a trade-off for drop-in compatibility; narrowing it requires
   custom udev device types.
@@ -337,16 +318,13 @@ authFace/
         verify.rs            # Cosine similarity
     face-auth/               # PAM binary (stdin-less, PAM_USER fallback)
     face-enroll/             # Enrollment CLI
-    face-auth-gtk/           # GTK4 settings GUI
   config/
     face-auth.toml.example   # Documented config template
-  data/
-    desktop file + icon      # App launcher assets
   selinux/
     face-auth.te             # SELinux policy source
   deploy.sh                  # Core auth installer
-  deploy-gui.sh              # Optional GUI installer
-  uninstall.sh               # Removal script (--gui, --purge flags)
+  pin-camera.sh              # Pins device by USB bus path (frame-injection defense)
+  uninstall.sh               # Removal script (--purge flag)
 ```
 
 ## License

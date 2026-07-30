@@ -18,3 +18,7 @@ tracing-subscriber = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 nix = { version = "0.28", features = ["fs"] }
 libc = "0.2"
+openvino = { workspace = true, optional = true }
+
+[features]
+npu = ["dep:openvino"]

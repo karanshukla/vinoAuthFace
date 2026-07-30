@@ -29,5 +29,26 @@ detector_threshold = 0.5
 # or a match is found. Like Windows Hello behaviour.
 scan_duration_ms = 5000
 
-# Delay between capture attempts within a scan window, in milliseconds (default: 200)
-scan_interval_ms = 200
+# Delay between capture attempts within a scan window, in milliseconds.
+# If unset, this is queried from the camera's own reported native frame interval via V4L2 —
+# there's no point sleeping longer than the driver's own frame rate, and different hardware
+# reports very different native rates. Uncomment to force a fixed value instead.
+# scan_interval_ms = 200
+
+# Inference backend: "tract" (portable CPU, default) or "openvino" (Intel NPU/GPU/CPU
+# via OpenVINO). "openvino" only works if the binary was built with the `npu` Cargo
+# feature and OpenVINO's runtime libraries are installed system-wide — deploy.sh sets
+# this automatically when it detects both at build time, so you normally shouldn't need
+# to touch this by hand.
+# backend = "tract"
+
+# OpenVINO device to run on when backend = "openvino": "NPU", "GPU", or "CPU".
+# npu_device = "NPU"
+
+# Pins face-auth to one specific physical camera by its USB bus path and V4L2 function index,
+# so a spoofed USB device claiming the real camera's VID/PID (VID/PID alone is just a string
+# any device can claim) doesn't get accepted as a frame source. Set by pin-camera.sh — don't
+# hand-edit these; run `sudo ./pin-camera.sh` instead, which also derives `device` above from
+# the same pinned hardware. Leaving both unset disables the check entirely (default).
+# pinned_camera_path = "/sys/devices/pci0000:00/0000:00:14.0/usb3/3-7/3-7:1.2"
+# pinned_camera_index = 0

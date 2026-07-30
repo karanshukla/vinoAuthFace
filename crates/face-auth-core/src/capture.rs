@@ -15,6 +15,9 @@ const VIDIOC_QBUF: u64 = 0xc058560f;
 const VIDIOC_DQBUF: u64 = 0xc0585611;
 const VIDIOC_STREAMON: u64 = 0x40045612;
 const VIDIOC_STREAMOFF: u64 = 0x40045613;
+const VIDIOC_G_PARM: u64 = 0xc0cc5615;
+
+const V4L2_CAP_TIMEPERFRAME: u32 = 0x1000;
 
 const V4L2_BUF_TYPE_VIDEO_CAPTURE: u32 = 1;
 const V4L2_MEMORY_MMAP: u32 = 1;
@@ -56,6 +59,15 @@ struct v4l2_pix_format {
     xfer_func: u32,
 }
 
+// Kernel struct v4l2_streamparm: type(4) + union{capture,output,raw_data[200]} = 204 bytes.
+// Unlike v4l2_format, this union holds no pointer-typed members, so it needs no extra
+// alignment padding after `type_`.
+#[repr(C)]
+struct v4l2_streamparm {
+    type_: u32,
+    raw: [u8; 200],
+}
+
 #[repr(C)]
 struct v4l2_requestbuffers {
     count: u32,
@@ -82,16 +94,30 @@ struct v4l2_buffer {
     reserved: u32,
 }
 
+#[derive(Clone)]
 pub struct IrFrame {
     pub data: Vec<u16>,
     pub width: u32,
     pub height: u32,
 }
 
+// A single capture with only 1 buffer works fine (one DQBUF, then stop), but a sustained
+// stream (enroll's repeated capture_frame calls on one open Camera) needs the driver to have
+// a free buffer to write the *next* frame into while the previous one is still checked out to
+// userspace between DQBUF and QBUF. With only 1 buffer there's no such spare, and depending on
+// driver timing DQBUF can hand back a buffer that hasn't actually been refilled yet — observed
+// as frames with variance exactly 0. Multiple buffers give the driver room to keep filling
+// buffers a capture loop hasn't gotten to yet.
+const BUFFER_COUNT: u32 = 4;
+
+struct MappedBuffer {
+    ptr: *mut c_void,
+    length: usize,
+}
+
 pub struct Camera {
     fd: OwnedFd,
-    mmap_ptr: *mut c_void,
-    length: usize,
+    buffers: Vec<MappedBuffer>,
     width: u32,
     height: u32,
     stream_on: bool,
@@ -117,50 +143,59 @@ impl Camera {
         let height = pix.height;
 
         let mut reqbuf = v4l2_requestbuffers {
-            count: 1,
+            count: BUFFER_COUNT,
             type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
             memory: V4L2_MEMORY_MMAP,
             reserved: [0, 0],
         };
         ioctl(fd.as_raw_fd(), VIDIOC_REQBUFS, &mut reqbuf as *mut _ as *mut c_void)?;
 
-        let mut buf = v4l2_buffer {
-            index: 0,
-            type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
-            memory: V4L2_MEMORY_MMAP,
-            ..unsafe { std::mem::zeroed() }
-        };
-        ioctl(fd.as_raw_fd(), VIDIOC_QUERYBUF, &mut buf as *mut _ as *mut c_void)?;
-
-        let length = buf.length as usize;
-        let offset = buf.m as libc::off_t;
-
-        let mmap_ptr = unsafe {
-            mmap(
-                std::ptr::null_mut(),
-                length,
-                PROT_READ,
-                MAP_SHARED,
-                fd.as_raw_fd(),
-                offset,
-            )
-        };
-        if mmap_ptr == MAP_FAILED {
-            return Err(anyhow::anyhow!("mmap failed"));
-        }
-
-        Ok(Self { fd, mmap_ptr, length, width, height, stream_on: false })
-    }
-
-    pub fn capture_frame(&mut self, timeout_ms: i32) -> Result<IrFrame> {
-        if !self.stream_on {
-            let buf = v4l2_buffer {
-                index: 0,
+        // The driver may grant fewer buffers than requested; map exactly what it reports back.
+        let mut buffers = Vec::with_capacity(reqbuf.count as usize);
+        for index in 0..reqbuf.count {
+            let mut buf = v4l2_buffer {
+                index,
                 type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
                 memory: V4L2_MEMORY_MMAP,
                 ..unsafe { std::mem::zeroed() }
             };
-            ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &buf as *const _ as *mut c_void)?;
+            ioctl(fd.as_raw_fd(), VIDIOC_QUERYBUF, &mut buf as *mut _ as *mut c_void)?;
+
+            let length = buf.length as usize;
+            let offset = buf.m as libc::off_t;
+
+            let ptr = unsafe {
+                mmap(
+                    std::ptr::null_mut(),
+                    length,
+                    PROT_READ,
+                    MAP_SHARED,
+                    fd.as_raw_fd(),
+                    offset,
+                )
+            };
+            if ptr == MAP_FAILED {
+                return Err(anyhow::anyhow!("mmap failed"));
+            }
+            buffers.push(MappedBuffer { ptr, length });
+        }
+
+        Ok(Self { fd, buffers, width, height, stream_on: false })
+    }
+
+    pub fn capture_frame(&mut self, timeout_ms: i32) -> Result<IrFrame> {
+        if !self.stream_on {
+            // Queue every mapped buffer up front so the driver always has somewhere to write
+            // the next frame while previously-dequeued buffers are still being read.
+            for index in 0..self.buffers.len() as u32 {
+                let buf = v4l2_buffer {
+                    index,
+                    type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
+                    memory: V4L2_MEMORY_MMAP,
+                    ..unsafe { std::mem::zeroed() }
+                };
+                ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &buf as *const _ as *mut c_void)?;
+            }
             let stream_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
             ioctl(self.fd.as_raw_fd(), VIDIOC_STREAMON, &stream_type as *const _ as *mut c_void)?;
             self.stream_on = true;
@@ -181,16 +216,18 @@ impl Camera {
         }
 
         let mut buf = v4l2_buffer {
-            index: 0,
             type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
             memory: V4L2_MEMORY_MMAP,
             ..unsafe { std::mem::zeroed() }
         };
         if ioctl(self.fd.as_raw_fd(), VIDIOC_DQBUF, &mut buf as *mut _ as *mut c_void).is_ok() {
+            let mapped = &self.buffers[buf.index as usize];
             let bytes_used = buf.bytesused as usize;
-            let data_slice = unsafe { std::slice::from_raw_parts(self.mmap_ptr as *const u8, bytes_used) };
+            let data_slice = unsafe { std::slice::from_raw_parts(mapped.ptr as *const u8, bytes_used) };
             let data = data_slice.iter().map(|&b| (b as u16) * 257).collect();
 
+            // Requeue this same buffer (VIDIOC_QBUF reuses the index/type/memory DQBUF just
+            // filled in) so the driver can write the next frame into it.
             let _ = ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &mut buf as *mut _ as *mut c_void);
             Ok(IrFrame { data, width: self.width, height: self.height })
         } else {
@@ -210,7 +247,9 @@ impl Camera {
 impl Drop for Camera {
     fn drop(&mut self) {
         self.stop_stream();
-        unsafe { munmap(self.mmap_ptr, self.length) };
+        for buffer in &self.buffers {
+            unsafe { munmap(buffer.ptr, buffer.length) };
+        }
     }
 }
 
@@ -228,6 +267,76 @@ fn ioctl(fd: i32, request: u64, arg: *mut c_void) -> Result<i32> {
     } else {
         Ok(ret)
     }
+}
+
+/// Queries the driver for the camera's native frame interval via `VIDIOC_G_PARM`, rather than
+/// assuming any particular hardware's frame rate. Different IR sensors run at very different
+/// native rates (this project's dev hardware is 15fps/~66ms; others may be 30fps/~33ms or
+/// faster), so hardcoding a single "safe" sleep interval would either throttle faster cameras
+/// unnecessarily or hammer slower ones with no benefit. Returns `None` if the driver doesn't
+/// report `V4L2_CAP_TIMEPERFRAME` or the query otherwise fails — callers should fall back to a
+/// conservative default in that case.
+pub fn query_frame_interval_ms(device_path: &str) -> Option<u64> {
+    let fd = open(device_path, OFlag::O_RDWR, Mode::empty()).ok()?;
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+
+    let mut param = v4l2_streamparm {
+        type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
+        raw: [0; 200],
+    };
+    ioctl(fd.as_raw_fd(), VIDIOC_G_PARM, &mut param as *mut _ as *mut c_void).ok()?;
+
+    let capability = u32::from_ne_bytes(param.raw[0..4].try_into().ok()?);
+    if capability & V4L2_CAP_TIMEPERFRAME == 0 {
+        return None;
+    }
+
+    let numerator = u32::from_ne_bytes(param.raw[8..12].try_into().ok()?);
+    let denominator = u32::from_ne_bytes(param.raw[12..16].try_into().ok()?);
+    if denominator == 0 {
+        return None;
+    }
+
+    Some((numerator as u64 * 1000) / denominator as u64)
+}
+
+/// Resolves the physical bus path a V4L2 device is attached to, by canonicalizing its sysfs
+/// `device` symlink (e.g. `/sys/class/video4linux/video2/device` resolves to something like
+/// `/sys/devices/pci0000:00/0000:00:14.0/usb3/3-7/3-7:1.2`). This is the same identity
+/// `udevadm`'s `ID_PATH` is derived from: the specific USB port chain (or PCI/MIPI path) the
+/// device is physically wired to, which a spoofed device can't replicate just by claiming the
+/// same VID/PID — it would have to physically intercept traffic on that exact bus segment.
+/// Read directly from sysfs rather than shelling out to udevadm, since this can run from a
+/// PAM-invoked process that isn't guaranteed a populated `PATH`.
+pub fn device_bus_path(video_path: &str) -> anyhow::Result<String> {
+    let kernel_name = video_kernel_name(video_path)?;
+    let device_link = format!("/sys/class/video4linux/{}/device", kernel_name);
+    let bus_path = std::fs::canonicalize(&device_link)
+        .map_err(|e| anyhow::anyhow!("failed to resolve {}: {}", device_link, e))?;
+    Ok(bus_path.to_string_lossy().into_owned())
+}
+
+/// Reads the V4L2 `index` sysfs attribute for a device — the driver-assigned function index
+/// that disambiguates multiple nodes sharing one physical interface. Some cameras (including
+/// the one this was written against) expose both a real capture node and a paired UVC metadata
+/// node at the *same* bus path, so the bus path alone isn't enough to pin the right one.
+pub fn device_capture_index(video_path: &str) -> anyhow::Result<u32> {
+    let kernel_name = video_kernel_name(video_path)?;
+    let index_path = format!("/sys/class/video4linux/{}/index", kernel_name);
+    let raw = std::fs::read_to_string(&index_path)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {}", index_path, e))?;
+    raw.trim()
+        .parse::<u32>()
+        .map_err(|e| anyhow::anyhow!("bad index value in {}: {}", index_path, e))
+}
+
+fn video_kernel_name(video_path: &str) -> anyhow::Result<String> {
+    let real = std::fs::canonicalize(video_path)
+        .map_err(|e| anyhow::anyhow!("failed to resolve {}: {}", video_path, e))?;
+    let name = real
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("{} has no file name", real.display()))?;
+    Ok(name.to_string_lossy().into_owned())
 }
 
 pub fn detect_ir_camera() -> Option<String> {
