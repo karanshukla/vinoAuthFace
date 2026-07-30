@@ -52,3 +52,17 @@ scan_duration_ms = 5000
 # the same pinned hardware. Leaving both unset disables the check entirely (default).
 # pinned_camera_path = "/sys/devices/pci0000:00/0000:00:14.0/usb3/3-7/3-7:1.2"
 # pinned_camera_index = 0
+
+# Lockout backoff: after this many consecutive failed face-match attempts for a user
+# (tracked on disk, so it persists across separate PAM invocations), face-auth stops
+# scanning and falls straight through to the password prompt, with an increasing delay
+# before it will try scanning again. This only throttles the face factor — it can never
+# lock you out of your machine, since PAM's password fallback is untouched.
+# lockout_threshold = 5
+
+# Initial cooldown (ms) applied on the first failure past the threshold; doubles with
+# each subsequent failure up to lockout_max_delay_ms.
+# lockout_base_delay_ms = 2000
+
+# Ceiling on the computed cooldown window (ms).
+# lockout_max_delay_ms = 300000

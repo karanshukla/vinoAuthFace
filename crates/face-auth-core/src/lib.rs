@@ -3,6 +3,7 @@ pub mod config;
 pub mod detector;
 pub mod error;
 pub mod inference;
+pub mod lockout;
 pub mod preprocess;
 pub mod storage;
 pub mod verify;
@@ -45,6 +46,11 @@ impl FaceAuth {
     pub fn authenticate_once(&mut self, user: &str) -> Result<bool> {
         self.config.verify_pinned_camera()?;
 
+        let embeddings_dir = self.config.embeddings_dir();
+        if crate::lockout::check(user, &embeddings_dir, &self.config.lockout_policy()).is_some() {
+            return Ok(false);
+        }
+
         let t0 = Instant::now();
         let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
         eprintln!("TIMING store_load: {:?}", t0.elapsed());
@@ -78,7 +84,13 @@ impl FaceAuth {
         let embedding = self.encoder.encode(input.view())?;
         eprintln!("TIMING encode: {:?}", t4.elapsed());
 
-        verify_embedding(&embedding, &store, self.config.threshold())
+        let matched = verify_embedding(&embedding, &store, self.config.threshold())?;
+        if matched {
+            let _ = crate::lockout::record_success(user, &embeddings_dir);
+        } else {
+            let _ = crate::lockout::record_failure(user, &embeddings_dir);
+        }
+        Ok(matched)
     }
 
     pub fn authenticate_scan(
@@ -88,6 +100,11 @@ impl FaceAuth {
         interval_ms: u64,
     ) -> Result<bool> {
         self.config.verify_pinned_camera()?;
+
+        let embeddings_dir = self.config.embeddings_dir();
+        if crate::lockout::check(user, &embeddings_dir, &self.config.lockout_policy()).is_some() {
+            return Ok(false);
+        }
 
         let t0 = Instant::now();
         let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
@@ -103,10 +120,17 @@ impl FaceAuth {
         let motion_threshold = self.config.liveness_motion_threshold();
         let mut prev_face_frame: Option<crate::capture::IrFrame> = None;
         let mut motion_observed = false;
+        // Only counts toward lockout backoff if a face was actually presented and rejected —
+        // a scan where nobody sat down (e.g. a script running `sudo` unattended) isn't a
+        // failed authentication attempt and shouldn't throttle the next real one.
+        let mut face_ever_detected = false;
 
         loop {
             if Instant::now() >= deadline {
                 eprintln!("SCAN: window elapsed ({} frames)", frame_num);
+                if face_ever_detected {
+                    let _ = crate::lockout::record_failure(user, &embeddings_dir);
+                }
                 return Ok(false);
             }
 
@@ -152,6 +176,7 @@ impl FaceAuth {
                     continue;
                 }
             };
+            face_ever_detected = true;
 
             // The first frame with a detected face has no prior frame to diff
             // against, so it can never clear the motion-liveness gate below —
@@ -197,6 +222,7 @@ impl FaceAuth {
                     continue;
                 }
                 eprintln!("SCAN: match on frame {} after {:?}", frame_num, t0.elapsed());
+                let _ = crate::lockout::record_success(user, &embeddings_dir);
                 return Ok(true);
             }
 

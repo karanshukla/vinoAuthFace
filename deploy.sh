@@ -212,10 +212,16 @@ else
 fi
 
 # ---- Embeddings directory ----
+# $VAR_DIR itself stays 1777 (sticky, like /tmp) so any user can create their own
+# subdirectory on first enroll without re-running this script as root. Each user's own
+# subdirectory holds raw biometric embeddings and is locked to 0700/owner-only — face-auth
+# also enforces this on every save (crates/face-auth-core/src/storage.rs), this is just
+# belt-and-suspenders for the one this script creates directly.
 echo "Creating embeddings directory..."
 mkdir -p "$VAR_DIR/$ACTUAL_USER"
 chmod 1777 "$VAR_DIR"
 chown -R "$ACTUAL_USER:$ACTUAL_USER" "$VAR_DIR/$ACTUAL_USER"
+chmod 700 "$VAR_DIR/$ACTUAL_USER"
 
 echo ""
 echo "=== Install complete! ==="

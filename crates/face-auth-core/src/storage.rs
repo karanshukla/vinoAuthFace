@@ -1,6 +1,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use crate::error::FaceAuthError;
 
@@ -49,11 +50,20 @@ impl EmbeddingStore {
     pub fn save(&self, user: &str, embeddings_dir: &Path) -> anyhow::Result<()> {
         let user_dir = embeddings_dir.join(user);
         fs::create_dir_all(&user_dir)?;
-        
+        // Biometric templates: lock the per-user directory and file down explicitly rather
+        // than trusting umask, so another local user can't read them off disk regardless of
+        // what mode bits `embeddings_dir`'s parent was created with.
+        fs::set_permissions(&user_dir, fs::Permissions::from_mode(0o700))?;
+
         let tmp_path = user_dir.join("embeddings.bin.tmp");
         let path = user_dir.join("embeddings.bin");
-        
-        let file = File::create(&tmp_path)?;
+
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp_path)?;
         let mut writer = BufWriter::new(file);
         
         writer.write_u32::<LittleEndian>(EMBEDDING_VERSION)?;

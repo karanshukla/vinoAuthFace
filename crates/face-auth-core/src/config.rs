@@ -19,6 +19,9 @@ pub struct FaceAuthConfig {
     pub liveness_motion_threshold: Option<f32>,
     pub pinned_camera_path: Option<String>,
     pub pinned_camera_index: Option<u32>,
+    pub lockout_threshold: Option<u32>,
+    pub lockout_base_delay_ms: Option<u64>,
+    pub lockout_max_delay_ms: Option<u64>,
 }
 
 impl Default for FaceAuthConfig {
@@ -38,6 +41,9 @@ impl Default for FaceAuthConfig {
             liveness_motion_threshold: Some(0.01),
             pinned_camera_path: None,
             pinned_camera_index: None,
+            lockout_threshold: Some(5),
+            lockout_base_delay_ms: Some(2_000),
+            lockout_max_delay_ms: Some(300_000),
         }
     }
 }
@@ -173,6 +179,19 @@ impl FaceAuthConfig {
             );
         }
         Ok(())
+    }
+
+    /// Backoff policy applied after repeated face-match failures for a user. See
+    /// `lockout::check` for how this is enforced — it never blocks PAM's password
+    /// fallback, only throttles how fast repeated face-auth attempts can be retried.
+    pub fn lockout_policy(&self) -> crate::lockout::LockoutPolicy {
+        let defaults = crate::lockout::LockoutPolicy::default();
+        crate::lockout::LockoutPolicy {
+            threshold: self.lockout_threshold.unwrap_or(defaults.threshold),
+            base_delay_ms: self.lockout_base_delay_ms.unwrap_or(defaults.base_delay_ms),
+            max_delay_ms: self.lockout_max_delay_ms.unwrap_or(defaults.max_delay_ms),
+            max_tarpit_ms: defaults.max_tarpit_ms,
+        }
     }
 }
 
