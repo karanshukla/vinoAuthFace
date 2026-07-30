@@ -20,8 +20,9 @@ use std::time::{Duration, Instant};
 /// Fraction of the detected face box's own width/height added as margin on
 /// each side before cropping, so the encoder sees the same kind of
 /// forehead-to-chin framing MobileFaceNet-style models are trained on
-/// instead of a razor-tight bounding box.
-const FACE_CROP_MARGIN: f32 = 0.3;
+/// instead of a razor-tight bounding box. Public so out-of-tree tooling
+/// (e.g. face-similarity-check) can reproduce the exact same crop.
+pub const FACE_CROP_MARGIN: f32 = 0.3;
 
 pub struct FaceAuth {
     config: FaceAuthConfig,

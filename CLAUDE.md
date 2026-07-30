@@ -43,7 +43,7 @@ Troubleshooting section for `RUST_LOG=face_auth_core=debug` and direct-binary in
 
 ### Workspace layout
 
-Three crates. All the logic lives in `face-auth-core`; the other two are thin CLI/PAM shims:
+Four crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/debug shims:
 
 - **`crates/face-auth-core`** — the library. Camera I/O, detection, inference, preprocessing,
   storage, verification, config, lockout. Everything below refers to files here unless noted.
@@ -51,6 +51,13 @@ Three crates. All the logic lives in `face-auth-core`; the other two are thin CL
   `PAM_USER` → `USER` → `LOGNAME` → `id -un` fallback chain, then calls `authenticate_scan`.
   Exit 0 = matched, exit 1 = anything else (PAM's `sufficient` line falls through to password).
 - **`crates/face-enroll`** (`src/main.rs`) — the enrollment CLI (`clap`-based).
+- **`crates/face-similarity-check`** (`src/main.rs`) — offline debug tool, not deployed by
+  `deploy.sh`. Runs the same detect → crop → CLAHE → encode → cosine-similarity pipeline as a
+  live auth attempt, but fed from image files (`image::open`, upscaled the same `*257` way
+  `capture.rs` upscales raw camera bytes) instead of the IR camera — for gauging false-accept
+  risk against photos of other people without needing a second person at the camera. Everything
+  runs locally against the on-disk model/embeddings; only the printed similarity score is
+  produced, nothing is transmitted anywhere.
 
 The `npu` Cargo feature (on `face-auth-core`, propagated through the other two crates) swaps
 the inference backend from pure-Rust `tract-onnx` (CPU) to `openvino` (NPU/GPU/CPU via OpenVINO

@@ -744,6 +744,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "face-similarity-check"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "face-auth-core",
+ "image",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "fax"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
