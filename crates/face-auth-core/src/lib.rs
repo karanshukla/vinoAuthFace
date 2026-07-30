@@ -43,6 +43,8 @@ impl FaceAuth {
     }
 
     pub fn authenticate_once(&mut self, user: &str) -> Result<bool> {
+        self.config.verify_pinned_camera()?;
+
         let t0 = Instant::now();
         let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
         eprintln!("TIMING store_load: {:?}", t0.elapsed());
@@ -85,6 +87,8 @@ impl FaceAuth {
         duration_ms: u64,
         interval_ms: u64,
     ) -> Result<bool> {
+        self.config.verify_pinned_camera()?;
+
         let t0 = Instant::now();
         let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
         eprintln!("TIMING store_load: {:?}", t0.elapsed());
@@ -279,6 +283,8 @@ impl FaceAuth {
     }
 
     pub fn enroll(&mut self, user: &str, frames: usize, interval_ms: u64) -> Result<()> {
+        self.config.verify_pinned_camera()?;
+
         let mut store = EmbeddingStore::default();
         let mut cam = Camera::open(&self.config.device())?;
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms)?;
@@ -291,6 +297,8 @@ impl FaceAuth {
     }
 
     pub fn enroll_append(&mut self, user: &str, frames: usize, interval_ms: u64) -> Result<()> {
+        self.config.verify_pinned_camera()?;
+
         let mut store = match EmbeddingStore::load(user, &self.config.embeddings_dir()) {
             Ok(s) => s,
             Err(_) => EmbeddingStore::default(),

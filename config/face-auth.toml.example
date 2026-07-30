@@ -44,3 +44,11 @@ scan_duration_ms = 5000
 
 # OpenVINO device to run on when backend = "openvino": "NPU", "GPU", or "CPU".
 # npu_device = "NPU"
+
+# Pins face-auth to one specific physical camera by its USB bus path and V4L2 function index,
+# so a spoofed USB device claiming the real camera's VID/PID (VID/PID alone is just a string
+# any device can claim) doesn't get accepted as a frame source. Set by pin-camera.sh — don't
+# hand-edit these; run `sudo ./pin-camera.sh` instead, which also derives `device` above from
+# the same pinned hardware. Leaving both unset disables the check entirely (default).
+# pinned_camera_path = "/sys/devices/pci0000:00/0000:00:14.0/usb3/3-7/3-7:1.2"
+# pinned_camera_index = 0

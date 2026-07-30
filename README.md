@@ -109,6 +109,17 @@ sudo ./deploy.sh
 
 Each PAM file is backed up with a `.face-auth.bak` suffix.
 
+### Pin camera (recommended)
+
+```bash
+sudo ./pin-camera.sh
+```
+
+Confirm the camera works first (`face-enroll` succeeds, `sudo true` unlocks) — this pins
+whatever `device` is currently configured, so run it after enrollment, not before. See
+[Security & Limitations](#security--limitations) for what this does and does not defend
+against.
+
 ### Uninstall
 
 ```bash
@@ -267,6 +278,21 @@ FACE_AUTH_CAPTURE_TIMEOUT=10000 sudo -k && sudo true
     OLED, and a gently-moved (not perfectly rigid) printed photo could pass the motion check.
     High-quality IR-transparent prints or 3D masks may also bypass verification. Untested;
     revisit if/when calibration data against real printed photos becomes available.
+- **Camera identity / frame-injection:** By default face-auth opens whatever V4L2 device
+  `device` resolves to and trusts frames from it — a USB device that claims the real camera's
+  VID/PID (which any device can do; it's just a string) could be substituted and used to feed
+  synthetic or replayed frames. Run `sudo ./pin-camera.sh` once to close this: it pins
+  face-auth to the camera's exact physical USB port path and V4L2 function index (not VID/PID),
+  read from sysfs — a property a spoofed device can't replicate without physically intercepting
+  that exact internal bus segment. It writes a udev rule (`/etc/udev/rules.d/99-face-auth-
+  camera.rules`) so `device` can point at a stable `/dev/face-auth-ir` symlink instead of a
+  `/dev/videoN` index that isn't guaranteed stable across reboots, and records the pinned
+  identity in `face-auth.toml` (`pinned_camera_path`, `pinned_camera_index`) so face-auth
+  re-verifies it directly from sysfs on every authenticate/enroll call — independent of the
+  udev rule staying correct. Opt-in and unset by default, so existing installs aren't affected
+  until you run it. This closes the *injection* vector specifically; it's unrelated to the
+  motion-liveness and IR-physics checks above, which defend against *presentation* attacks
+  (something held up to the real, legitimate camera) — you want both.
 - **SELinux policy scope:** The lock-screen policy grants `xdm_t` mmap access to all
   V4L2 devices. This is a trade-off for drop-in compatibility; narrowing it requires
   custom udev device types.
@@ -297,6 +323,7 @@ authFace/
   selinux/
     face-auth.te             # SELinux policy source
   deploy.sh                  # Core auth installer
+  pin-camera.sh              # Pins device by USB bus path (frame-injection defense)
   uninstall.sh               # Removal script (--purge flag)
 ```
 

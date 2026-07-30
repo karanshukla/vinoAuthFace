@@ -163,6 +163,10 @@ if [ "$NPU_ACTIVE" = "1" ]; then
     elif grep -q '^# backend' "$CONFIG_DIR/face-auth.toml"; then
         sed -i 's/^# backend = "tract"/backend = "openvino"/' "$CONFIG_DIR/face-auth.toml"
     else
+        # A `#`-prefixed line makes TOML treat everything after it — including whatever `>>`
+        # concatenates onto it if the file doesn't already end in a newline — as part of that
+        # same comment, silently dropping the line being appended instead of erroring.
+        [ -s "$CONFIG_DIR/face-auth.toml" ] && [ "$(tail -c1 "$CONFIG_DIR/face-auth.toml" | wc -l)" -eq 0 ] && echo >> "$CONFIG_DIR/face-auth.toml"
         echo 'backend = "openvino"' >> "$CONFIG_DIR/face-auth.toml"
     fi
     echo "Set backend = \"openvino\" in $CONFIG_DIR/face-auth.toml (binary was built with NPU support)"
@@ -223,5 +227,9 @@ echo ""
 echo "Then test:"
 echo "  sudo true           # should authenticate via face"
 echo "  (lock screen: Super+L, then press a key to unlock)"
+echo ""
+echo "Once enrollment and a test unlock both work, run 'sudo ./pin-camera.sh' to lock"
+echo "face-auth to this exact camera — without it, a spoofed USB device claiming the"
+echo "same VID/PID could be used to inject frames. See README.md's Security & Limitations."
 echo ""
 echo "To uninstall: sudo ./uninstall.sh"

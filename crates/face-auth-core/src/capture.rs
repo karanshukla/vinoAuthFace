@@ -300,6 +300,45 @@ pub fn query_frame_interval_ms(device_path: &str) -> Option<u64> {
     Some((numerator as u64 * 1000) / denominator as u64)
 }
 
+/// Resolves the physical bus path a V4L2 device is attached to, by canonicalizing its sysfs
+/// `device` symlink (e.g. `/sys/class/video4linux/video2/device` resolves to something like
+/// `/sys/devices/pci0000:00/0000:00:14.0/usb3/3-7/3-7:1.2`). This is the same identity
+/// `udevadm`'s `ID_PATH` is derived from: the specific USB port chain (or PCI/MIPI path) the
+/// device is physically wired to, which a spoofed device can't replicate just by claiming the
+/// same VID/PID — it would have to physically intercept traffic on that exact bus segment.
+/// Read directly from sysfs rather than shelling out to udevadm, since this can run from a
+/// PAM-invoked process that isn't guaranteed a populated `PATH`.
+pub fn device_bus_path(video_path: &str) -> anyhow::Result<String> {
+    let kernel_name = video_kernel_name(video_path)?;
+    let device_link = format!("/sys/class/video4linux/{}/device", kernel_name);
+    let bus_path = std::fs::canonicalize(&device_link)
+        .map_err(|e| anyhow::anyhow!("failed to resolve {}: {}", device_link, e))?;
+    Ok(bus_path.to_string_lossy().into_owned())
+}
+
+/// Reads the V4L2 `index` sysfs attribute for a device — the driver-assigned function index
+/// that disambiguates multiple nodes sharing one physical interface. Some cameras (including
+/// the one this was written against) expose both a real capture node and a paired UVC metadata
+/// node at the *same* bus path, so the bus path alone isn't enough to pin the right one.
+pub fn device_capture_index(video_path: &str) -> anyhow::Result<u32> {
+    let kernel_name = video_kernel_name(video_path)?;
+    let index_path = format!("/sys/class/video4linux/{}/index", kernel_name);
+    let raw = std::fs::read_to_string(&index_path)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {}", index_path, e))?;
+    raw.trim()
+        .parse::<u32>()
+        .map_err(|e| anyhow::anyhow!("bad index value in {}: {}", index_path, e))
+}
+
+fn video_kernel_name(video_path: &str) -> anyhow::Result<String> {
+    let real = std::fs::canonicalize(video_path)
+        .map_err(|e| anyhow::anyhow!("failed to resolve {}: {}", video_path, e))?;
+    let name = real
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("{} has no file name", real.display()))?;
+    Ok(name.to_string_lossy().into_owned())
+}
+
 pub fn detect_ir_camera() -> Option<String> {
     let base = std::path::Path::new("/sys/class/video4linux");
     if let Ok(entries) = std::fs::read_dir(base) {

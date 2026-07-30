@@ -17,6 +17,8 @@ pub struct FaceAuthConfig {
     pub backend: Option<String>,
     pub npu_device: Option<String>,
     pub liveness_motion_threshold: Option<f32>,
+    pub pinned_camera_path: Option<String>,
+    pub pinned_camera_index: Option<u32>,
 }
 
 impl Default for FaceAuthConfig {
@@ -34,6 +36,8 @@ impl Default for FaceAuthConfig {
             backend: Some("tract".to_string()),
             npu_device: Some("NPU".to_string()),
             liveness_motion_threshold: Some(0.01),
+            pinned_camera_path: None,
+            pinned_camera_index: None,
         }
     }
 }
@@ -137,6 +141,38 @@ impl FaceAuthConfig {
     /// `preprocess::frame_motion_fraction`.
     pub fn liveness_motion_threshold(&self) -> f32 {
         self.liveness_motion_threshold.unwrap_or(0.01)
+    }
+
+    /// If a camera has been pinned (via `pin-camera.sh`), verifies that `device()` currently
+    /// resolves to that exact physical bus path and V4L2 function index before any frame from
+    /// it is trusted for authentication or enrollment. This is the actual enforcement point:
+    /// `pin-camera.sh`'s udev rule keeps a stable symlink pointed at the pinned hardware, but
+    /// this check doesn't depend on that rule being correct or even present — it re-derives the
+    /// device's real identity from sysfs every time and refuses to proceed on any mismatch,
+    /// fail-closed. VID/PID isn't part of the comparison: any USB device can claim the real
+    /// camera's VID/PID, but it can't occupy the real camera's exact physical port at the same
+    /// time. Does nothing (returns `Ok`) if no camera has been pinned — pinning is opt-in so
+    /// existing installs aren't broken by upgrading.
+    pub fn verify_pinned_camera(&self) -> anyhow::Result<()> {
+        let (Some(pinned_path), Some(pinned_index)) =
+            (self.pinned_camera_path.as_ref(), self.pinned_camera_index)
+        else {
+            return Ok(());
+        };
+
+        let device = self.device();
+        let actual_path = crate::capture::device_bus_path(&device)?;
+        let actual_index = crate::capture::device_capture_index(&device)?;
+
+        if &actual_path != pinned_path || actual_index != pinned_index {
+            anyhow::bail!(
+                "Camera identity mismatch: pinned to {} (index {}), but {} currently resolves to \
+                 {} (index {}) — refusing to trust frames from an unrecognized camera. If you \
+                 intentionally replaced or moved the hardware, re-run pin-camera.sh.",
+                pinned_path, pinned_index, device, actual_path, actual_index
+            );
+        }
+        Ok(())
     }
 }
 
