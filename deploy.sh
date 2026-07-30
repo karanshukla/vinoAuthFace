@@ -10,8 +10,10 @@ CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
 VAR_DIR="/var/lib/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
+OPENVINO_INSTALL_DIR="/usr/local/lib/face-auth/openvino"
 
 ACTUAL_USER="${SUDO_USER:-$USER}"
+ACTUAL_HOME=$(getent passwd "$ACTUAL_USER" | cut -d: -f6)
 
 # ---- Undo any previous partial setup ----
 echo "Cleaning up any previous partial setup..."
@@ -22,22 +24,89 @@ for service in sudo swaylock gdm-password; do
     fi
 done
 
+# ---- Detect OpenVINO NPU toolchain ----
+# The `npu` feature dynamically links against OpenVINO's own .so files, which are built
+# for glibc — that's incompatible with the plain musl (fully static) build used otherwise,
+# so an NPU build switches target and needs the OpenVINO runtime libraries installed
+# system-wide (see below) since PAM invokes this binary with no shell profile sourced,
+# so LD_LIBRARY_PATH / setupvars.sh being sourced interactively doesn't help it at runtime.
+OPENVINO_SRC=$(find "$ACTUAL_HOME/.local/opt" -maxdepth 1 -iname "openvino_toolkit_*" -type d 2>/dev/null | sort -V | tail -1)
+NPU_BUILD=0
+if [ -n "$OPENVINO_SRC" ] && [ -f "$OPENVINO_SRC/setupvars.sh" ]; then
+    NPU_BUILD=1
+fi
+
+# Locate cargo explicitly: under `sudo`, root's PATH does not include a rustup user
+# install (~/.cargo/bin), so `command -v cargo` silently fails as root even though the
+# actual user has it — that failure used to fall through to stale pre-built binaries
+# without anyone noticing, so it's resolved up front instead of relying on PATH.
+CARGO_BIN=$(command -v cargo || true)
+if [ -z "$CARGO_BIN" ] && [ -x "$ACTUAL_HOME/.cargo/bin/cargo" ]; then
+    CARGO_BIN="$ACTUAL_HOME/.cargo/bin/cargo"
+fi
+
 # ---- Build ----
-if command -v cargo &>/dev/null; then
-    echo "Building face-auth..."
-    cargo build --release --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
+# Building as root doesn't work here even with cargo's path resolved: rustup's shim
+# needs a default toolchain configured under $HOME/.rustup, which only exists for the
+# actual user, not root. So the build itself runs as $ACTUAL_USER (via sudo -u -H, which
+# gives it that user's real $HOME); only the install steps below need root.
+NPU_ACTIVE=0
+if [ -n "$CARGO_BIN" ]; then
+    if [ "$NPU_BUILD" = "1" ]; then
+        echo "OpenVINO found at $OPENVINO_SRC — building with NPU backend (host/glibc target)..."
+        sudo -u "$ACTUAL_USER" -H bash -c "
+            set -eo pipefail
+            source '$OPENVINO_SRC/setupvars.sh' >/dev/null
+            set -u
+            '$CARGO_BIN' build --release --features face-auth-core/npu,face-auth/npu,face-enroll/npu -p face-auth -p face-enroll
+        "
+        FACE_AUTH_BIN="target/release/face-auth"
+        FACE_ENROLL_BIN="target/release/face-enroll"
+        NPU_ACTIVE=1
+    else
+        echo "No OpenVINO toolkit found under $ACTUAL_HOME/.local/opt — building CPU-only (musl, static)..."
+        sudo -u "$ACTUAL_USER" -H "$CARGO_BIN" build --release --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
+        FACE_AUTH_BIN="target/x86_64-unknown-linux-musl/release/face-auth"
+        FACE_ENROLL_BIN="target/x86_64-unknown-linux-musl/release/face-enroll"
+    fi
 elif [ -f "target/x86_64-unknown-linux-musl/release/face-auth" ]; then
-    echo "Using pre-built binaries from target/..."
+    echo "Using pre-built musl binaries from target/ (cargo not found — note these predate NPU support if built before it existed)"
+    FACE_AUTH_BIN="target/x86_64-unknown-linux-musl/release/face-auth"
+    FACE_ENROLL_BIN="target/x86_64-unknown-linux-musl/release/face-enroll"
 else
-    echo "Error: cargo not found and no pre-built binaries in target/"
-    echo "Build first: distrobox enter face-auth-dev -- cargo build --release --target x86_64-unknown-linux-musl"
+    echo "Error: cargo not found (checked PATH and $ACTUAL_HOME/.cargo/bin) and no pre-built binaries in target/"
+    exit 1
+fi
+
+# Fail loudly rather than silently install a binary that doesn't match what we intended —
+# this is exactly the class of mismatch (config says openvino, binary is CPU-only) that
+# caused a confusing runtime error the first time this was wired up.
+if [ "$NPU_ACTIVE" = "1" ] && ! ldd "$FACE_AUTH_BIN" | grep -q libopenvino; then
+    echo "Error: NPU build was attempted but $FACE_AUTH_BIN has no OpenVINO linkage — aborting install."
     exit 1
 fi
 
 # ---- Install binaries ----
 echo "Installing binaries..."
-install -Dm755 target/x86_64-unknown-linux-musl/release/face-auth "$BIN_DIR/face-auth"
-install -Dm755 target/x86_64-unknown-linux-musl/release/face-enroll "$BIN_DIR/face-enroll"
+install -Dm755 "$FACE_AUTH_BIN" "$BIN_DIR/face-auth"
+install -Dm755 "$FACE_ENROLL_BIN" "$BIN_DIR/face-enroll"
+
+# ---- Install OpenVINO runtime libraries system-wide (NPU builds only) ----
+if [ "$NPU_ACTIVE" = "1" ]; then
+    echo "Installing OpenVINO runtime libraries to $OPENVINO_INSTALL_DIR..."
+    # The whole intel64 directory is copied as a unit (not just libopenvino*.so):
+    # OpenVINO auto-discovers its CPU/NPU/GPU plugins and the ONNX frontend by scanning
+    # the directory libopenvino.so itself lives in, so they all have to stay co-located.
+    mkdir -p "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb"
+    cp -a "$OPENVINO_SRC/runtime/lib/intel64/." "$OPENVINO_INSTALL_DIR/intel64/"
+    cp -a "$OPENVINO_SRC/runtime/3rdparty/tbb/lib/." "$OPENVINO_INSTALL_DIR/tbb/"
+    cat > /etc/ld.so.conf.d/face-auth-openvino.conf <<EOF
+$OPENVINO_INSTALL_DIR/intel64
+$OPENVINO_INSTALL_DIR/tbb
+EOF
+    ldconfig
+    echo "OpenVINO runtime libraries registered system-wide via ldconfig"
+fi
 
 # ---- Install model ----
 echo "Installing model..."
@@ -78,7 +147,29 @@ else
 fi
 
 echo "Installing config..."
-install -Dm644 config/face-auth.toml.example "$CONFIG_DIR/face-auth.toml"
+if [ -f "$CONFIG_DIR/face-auth.toml" ]; then
+    echo "Config already exists at $CONFIG_DIR/face-auth.toml — leaving your settings (device, threshold, etc.) as-is."
+else
+    install -Dm644 config/face-auth.toml.example "$CONFIG_DIR/face-auth.toml"
+fi
+
+# The backend line is always kept in sync with what was actually built, regardless of
+# whether the config is fresh or pre-existing — a mismatch here (config says openvino,
+# binary doesn't have it, or vice versa) is exactly the bug that bit us the first time
+# this was wired up, so it's not left to chance either way.
+if [ "$NPU_ACTIVE" = "1" ]; then
+    if grep -q '^backend' "$CONFIG_DIR/face-auth.toml"; then
+        sed -i 's/^backend.*/backend = "openvino"/' "$CONFIG_DIR/face-auth.toml"
+    elif grep -q '^# backend' "$CONFIG_DIR/face-auth.toml"; then
+        sed -i 's/^# backend = "tract"/backend = "openvino"/' "$CONFIG_DIR/face-auth.toml"
+    else
+        echo 'backend = "openvino"' >> "$CONFIG_DIR/face-auth.toml"
+    fi
+    echo "Set backend = \"openvino\" in $CONFIG_DIR/face-auth.toml (binary was built with NPU support)"
+elif grep -q '^backend\s*=\s*"openvino"' "$CONFIG_DIR/face-auth.toml" 2>/dev/null; then
+    sed -i 's/^backend.*/backend = "tract"/' "$CONFIG_DIR/face-auth.toml"
+    echo "Warning: NPU build not active this run — reverted backend to \"tract\" in $CONFIG_DIR/face-auth.toml"
+fi
 
 # ---- PAM setup ----
 echo "Installing PAM configs..."

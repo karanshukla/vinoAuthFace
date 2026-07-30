@@ -1,6 +1,69 @@
 use image::{DynamicImage, ImageBuffer, Luma};
 use tract_onnx::prelude::tract_ndarray::Array3;
 
+use crate::detector::FaceBox;
+
+/// Crops a raw IR frame down to the detected face, expanded by `margin` (a
+/// fraction of the box's own width/height on each side) and padded to a
+/// square so the encoder's `resize_exact` doesn't distort the aspect ratio.
+/// Clamped to the source frame's bounds.
+pub fn crop_to_face(frame: &super::capture::IrFrame, face_box: &FaceBox, margin: f32) -> super::capture::IrFrame {
+    let width = frame.width as f32;
+    let height = frame.height as f32;
+
+    let x1 = (face_box.x1 * width).clamp(0.0, width);
+    let y1 = (face_box.y1 * height).clamp(0.0, height);
+    let x2 = (face_box.x2 * width).clamp(0.0, width);
+    let y2 = (face_box.y2 * height).clamp(0.0, height);
+
+    let box_w = (x2 - x1).max(1.0);
+    let box_h = (y2 - y1).max(1.0);
+
+    let mx = box_w * margin;
+    let my = box_h * margin;
+    let ex1 = x1 - mx;
+    let ey1 = y1 - my;
+    let ex2 = x2 + mx;
+    let ey2 = y2 + my;
+
+    let cx = (ex1 + ex2) / 2.0;
+    let cy = (ey1 + ey2) / 2.0;
+    let side = (ex2 - ex1).max(ey2 - ey1).min(width.min(height));
+
+    let mut sx1 = cx - side / 2.0;
+    let mut sy1 = cy - side / 2.0;
+    let mut sx2 = cx + side / 2.0;
+    let mut sy2 = cy + side / 2.0;
+
+    // Clamp to frame bounds by shifting the window rather than shrinking it,
+    // so a face near an edge still gets a full-size (just re-centered) crop.
+    if sx1 < 0.0 { sx2 -= sx1; sx1 = 0.0; }
+    if sy1 < 0.0 { sy2 -= sy1; sy1 = 0.0; }
+    if sx2 > width { sx1 -= sx2 - width; sx2 = width; }
+    if sy2 > height { sy1 -= sy2 - height; sy2 = height; }
+    sx1 = sx1.clamp(0.0, width);
+    sy1 = sy1.clamp(0.0, height);
+    sx2 = sx2.clamp(0.0, width);
+    sy2 = sy2.clamp(0.0, height);
+
+    let ix1 = sx1.round() as u32;
+    let iy1 = sy1.round() as u32;
+    let ix2 = (sx2.round() as u32).max(ix1 + 1).min(frame.width);
+    let iy2 = (sy2.round() as u32).max(iy1 + 1).min(frame.height);
+
+    let crop_w = ix2 - ix1;
+    let crop_h = iy2 - iy1;
+
+    let mut data = Vec::with_capacity((crop_w * crop_h) as usize);
+    for y in iy1..iy2 {
+        let row_start = (y * frame.width + ix1) as usize;
+        let row_end = row_start + crop_w as usize;
+        data.extend_from_slice(&frame.data[row_start..row_end]);
+    }
+
+    super::capture::IrFrame { data, width: crop_w, height: crop_h }
+}
+
 pub fn preprocess_ir_frame(frame: &super::capture::IrFrame) -> anyhow::Result<Array3<f32>> {
     let width = frame.width as u32;
     let height = frame.height as u32;

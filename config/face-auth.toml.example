@@ -34,3 +34,13 @@ scan_duration_ms = 5000
 # there's no point sleeping longer than the driver's own frame rate, and different hardware
 # reports very different native rates. Uncomment to force a fixed value instead.
 # scan_interval_ms = 200
+
+# Inference backend: "tract" (portable CPU, default) or "openvino" (Intel NPU/GPU/CPU
+# via OpenVINO). "openvino" only works if the binary was built with the `npu` Cargo
+# feature and OpenVINO's runtime libraries are installed system-wide — deploy.sh sets
+# this automatically when it detects both at build time, so you normally shouldn't need
+# to touch this by hand.
+# backend = "tract"
+
+# OpenVINO device to run on when backend = "openvino": "NPU", "GPU", or "CPU".
+# npu_device = "NPU"

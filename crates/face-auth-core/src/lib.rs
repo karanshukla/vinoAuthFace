@@ -16,6 +16,12 @@ use crate::verify::verify_embedding;
 use anyhow::Result;
 use std::time::{Duration, Instant};
 
+/// Fraction of the detected face box's own width/height added as margin on
+/// each side before cropping, so the encoder sees the same kind of
+/// forehead-to-chin framing MobileFaceNet-style models are trained on
+/// instead of a razor-tight bounding box.
+const FACE_CROP_MARGIN: f32 = 0.3;
+
 pub struct FaceAuth {
     config: FaceAuthConfig,
     encoder: FaceEncoder,
@@ -55,13 +61,15 @@ impl FaceAuth {
         eprintln!("TIMING equalize: {:?}", t2.elapsed());
 
         let t_detect = Instant::now();
-        if !self.detector.detect(&frame)? {
-            return Err(crate::error::FaceAuthError::NoFaceDetected.into());
-        }
+        let face_box = match self.detector.detect(&frame)? {
+            Some(b) => b,
+            None => return Err(crate::error::FaceAuthError::NoFaceDetected.into()),
+        };
         eprintln!("TIMING detect: {:?}", t_detect.elapsed());
 
         let t3 = Instant::now();
-        let input = crate::preprocess::preprocess_ir_frame(&frame)?;
+        let cropped = crate::preprocess::crop_to_face(&frame, &face_box, FACE_CROP_MARGIN);
+        let input = crate::preprocess::preprocess_ir_frame(&cropped)?;
         eprintln!("TIMING preprocess: {:?}", t3.elapsed());
 
         let t4 = Instant::now();
@@ -131,12 +139,23 @@ impl FaceAuth {
             crate::preprocess::histogram_equalize(&mut frame);
             eprintln!("TIMING frame_{} equalize: {:?}", frame_num, t2.elapsed());
 
-            if !self.detector.detect(&frame)? {
-                let sleep = Duration::from_millis(interval_ms)
-                    .min(deadline.saturating_duration_since(Instant::now()));
-                std::thread::sleep(sleep);
-                continue;
-            }
+            let face_box = match self.detector.detect(&frame)? {
+                Some(b) => b,
+                None => {
+                    let sleep = Duration::from_millis(interval_ms)
+                        .min(deadline.saturating_duration_since(Instant::now()));
+                    std::thread::sleep(sleep);
+                    continue;
+                }
+            };
+
+            // The first frame with a detected face has no prior frame to diff
+            // against, so it can never clear the motion-liveness gate below —
+            // any match on it would be discarded anyway. Use it only to seed
+            // the motion baseline and skip the (comparatively expensive)
+            // encoder call entirely rather than run it on a result that's
+            // structurally guaranteed to be thrown away.
+            let is_first_face_frame = prev_face_frame.is_none();
 
             if let Some(prev) = &prev_face_frame {
                 let motion = crate::preprocess::frame_motion_fraction(prev, &frame);
@@ -147,8 +166,17 @@ impl FaceAuth {
             }
             prev_face_frame = Some(frame.clone());
 
+            if is_first_face_frame {
+                eprintln!("SCAN: frame {} establishes motion baseline, skipping encode", frame_num);
+                let sleep = Duration::from_millis(interval_ms)
+                    .min(deadline.saturating_duration_since(Instant::now()));
+                std::thread::sleep(sleep);
+                continue;
+            }
+
             let t3 = Instant::now();
-            let input = crate::preprocess::preprocess_ir_frame(&frame)?;
+            let cropped = crate::preprocess::crop_to_face(&frame, &face_box, FACE_CROP_MARGIN);
+            let input = crate::preprocess::preprocess_ir_frame(&cropped)?;
             let embedding = self.encoder.encode(input.view())?;
             eprintln!("TIMING frame_{} encode: {:?}", frame_num, t3.elapsed());
 
@@ -183,31 +211,57 @@ impl FaceAuth {
         frames: usize,
         interval_ms: u64,
     ) -> Result<()> {
+        // Blank-frame retries shouldn't reuse `interval_ms` — that paces successful captures so
+        // the user has time to shift pose/expression between shots, not how fast this sensor
+        // produces its next frame. Query the camera's own reported frame interval the same way
+        // `FaceAuthConfig::scan_interval_ms` does, so the retry cadence adapts to whatever
+        // hardware this runs on instead of assuming this machine's timing.
+        let retry_delay_ms = crate::capture::query_frame_interval_ms(&self.config.device()).unwrap_or(100);
+
         let mut captured = 0usize;
         let mut attempts = 0usize;
-        let max_attempts = frames * 3;
+        let start = Instant::now();
+        // A ceiling to guarantee termination if the camera is genuinely stuck (disconnected,
+        // permanently dark), not a tight budget for ordinary blank-frame bursts — it scales with
+        // this camera's own reported frame interval rather than a flat guess, so a sensor that
+        // reports blank frames at a higher rate (faster native fps) gets proportionally more
+        // retry headroom instead of being punished by a fixed attempt count.
+        let deadline = start + Duration::from_millis(frames as u64 * (interval_ms + retry_delay_ms * 50));
 
-        while captured < frames && attempts < max_attempts {
+        while captured < frames && Instant::now() < deadline {
             println!("Capturing frame {}/{} (attempt {})...", captured + 1, frames, attempts + 1);
             let frame = cam.capture_frame(self.config.capture_timeout_ms())?;
             attempts += 1;
 
             if !crate::detector::raw_frame_has_content(&frame) {
-                eprintln!("No content in frame, retrying...");
-                std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+                eprintln!(
+                    "No content in frame (variance={:.0}, threshold={:.0}, mean={:.1}, bytes={}, expected={}), retrying...",
+                    crate::detector::frame_variance(&frame),
+                    crate::detector::CONTENT_VARIANCE_THRESHOLD,
+                    crate::detector::frame_mean(&frame),
+                    frame.data.len(),
+                    (frame.width * frame.height) as usize,
+                );
+                // Not interval_ms: a blank frame isn't the user needing time to move, it's the
+                // sensor needing another poll cycle, so back off by its own native frame time.
+                std::thread::sleep(Duration::from_millis(retry_delay_ms));
                 continue;
             }
 
             let mut frame = frame;
             crate::preprocess::histogram_equalize(&mut frame);
 
-            if !self.detector.detect(&frame)? {
-                eprintln!("No face detected, retrying...");
-                std::thread::sleep(std::time::Duration::from_millis(interval_ms));
-                continue;
-            }
+            let face_box = match self.detector.detect(&frame)? {
+                Some(b) => b,
+                None => {
+                    eprintln!("No face detected, retrying...");
+                    std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+                    continue;
+                }
+            };
 
-            let input = crate::preprocess::preprocess_ir_frame(&frame)?;
+            let cropped = crate::preprocess::crop_to_face(&frame, &face_box, FACE_CROP_MARGIN);
+            let input = crate::preprocess::preprocess_ir_frame(&cropped)?;
             let embedding = self.encoder.encode(input.view())?;
             store.add_embedding(embedding);
             captured += 1;

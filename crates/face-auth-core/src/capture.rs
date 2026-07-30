@@ -101,10 +101,23 @@ pub struct IrFrame {
     pub height: u32,
 }
 
+// A single capture with only 1 buffer works fine (one DQBUF, then stop), but a sustained
+// stream (enroll's repeated capture_frame calls on one open Camera) needs the driver to have
+// a free buffer to write the *next* frame into while the previous one is still checked out to
+// userspace between DQBUF and QBUF. With only 1 buffer there's no such spare, and depending on
+// driver timing DQBUF can hand back a buffer that hasn't actually been refilled yet — observed
+// as frames with variance exactly 0. Multiple buffers give the driver room to keep filling
+// buffers a capture loop hasn't gotten to yet.
+const BUFFER_COUNT: u32 = 4;
+
+struct MappedBuffer {
+    ptr: *mut c_void,
+    length: usize,
+}
+
 pub struct Camera {
     fd: OwnedFd,
-    mmap_ptr: *mut c_void,
-    length: usize,
+    buffers: Vec<MappedBuffer>,
     width: u32,
     height: u32,
     stream_on: bool,
@@ -130,50 +143,59 @@ impl Camera {
         let height = pix.height;
 
         let mut reqbuf = v4l2_requestbuffers {
-            count: 1,
+            count: BUFFER_COUNT,
             type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
             memory: V4L2_MEMORY_MMAP,
             reserved: [0, 0],
         };
         ioctl(fd.as_raw_fd(), VIDIOC_REQBUFS, &mut reqbuf as *mut _ as *mut c_void)?;
 
-        let mut buf = v4l2_buffer {
-            index: 0,
-            type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
-            memory: V4L2_MEMORY_MMAP,
-            ..unsafe { std::mem::zeroed() }
-        };
-        ioctl(fd.as_raw_fd(), VIDIOC_QUERYBUF, &mut buf as *mut _ as *mut c_void)?;
-
-        let length = buf.length as usize;
-        let offset = buf.m as libc::off_t;
-
-        let mmap_ptr = unsafe {
-            mmap(
-                std::ptr::null_mut(),
-                length,
-                PROT_READ,
-                MAP_SHARED,
-                fd.as_raw_fd(),
-                offset,
-            )
-        };
-        if mmap_ptr == MAP_FAILED {
-            return Err(anyhow::anyhow!("mmap failed"));
-        }
-
-        Ok(Self { fd, mmap_ptr, length, width, height, stream_on: false })
-    }
-
-    pub fn capture_frame(&mut self, timeout_ms: i32) -> Result<IrFrame> {
-        if !self.stream_on {
-            let buf = v4l2_buffer {
-                index: 0,
+        // The driver may grant fewer buffers than requested; map exactly what it reports back.
+        let mut buffers = Vec::with_capacity(reqbuf.count as usize);
+        for index in 0..reqbuf.count {
+            let mut buf = v4l2_buffer {
+                index,
                 type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
                 memory: V4L2_MEMORY_MMAP,
                 ..unsafe { std::mem::zeroed() }
             };
-            ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &buf as *const _ as *mut c_void)?;
+            ioctl(fd.as_raw_fd(), VIDIOC_QUERYBUF, &mut buf as *mut _ as *mut c_void)?;
+
+            let length = buf.length as usize;
+            let offset = buf.m as libc::off_t;
+
+            let ptr = unsafe {
+                mmap(
+                    std::ptr::null_mut(),
+                    length,
+                    PROT_READ,
+                    MAP_SHARED,
+                    fd.as_raw_fd(),
+                    offset,
+                )
+            };
+            if ptr == MAP_FAILED {
+                return Err(anyhow::anyhow!("mmap failed"));
+            }
+            buffers.push(MappedBuffer { ptr, length });
+        }
+
+        Ok(Self { fd, buffers, width, height, stream_on: false })
+    }
+
+    pub fn capture_frame(&mut self, timeout_ms: i32) -> Result<IrFrame> {
+        if !self.stream_on {
+            // Queue every mapped buffer up front so the driver always has somewhere to write
+            // the next frame while previously-dequeued buffers are still being read.
+            for index in 0..self.buffers.len() as u32 {
+                let buf = v4l2_buffer {
+                    index,
+                    type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
+                    memory: V4L2_MEMORY_MMAP,
+                    ..unsafe { std::mem::zeroed() }
+                };
+                ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &buf as *const _ as *mut c_void)?;
+            }
             let stream_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
             ioctl(self.fd.as_raw_fd(), VIDIOC_STREAMON, &stream_type as *const _ as *mut c_void)?;
             self.stream_on = true;
@@ -194,16 +216,18 @@ impl Camera {
         }
 
         let mut buf = v4l2_buffer {
-            index: 0,
             type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
             memory: V4L2_MEMORY_MMAP,
             ..unsafe { std::mem::zeroed() }
         };
         if ioctl(self.fd.as_raw_fd(), VIDIOC_DQBUF, &mut buf as *mut _ as *mut c_void).is_ok() {
+            let mapped = &self.buffers[buf.index as usize];
             let bytes_used = buf.bytesused as usize;
-            let data_slice = unsafe { std::slice::from_raw_parts(self.mmap_ptr as *const u8, bytes_used) };
+            let data_slice = unsafe { std::slice::from_raw_parts(mapped.ptr as *const u8, bytes_used) };
             let data = data_slice.iter().map(|&b| (b as u16) * 257).collect();
 
+            // Requeue this same buffer (VIDIOC_QBUF reuses the index/type/memory DQBUF just
+            // filled in) so the driver can write the next frame into it.
             let _ = ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &mut buf as *mut _ as *mut c_void);
             Ok(IrFrame { data, width: self.width, height: self.height })
         } else {
@@ -223,7 +247,9 @@ impl Camera {
 impl Drop for Camera {
     fn drop(&mut self) {
         self.stop_stream();
-        unsafe { munmap(self.mmap_ptr, self.length) };
+        for buffer in &self.buffers {
+            unsafe { munmap(buffer.ptr, buffer.length) };
+        }
     }
 }
 
