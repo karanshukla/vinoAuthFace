@@ -9,7 +9,7 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-tract-onnx = "0.23"
+tract-onnx = "0.21"
 openvino = "0.11"
 image = "0.25.4"
 anyhow = "1.0"
