@@ -1,0 +1,68 @@
+name: Release binaries
+
+# Builds static musl binaries so users can install without a Rust toolchain (deploy.sh falls
+# back to downloading these when `cargo` isn't found). Only the default CPU/tract backend is
+# built here: the `npu` feature dynamically links OpenVINO's own .so files and needs the actual
+# OpenVINO runtime + NPU hardware present at build time, which a generic CI runner doesn't have
+# — that build stays a local, deploy.sh-driven path (see deploy.sh's OpenVINO detection).
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+
+      # musl-tools: musl-gcc, needed to link the static target. cmake: required by a transitive
+      # dependency of face-similarity-check's image-decoding stack.
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y musl-tools cmake
+
+      - name: Build release binaries (static musl, CPU/tract backend)
+        run: |
+          cargo build --release --locked --target x86_64-unknown-linux-musl \
+            -p face-auth -p face-enroll -p face-camera-diag -p face-similarity-check
+
+      - name: Stage artifacts and checksums
+        run: |
+          mkdir -p dist
+          for bin in face-auth face-enroll face-camera-diag face-similarity-check; do
+            cp "target/x86_64-unknown-linux-musl/release/$bin" "dist/$bin-x86_64-unknown-linux-musl"
+          done
+          (cd dist && sha256sum -- * > SHA256SUMS)
+
+      # Manual/branch runs just verify the build succeeds and leave artifacts attached to the
+      # workflow run — only an actual tag push publishes a release, so a test run can't create
+      # or clobber one.
+      - name: Upload build artifact (manual/dry runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: face-auth-binaries
+          path: dist/*
+
+      # prerelease: true until there's been independent review of the recognition/liveness logic
+      # and real-world validation beyond one developer's own hardware — this is security-critical
+      # (biometric auth gating sudo/lock-screen) and bleeding-edge, not something to badge as a
+      # GitHub "Latest" release yet. Flip this deliberately, not as a side effect of a version bump.
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: dist/*
+          prerelease: true

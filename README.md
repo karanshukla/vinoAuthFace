@@ -56,9 +56,15 @@ understands? Build `face-camera-diag` and run `list` — see
 
 ### Software (build system — where you compile)
 
-You need a Rust toolchain with the `x86_64-unknown-linux-musl` target added.
+None required. `sudo ./deploy.sh` downloads prebuilt static musl binaries from this project's
+[GitHub Releases](https://github.com/karanshukla/vinoAuthFace/releases) (checksum-verified) if
+it can't find a Rust toolchain. Only build from source yourself if you want a change that isn't
+in a release yet, or the NPU/OpenVINO backend (which CI can't build — see below).
 
 ## Building from Source
+
+Skip this section if `sudo ./deploy.sh` already worked — it only builds from source when it has
+to. Build manually if you want an unreleased change, or the OpenVINO/NPU backend.
 
 ### Core auth (static musl — no runtime deps)
 
@@ -85,8 +91,15 @@ sudo ./deploy.sh
 distrobox create --image docker.io/library/fedora:40 --name authface-dev
 distrobox enter authface-dev
 
-# Inside the container, install build deps (once)
-sudo dnf install -y rust cargo gcc gcc-c++ musl-gcc cmake
+# Inside the container, install native build deps (once)
+sudo dnf install -y gcc gcc-c++ musl-gcc cmake
+
+# Install Rust via rustup, not Fedora's dnf-packaged rust/cargo: Fedora's rust package has no
+# musl-target std library at all (rustup's `target add` is what provides that), and can also
+# lag behind the toolchain version this project's dependencies require.
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+rustup target add x86_64-unknown-linux-musl
 
 # Clone and build
 cd ~/Projects
@@ -109,9 +122,9 @@ sudo ./deploy.sh
 
 | Step | What | Details |
 |------|------|---------|
-| Build | Compiles if `cargo` is available | Falls back to pre-built binaries in `target/` |
+| Build | Compiles if `cargo` is available | Else uses pre-built binaries in `target/`, else downloads a checksum-verified release from GitHub |
 | Binaries | Installs to `/usr/local/bin` | `face-auth` + `face-enroll` |
-| Model | Downloads from InsightFace | `w600k_mbf.onnx` (~13 MB) to `/usr/local/share/face-auth/` |
+| Model | Downloads + checksum-verifies both models | `w600k_mbf.onnx` (~13 MB, InsightFace) and `version-slim-320.onnx` (~1 MB, detector) to `/usr/local/share/face-auth/` |
 | Config | Installs default config | `/etc/face-auth.toml` |
 | PAM | Patches PAM service files | Adds `sufficient` `pam_exec.so` to `sudo`, `gdm-password`, `swaylock` |
 | SELinux | Compiles and loads policy | Allows `xdm_t` to mmap camera for lock-screen auth |
@@ -255,11 +268,15 @@ face-auth (static binary)
 ## Model
 
 Uses InsightFace **`w600k_mbf.onnx`** (MobileFaceNet @ WebFace600K, ~13 MB, 512-d output)
-from the `buffalo_sc` model pack by default, plus **`version-slim-320.onnx`** for face
-detection. Licensed under MIT (InsightFace is MIT-licensed).
+from the `buffalo_sc` model pack by default for recognition, plus **`version-slim-320.onnx`**
+(from [Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB),
+a different project — not InsightFace) for face detection. Both MIT-licensed.
 
-The models are **not bundled** in this repository. `deploy.sh` downloads them directly from
-InsightFace's official GitHub releases and verifies the SHA-256 checksum.
+Neither model is bundled in this repository. `deploy.sh` downloads both and verifies a SHA-256
+checksum before installing: the recognition model from InsightFace's official GitHub releases,
+and the detector model from a specific pinned commit (not the mutable `master` branch) of its
+own upstream repo — upstream publishes no checksum for it, so the pin + a checksum computed
+once and hardcoded here is the only integrity check that exists for that file.
 
 ### Recognition model: mbf (default) vs r50
 
@@ -319,14 +336,23 @@ sudo semodule -i face_auth.pp
 
 Not sure which `/dev/video*` node is the IR camera, or whether face-auth will understand its
 pixel format? `face-camera-diag` is a small offline tool for exactly that — it's not installed
-by `deploy.sh`, so build it once from source:
+by `deploy.sh`, so grab it once, either as a prebuilt binary from
+[Releases](https://github.com/karanshukla/vinoAuthFace/releases) (no Rust toolchain needed):
+
+```bash
+curl -fLO https://github.com/karanshukla/vinoAuthFace/releases/latest/download/face-camera-diag-x86_64-unknown-linux-musl
+chmod +x face-camera-diag-x86_64-unknown-linux-musl
+```
+
+or by building it from source:
 
 ```bash
 cargo build --release -p face-camera-diag
 ```
 
 `list` enumerates every V4L2 node with its driver, card name, USB VID:PID, and current
-resolution/pixel format:
+resolution/pixel format (substitute `./target/release/face-camera-diag` below for the downloaded
+binary's name if you didn't build from source):
 
 ```bash
 ./target/release/face-camera-diag list
