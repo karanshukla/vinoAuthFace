@@ -101,8 +101,49 @@ elif [ -f "target/x86_64-unknown-linux-musl/release/face-auth" ]; then
     FACE_AUTH_BIN="target/x86_64-unknown-linux-musl/release/face-auth"
     FACE_ENROLL_BIN="target/x86_64-unknown-linux-musl/release/face-enroll"
 else
-    echo "Error: cargo not found (checked PATH and $ACTUAL_HOME/.cargo/bin) and no pre-built binaries in target/"
-    exit 1
+    echo "cargo not found and no pre-built binaries in target/ — downloading prebuilt release binaries instead..."
+    RELEASE_REPO="karanshukla/vinoAuthFace"
+    DL_DIR="/tmp/face-auth-release-bin"
+    rm -rf "$DL_DIR"
+    mkdir -p "$DL_DIR"
+
+    # Prefer the release matching this exact checkout (if it's a tagged clone) over whatever's
+    # currently "latest" — this script's own PAM-patching/config logic can change between tags,
+    # so the binaries it installs should match the deploy.sh version actually running it.
+    GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || true)
+    if [ -n "$GIT_TAG" ]; then
+        DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$GIT_TAG"
+    else
+        DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/latest/download"
+    fi
+
+    for bin in face-auth face-enroll; do
+        asset="${bin}-x86_64-unknown-linux-musl"
+        curl -fL -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" || {
+            echo "Error: failed to download $asset from $DOWNLOAD_BASE"
+            echo "Either install a Rust toolchain (rustup target add x86_64-unknown-linux-musl)"
+            echo "and re-run, or check that a release with prebuilt binaries exists at"
+            echo "https://github.com/$RELEASE_REPO/releases"
+            rm -rf "$DL_DIR"
+            exit 1
+        }
+    done
+    curl -fL -o "$DL_DIR/SHA256SUMS" "$DOWNLOAD_BASE/SHA256SUMS" || {
+        echo "Error: failed to download SHA256SUMS from $DOWNLOAD_BASE"
+        rm -rf "$DL_DIR"
+        exit 1
+    }
+
+    echo "Verifying checksums..."
+    (cd "$DL_DIR" && sha256sum -c --ignore-missing SHA256SUMS) || {
+        echo "Error: checksum mismatch! The downloaded binaries may be corrupted or tampered."
+        rm -rf "$DL_DIR"
+        exit 1
+    }
+
+    chmod +x "$DL_DIR/face-auth-x86_64-unknown-linux-musl" "$DL_DIR/face-enroll-x86_64-unknown-linux-musl"
+    FACE_AUTH_BIN="$DL_DIR/face-auth-x86_64-unknown-linux-musl"
+    FACE_ENROLL_BIN="$DL_DIR/face-enroll-x86_64-unknown-linux-musl"
 fi
 
 # Fail loudly rather than silently install a binary that doesn't match what we intended —

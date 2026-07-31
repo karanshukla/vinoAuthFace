@@ -56,9 +56,15 @@ understands? Build `face-camera-diag` and run `list` — see
 
 ### Software (build system — where you compile)
 
-You need a Rust toolchain with the `x86_64-unknown-linux-musl` target added.
+None required. `sudo ./deploy.sh` downloads prebuilt static musl binaries from this project's
+[GitHub Releases](https://github.com/karanshukla/vinoAuthFace/releases) (checksum-verified) if
+it can't find a Rust toolchain. Only build from source yourself if you want a change that isn't
+in a release yet, or the NPU/OpenVINO backend (which CI can't build — see below).
 
 ## Building from Source
+
+Skip this section if `sudo ./deploy.sh` already worked — it only builds from source when it has
+to. Build manually if you want an unreleased change, or the OpenVINO/NPU backend.
 
 ### Core auth (static musl — no runtime deps)
 
@@ -109,7 +115,7 @@ sudo ./deploy.sh
 
 | Step | What | Details |
 |------|------|---------|
-| Build | Compiles if `cargo` is available | Falls back to pre-built binaries in `target/` |
+| Build | Compiles if `cargo` is available | Else uses pre-built binaries in `target/`, else downloads a checksum-verified release from GitHub |
 | Binaries | Installs to `/usr/local/bin` | `face-auth` + `face-enroll` |
 | Model | Downloads from InsightFace | `w600k_mbf.onnx` (~13 MB) to `/usr/local/share/face-auth/` |
 | Config | Installs default config | `/etc/face-auth.toml` |
@@ -319,14 +325,23 @@ sudo semodule -i face_auth.pp
 
 Not sure which `/dev/video*` node is the IR camera, or whether face-auth will understand its
 pixel format? `face-camera-diag` is a small offline tool for exactly that — it's not installed
-by `deploy.sh`, so build it once from source:
+by `deploy.sh`, so grab it once, either as a prebuilt binary from
+[Releases](https://github.com/karanshukla/vinoAuthFace/releases) (no Rust toolchain needed):
+
+```bash
+curl -fLO https://github.com/karanshukla/vinoAuthFace/releases/latest/download/face-camera-diag-x86_64-unknown-linux-musl
+chmod +x face-camera-diag-x86_64-unknown-linux-musl
+```
+
+or by building it from source:
 
 ```bash
 cargo build --release -p face-camera-diag
 ```
 
 `list` enumerates every V4L2 node with its driver, card name, USB VID:PID, and current
-resolution/pixel format:
+resolution/pixel format (substitute `./target/release/face-camera-diag` below for the downloaded
+binary's name if you didn't build from source):
 
 ```bash
 ./target/release/face-camera-diag list

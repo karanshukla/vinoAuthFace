@@ -32,7 +32,10 @@ cargo test -p face-auth-core storage::tests::save_then_load_round_trips_embeddin
 cargo check --workspace
 ```
 
-There is no CI workflow and no clippy/rustfmt config committed — match existing style by hand.
+There is no clippy/rustfmt config committed — match existing style by hand. The only CI
+(`.github/workflows/release.yml`) builds and publishes static musl binaries to GitHub Releases
+on `v*` tag pushes (CPU/tract backend only — NPU needs the OpenVINO runtime present at build
+time, which CI doesn't have); it doesn't run tests or lints on regular pushes/PRs.
 
 To actually exercise a change end-to-end (not just unit tests), deploy and test on real
 hardware: `sudo ./deploy.sh`, `face-enroll --user $USER`, `sudo true`. See README's
