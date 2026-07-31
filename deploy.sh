@@ -125,7 +125,7 @@ NPU_ACTIVE=0
 if [ -n "$CARGO_BIN" ]; then
     if [ "$NPU_BUILD" = "1" ] && [ "$NPU_SOURCE_MODE" = "system" ]; then
         echo "System-installed OpenVINO found (RPM/DEB) — building with NPU backend (host/glibc target)..."
-        sudo -u "$ACTUAL_USER" -H "$CARGO_BIN" build --release --features face-auth-core/npu,face-auth/npu,face-enroll/npu -p face-auth -p face-enroll
+        sudo -u "$ACTUAL_USER" -H "$CARGO_BIN" build --release --locked --features face-auth-core/npu,face-auth/npu,face-enroll/npu -p face-auth -p face-enroll
         FACE_AUTH_BIN="target/release/face-auth"
         FACE_ENROLL_BIN="target/release/face-enroll"
         NPU_ACTIVE=1
@@ -135,14 +135,14 @@ if [ -n "$CARGO_BIN" ]; then
             set -eo pipefail
             source '$OPENVINO_SRC/setupvars.sh' >/dev/null
             set -u
-            '$CARGO_BIN' build --release --features face-auth-core/npu,face-auth/npu,face-enroll/npu -p face-auth -p face-enroll
+            '$CARGO_BIN' build --release --locked --features face-auth-core/npu,face-auth/npu,face-enroll/npu -p face-auth -p face-enroll
         "
         FACE_AUTH_BIN="target/release/face-auth"
         FACE_ENROLL_BIN="target/release/face-enroll"
         NPU_ACTIVE=1
     else
         echo "No OpenVINO installation found (checked system lib dirs, $ACTUAL_HOME/.local/opt, and /opt/intel) — building CPU-only (musl, static)..."
-        sudo -u "$ACTUAL_USER" -H "$CARGO_BIN" build --release --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
+        sudo -u "$ACTUAL_USER" -H "$CARGO_BIN" build --release --locked --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
         FACE_AUTH_BIN="target/x86_64-unknown-linux-musl/release/face-auth"
         FACE_ENROLL_BIN="target/x86_64-unknown-linux-musl/release/face-enroll"
     fi

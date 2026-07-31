@@ -33,7 +33,7 @@ jobs:
 
       - name: Build release binaries (static musl, CPU/tract backend)
         run: |
-          cargo build --release --target x86_64-unknown-linux-musl \
+          cargo build --release --locked --target x86_64-unknown-linux-musl \
             -p face-auth -p face-enroll -p face-camera-diag -p face-similarity-check
 
       - name: Stage artifacts and checksums
