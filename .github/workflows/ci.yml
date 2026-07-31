@@ -25,24 +25,10 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
 
-      # Swatinem/rust-cache temporarily removed while diagnosing a tract-hir version mismatch
-      # that only reproduces on the real runner, not in isolated local containers.
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y musl-tools cmake
-
-      - name: DEBUG dump Cargo.lock tract entries
-        run: |
-          echo "--- Cargo.lock tract entries at build time ---"
-          grep -A1 'name = "tract' Cargo.lock
-          echo "--- sha256 of Cargo.lock ---"
-          sha256sum Cargo.lock
-          echo "--- cargo --version / rustc --version ---"
-          cargo --version
-          rustc --version
-          echo "--- CARGO_HOME ---"
-          echo "${CARGO_HOME:-unset}"
-          find "${CARGO_HOME:-$HOME/.cargo}/registry/src" -maxdepth 1 -iname "*tract-hir*" 2>&1 || true
 
       # --locked: build against exactly what's committed in Cargo.lock, erroring loudly if it's
       # out of date instead of silently re-resolving to something never actually tested locally.
