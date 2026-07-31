@@ -733,6 +733,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "face-camera-diag"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "face-auth-core",
+]
+
+[[package]]
 name = "face-enroll"
 version = "0.1.0"
 dependencies = [

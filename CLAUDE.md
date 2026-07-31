@@ -43,7 +43,7 @@ Troubleshooting section for `RUST_LOG=face_auth_core=debug` and direct-binary in
 
 ### Workspace layout
 
-Four crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/debug shims:
+Five crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/debug shims:
 
 - **`crates/face-auth-core`** — the library. Camera I/O, detection, inference, preprocessing,
   storage, verification, config, lockout. Everything below refers to files here unless noted.
@@ -58,8 +58,16 @@ Four crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/
   risk against photos of other people without needing a second person at the camera. Everything
   runs locally against the on-disk model/embeddings; only the printed similarity score is
   produced, nothing is transmitted anywhere.
+- **`crates/face-camera-diag`** (`src/main.rs`) — offline camera discovery/diagnostic tool, also
+  not deployed by `deploy.sh`. `list` enumerates every `/dev/video*` node with driver/card name
+  (`VIDIOC_QUERYCAP`), resolved USB VID:PID (walks up sysfs from `capture::device_bus_path`), and
+  current pixel format/resolution (`VIDIOC_G_FMT` via `capture::query_format`) — for figuring out
+  which node is the IR sensor and what format it reports without reading through the whole
+  README. `dump` captures one frame from a given device and writes it as a 16-bit PGM for visual
+  inspection. Purely read-only against devices it's just listing; `dump` takes the target device
+  the same way live face-auth would.
 
-The `npu` Cargo feature (on `face-auth-core`, propagated through the other two crates) swaps
+The `npu` Cargo feature (on `face-auth-core`, propagated through the other four crates) swaps
 the inference backend from pure-Rust `tract-onnx` (CPU) to `openvino` (NPU/GPU/CPU via OpenVINO
 runtime) — see `#[cfg(feature = "npu")]` in `inference.rs` and `detector.rs`. Backend selection
 at runtime is `config.backend()` (`"tract"` default or `"openvino"`) plus `config.npu_device()`

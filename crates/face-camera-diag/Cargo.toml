@@ -1,0 +1,12 @@
+[package]
+name = "face-camera-diag"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+face-auth-core = { path = "../face-auth-core" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+
+[features]
+npu = ["face-auth-core/npu"]
