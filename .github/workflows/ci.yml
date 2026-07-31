@@ -6,9 +6,13 @@ name: CI
 # checksum-verified download path, using FACE_AUTH_DEPLOY_RELEASE_BASE (a file:// override) so
 # that branch is deterministically testable without depending on a real published release or
 # GitHub's API being reachable from the runner.
+#
+# push is scoped to main only, not every branch: a branch with an open PR against it would
+# otherwise fire both push and pull_request for the same commit, running everything twice.
+# pull_request already covers feature-branch work; push:main covers direct pushes/merges.
 on:
   push:
-    branches: ["**"]
+    branches: ["main"]
   pull_request: {}
 
 jobs:

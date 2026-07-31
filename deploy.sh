@@ -31,6 +31,17 @@ case "$RECOGNITION_MODEL" in
         ;;
 esac
 
+# Face detector model. Pinned to a specific commit (not the mutable `master` branch) so the
+# download can't silently change later, and checksummed like the recognition model above —
+# upstream itself publishes no checksum for this file, so this pin+checksum is the only
+# integrity check that exists for it. Verified byte-for-byte identical to `master`'s current
+# content as of pinning this, and the underlying architecture/training data is the same
+# Ultra-Light-Fast-Generic-Face-Detector family the official ONNX Model Zoo also distributes
+# (same 4420-anchor output shape detector.rs is built against) — not an obscure, unvetted file.
+DETECTOR_NAME="version-slim-320.onnx"
+DETECTOR_URL="https://raw.githubusercontent.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB/442599cebf11307bc231e2e5c3c6c869369fee48/models/onnx/version-slim-320_simplified.onnx"
+DETECTOR_CHECKSUM="0863d8fedffb8692c3fef345193c7befc9b513a66ac4ff87bdecf47452fa272f"
+
 BIN_DIR="/usr/local/bin"
 SHARE_DIR="/usr/local/share/face-auth"
 CONFIG_DIR="/etc"
@@ -256,16 +267,24 @@ fi
 
 # ---- Install face detector model ----
 echo "Installing face detector model..."
-DETECTOR_NAME="version-slim-320.onnx"
 if [ -f "$SHARE_DIR/$DETECTOR_NAME" ]; then
     echo "Detector model already installed at $SHARE_DIR/$DETECTOR_NAME"
 elif [ -f "models/$DETECTOR_NAME" ]; then
     install -Dm644 "models/$DETECTOR_NAME" "$SHARE_DIR/$DETECTOR_NAME"
     echo "Installed detector model from models/$DETECTOR_NAME"
 else
-    echo "Error: $DETECTOR_NAME not found in models/"
-    echo "Run inside the dev distrobox: python3 -m onnxsim version-slim-320.onnx version-slim-320.onnx"
-    exit 1
+    echo "Downloading detector model..."
+    mkdir -p /tmp/face-auth-detector
+    curl -fL -o "/tmp/face-auth-detector/$DETECTOR_NAME" "$DETECTOR_URL"
+    echo "Verifying checksum..."
+    echo "$DETECTOR_CHECKSUM  /tmp/face-auth-detector/$DETECTOR_NAME" | sha256sum -c - || {
+        echo "Error: Checksum mismatch! The detector model may be corrupted or tampered."
+        rm -rf /tmp/face-auth-detector
+        exit 1
+    }
+    install -Dm644 "/tmp/face-auth-detector/$DETECTOR_NAME" "$SHARE_DIR/$DETECTOR_NAME"
+    rm -rf /tmp/face-auth-detector
+    echo "Detector model downloaded and installed"
 fi
 
 echo "Installing config..."

@@ -124,7 +124,7 @@ sudo ./deploy.sh
 |------|------|---------|
 | Build | Compiles if `cargo` is available | Else uses pre-built binaries in `target/`, else downloads a checksum-verified release from GitHub |
 | Binaries | Installs to `/usr/local/bin` | `face-auth` + `face-enroll` |
-| Model | Downloads from InsightFace | `w600k_mbf.onnx` (~13 MB) to `/usr/local/share/face-auth/` |
+| Model | Downloads + checksum-verifies both models | `w600k_mbf.onnx` (~13 MB, InsightFace) and `version-slim-320.onnx` (~1 MB, detector) to `/usr/local/share/face-auth/` |
 | Config | Installs default config | `/etc/face-auth.toml` |
 | PAM | Patches PAM service files | Adds `sufficient` `pam_exec.so` to `sudo`, `gdm-password`, `swaylock` |
 | SELinux | Compiles and loads policy | Allows `xdm_t` to mmap camera for lock-screen auth |
@@ -268,11 +268,15 @@ face-auth (static binary)
 ## Model
 
 Uses InsightFace **`w600k_mbf.onnx`** (MobileFaceNet @ WebFace600K, ~13 MB, 512-d output)
-from the `buffalo_sc` model pack by default, plus **`version-slim-320.onnx`** for face
-detection. Licensed under MIT (InsightFace is MIT-licensed).
+from the `buffalo_sc` model pack by default for recognition, plus **`version-slim-320.onnx`**
+(from [Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB),
+a different project — not InsightFace) for face detection. Both MIT-licensed.
 
-The models are **not bundled** in this repository. `deploy.sh` downloads them directly from
-InsightFace's official GitHub releases and verifies the SHA-256 checksum.
+Neither model is bundled in this repository. `deploy.sh` downloads both and verifies a SHA-256
+checksum before installing: the recognition model from InsightFace's official GitHub releases,
+and the detector model from a specific pinned commit (not the mutable `master` branch) of its
+own upstream repo — upstream publishes no checksum for it, so the pin + a checksum computed
+once and hardcoded here is the only integrity check that exists for that file.
 
 ### Recognition model: mbf (default) vs r50
 
