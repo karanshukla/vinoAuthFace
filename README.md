@@ -91,8 +91,15 @@ sudo ./deploy.sh
 distrobox create --image docker.io/library/fedora:40 --name authface-dev
 distrobox enter authface-dev
 
-# Inside the container, install build deps (once)
-sudo dnf install -y rust cargo gcc gcc-c++ musl-gcc cmake
+# Inside the container, install native build deps (once)
+sudo dnf install -y gcc gcc-c++ musl-gcc cmake
+
+# Install Rust via rustup, not Fedora's dnf-packaged rust/cargo: Fedora's rust package has no
+# musl-target std library at all (rustup's `target add` is what provides that), and can also
+# lag behind the toolchain version this project's dependencies require.
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+rustup target add x86_64-unknown-linux-musl
 
 # Clone and build
 cd ~/Projects
