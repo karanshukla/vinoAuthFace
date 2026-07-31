@@ -1,0 +1,95 @@
+name: CI
+
+# Runs on every push/PR (unlike release.yml, which only fires on version tags). Exercises the
+# things a contributor or a downstream packager would actually rely on: the test suite, building
+# from source, and every branch of deploy.sh's cargo-availability fallback chain — including the
+# checksum-verified download path, using FACE_AUTH_DEPLOY_RELEASE_BASE (a file:// override) so
+# that branch is deterministically testable without depending on a real published release or
+# GitHub's API being reachable from the runner.
+on:
+  push:
+    branches: ["**"]
+  pull_request: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y musl-tools cmake
+
+      - name: Run unit tests
+        run: cargo test --workspace
+
+      - name: Build from source (static musl, all crates)
+        run: |
+          cargo build --release --target x86_64-unknown-linux-musl \
+            -p face-auth -p face-enroll -p face-camera-diag -p face-similarity-check
+
+  # deploy.sh's real integration test: everything it does system-wide (PAM patching, SELinux
+  # detection, embeddings dir) on a throwaway VM instead of a contributor's or a reviewer's own
+  # machine. No IR camera is present, so this can't verify authentication itself — just that the
+  # script's install/build/download logic does what it claims.
+  deploy-script:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y musl-tools cmake
+
+      - name: "Branch 1: cargo present -> build from source"
+        run: |
+          sudo ./deploy.sh
+          test -x /usr/local/bin/face-auth
+          test -x /usr/local/bin/face-enroll
+          grep -q 'pam_exec.so /usr/local/bin/face-auth' /etc/pam.d/sudo
+
+      - name: Reset install
+        run: sudo ./uninstall.sh
+
+      - name: "Branch 2: no cargo -> reuse local target/ binaries"
+        run: |
+          mv "$HOME/.cargo/bin" "$HOME/.cargo/bin.hidden"
+          sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" ./deploy.sh
+          test -x /usr/local/bin/face-auth
+          test -x /usr/local/bin/face-enroll
+
+      - name: Reset install (again)
+        run: sudo ./uninstall.sh
+
+      - name: Stage a fake release for the download-fallback branch
+        run: |
+          mkdir -p /tmp/fake-release
+          cp target/x86_64-unknown-linux-musl/release/face-auth /tmp/fake-release/face-auth-x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/face-enroll /tmp/fake-release/face-enroll-x86_64-unknown-linux-musl
+          (cd /tmp/fake-release && sha256sum -- * > SHA256SUMS)
+          # Remove the local prebuilt binaries so deploy.sh can't fall back to branch 2 instead.
+          rm -f target/x86_64-unknown-linux-musl/release/face-auth target/x86_64-unknown-linux-musl/release/face-enroll
+
+      - name: "Branch 3: no cargo, no local binaries -> checksum-verified download"
+        run: |
+          sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" FACE_AUTH_DEPLOY_RELEASE_BASE="file:///tmp/fake-release" ./deploy.sh
+          test -x /usr/local/bin/face-auth
+          cmp /usr/local/bin/face-auth /tmp/fake-release/face-auth-x86_64-unknown-linux-musl
+
+      - name: Cleanup
+        if: always()
+        run: |
+          [ -d "$HOME/.cargo/bin.hidden" ] && mv "$HOME/.cargo/bin.hidden" "$HOME/.cargo/bin" || true
+          sudo ./uninstall.sh || true

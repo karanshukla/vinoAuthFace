@@ -54,13 +54,46 @@ done
 # ---- Detect OpenVINO NPU toolchain ----
 # The `npu` feature dynamically links against OpenVINO's own .so files, which are built
 # for glibc — that's incompatible with the plain musl (fully static) build used otherwise,
-# so an NPU build switches target and needs the OpenVINO runtime libraries installed
-# system-wide (see below) since PAM invokes this binary with no shell profile sourced,
-# so LD_LIBRARY_PATH / setupvars.sh being sourced interactively doesn't help it at runtime.
-OPENVINO_SRC=$(find "$ACTUAL_HOME/.local/opt" -maxdepth 1 -iname "openvino_toolkit_*" -type d 2>/dev/null | sort -V | tail -1)
+# so an NPU build switches target. This project never installs OpenVINO itself; Intel
+# documents two independent ways a user gets it onto their system, and each needs different
+# handling here:
+#
+#   1. System package (RPM/DEB): the package drops libopenvino_c straight into a standard lib
+#      directory. openvino-sys's own build.rs already searches these exact paths with no
+#      environment variables required, and RPM/DEB packages that ship shared libraries run
+#      ldconfig on install — so if it's here, both the build *and* face-auth's later runtime
+#      resolution are already covered for free, no copying or ld.so.conf.d needed.
+#   2. Archive (tarball extracted by the user, e.g. into ~/.local/opt or the classic
+#      /opt/intel/openvino path): ships a setupvars.sh that sets the environment variables
+#      (INTEL_OPENVINO_DIR etc.) both the build and openvino-sys's build.rs need. Since PAM
+#      invokes face-auth with no shell profile sourced, setupvars.sh being sourced here only
+#      covers the build — the runtime libraries still need copying system-wide separately
+#      (see "Install OpenVINO runtime libraries" below).
+#
+# `find`'s exit status matters here because of `set -e`/`pipefail` above: if a candidate
+# directory doesn't exist, find still exits non-zero even though the pipeline's other commands
+# succeed, which would otherwise abort this whole script — `|| true` on the substitution as a
+# whole absorbs that instead of failing deploy.sh outright over a directory that's allowed not
+# to exist.
+OPENVINO_LIB_DIRS="/usr/lib64 /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /lib"
+OPENVINO_SYSTEM_INSTALL=0
+for dir in $OPENVINO_LIB_DIRS; do
+    if compgen -G "$dir/libopenvino_c.so*" >/dev/null 2>&1; then
+        OPENVINO_SYSTEM_INSTALL=1
+        break
+    fi
+done
+
+OPENVINO_SRC=$(find "$ACTUAL_HOME/.local/opt" /opt/intel -maxdepth 1 \( -iname "openvino_toolkit_*" -o -iname "openvino" -o -iname "openvino_2022" \) -type d 2>/dev/null | sort -V | tail -1 || true)
+
 NPU_BUILD=0
-if [ -n "$OPENVINO_SRC" ] && [ -f "$OPENVINO_SRC/setupvars.sh" ]; then
+NPU_SOURCE_MODE=""
+if [ "$OPENVINO_SYSTEM_INSTALL" = "1" ]; then
     NPU_BUILD=1
+    NPU_SOURCE_MODE="system"
+elif [ -n "$OPENVINO_SRC" ] && [ -f "$OPENVINO_SRC/setupvars.sh" ]; then
+    NPU_BUILD=1
+    NPU_SOURCE_MODE="archive"
 fi
 
 # Locate cargo explicitly: under `sudo`, root's PATH does not include a rustup user
@@ -79,8 +112,14 @@ fi
 # gives it that user's real $HOME); only the install steps below need root.
 NPU_ACTIVE=0
 if [ -n "$CARGO_BIN" ]; then
-    if [ "$NPU_BUILD" = "1" ]; then
-        echo "OpenVINO found at $OPENVINO_SRC — building with NPU backend (host/glibc target)..."
+    if [ "$NPU_BUILD" = "1" ] && [ "$NPU_SOURCE_MODE" = "system" ]; then
+        echo "System-installed OpenVINO found (RPM/DEB) — building with NPU backend (host/glibc target)..."
+        sudo -u "$ACTUAL_USER" -H "$CARGO_BIN" build --release --features face-auth-core/npu,face-auth/npu,face-enroll/npu -p face-auth -p face-enroll
+        FACE_AUTH_BIN="target/release/face-auth"
+        FACE_ENROLL_BIN="target/release/face-enroll"
+        NPU_ACTIVE=1
+    elif [ "$NPU_BUILD" = "1" ]; then
+        echo "OpenVINO archive found at $OPENVINO_SRC — building with NPU backend (host/glibc target)..."
         sudo -u "$ACTUAL_USER" -H bash -c "
             set -eo pipefail
             source '$OPENVINO_SRC/setupvars.sh' >/dev/null
@@ -91,7 +130,7 @@ if [ -n "$CARGO_BIN" ]; then
         FACE_ENROLL_BIN="target/release/face-enroll"
         NPU_ACTIVE=1
     else
-        echo "No OpenVINO toolkit found under $ACTUAL_HOME/.local/opt — building CPU-only (musl, static)..."
+        echo "No OpenVINO installation found (checked system lib dirs, $ACTUAL_HOME/.local/opt, and /opt/intel) — building CPU-only (musl, static)..."
         sudo -u "$ACTUAL_USER" -H "$CARGO_BIN" build --release --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
         FACE_AUTH_BIN="target/x86_64-unknown-linux-musl/release/face-auth"
         FACE_ENROLL_BIN="target/x86_64-unknown-linux-musl/release/face-enroll"
@@ -107,14 +146,23 @@ else
     rm -rf "$DL_DIR"
     mkdir -p "$DL_DIR"
 
-    # Prefer the release matching this exact checkout (if it's a tagged clone) over whatever's
-    # currently "latest" — this script's own PAM-patching/config logic can change between tags,
-    # so the binaries it installs should match the deploy.sh version actually running it.
-    GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || true)
-    if [ -n "$GIT_TAG" ]; then
-        DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$GIT_TAG"
+    # FACE_AUTH_DEPLOY_RELEASE_BASE overrides the download source entirely — e.g. a `file://`
+    # or internal-mirror URL for air-gapped installs, or CI pointing this at binaries it just
+    # built itself to exercise this branch deterministically without depending on a real
+    # published release existing or GitHub's API being reachable.
+    if [ -n "${FACE_AUTH_DEPLOY_RELEASE_BASE:-}" ]; then
+        DOWNLOAD_BASE="$FACE_AUTH_DEPLOY_RELEASE_BASE"
     else
-        DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/latest/download"
+        # Prefer the release matching this exact checkout (if it's a tagged clone) over
+        # whatever's currently "latest" — this script's own PAM-patching/config logic can change
+        # between tags, so the binaries it installs should match the deploy.sh version actually
+        # running it.
+        GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || true)
+        if [ -n "$GIT_TAG" ]; then
+            DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$GIT_TAG"
+        else
+            DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/latest/download"
+        fi
     fi
 
     for bin in face-auth face-enroll; do
@@ -160,7 +208,12 @@ install -Dm755 "$FACE_AUTH_BIN" "$BIN_DIR/face-auth"
 install -Dm755 "$FACE_ENROLL_BIN" "$BIN_DIR/face-enroll"
 
 # ---- Install OpenVINO runtime libraries system-wide (NPU builds only) ----
-if [ "$NPU_ACTIVE" = "1" ]; then
+# Only the archive case needs this: its libraries live under the extracted folder, which
+# nothing else on the system knows to look in. A system-package (RPM/DEB) install already put
+# its libraries in a standard lib directory and ran ldconfig itself, so face-auth's own dynamic
+# linking already resolves them with no extra step — redoing that here would just be copying
+# system-owned files around for no benefit.
+if [ "$NPU_ACTIVE" = "1" ] && [ "$NPU_SOURCE_MODE" = "archive" ]; then
     echo "Installing OpenVINO runtime libraries to $OPENVINO_INSTALL_DIR..."
     # The whole intel64 directory is copied as a unit (not just libopenvino*.so):
     # OpenVINO auto-discovers its CPU/NPU/GPU plugins and the ONNX frontend by scanning
@@ -174,6 +227,8 @@ $OPENVINO_INSTALL_DIR/tbb
 EOF
     ldconfig
     echo "OpenVINO runtime libraries registered system-wide via ldconfig"
+elif [ "$NPU_ACTIVE" = "1" ]; then
+    echo "OpenVINO was installed as a system package — runtime libraries already resolve via the system linker, nothing to copy."
 fi
 
 # ---- Install recognition model (mbf or r50, selected above via RECOGNITION_MODEL) ----

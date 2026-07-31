@@ -32,10 +32,15 @@ cargo test -p face-auth-core storage::tests::save_then_load_round_trips_embeddin
 cargo check --workspace
 ```
 
-There is no clippy/rustfmt config committed — match existing style by hand. The only CI
-(`.github/workflows/release.yml`) builds and publishes static musl binaries to GitHub Releases
-on `v*` tag pushes (CPU/tract backend only — NPU needs the OpenVINO runtime present at build
-time, which CI doesn't have); it doesn't run tests or lints on regular pushes/PRs.
+There is no clippy/rustfmt config committed — match existing style by hand. Two workflows exist:
+`.github/workflows/ci.yml` runs on every push/PR — `cargo test --workspace`, a from-source musl
+build, and (in a separate job) every branch of `deploy.sh`'s cargo-availability fallback chain
+against a real `sudo ./deploy.sh`/`./uninstall.sh` cycle on the runner, including the
+checksum-verified download path via a `file://` override
+(`FACE_AUTH_DEPLOY_RELEASE_BASE`, deploy.sh-only, not a real config option). `.github/workflows/
+release.yml` builds and publishes static musl binaries to GitHub Releases on `v*` tag pushes.
+Neither builds the `npu` feature — it needs the actual OpenVINO runtime present at build time,
+which CI doesn't have — so that backend stays a local, deploy.sh-driven build only.
 
 To actually exercise a change end-to-end (not just unit tests), deploy and test on real
 hardware: `sudo ./deploy.sh`, `face-enroll --user $USER`, `sudo true`. See README's
@@ -138,13 +143,15 @@ explicit permissions) for any new per-user state file.
 
 ### Deploy/uninstall scripts
 
-`deploy.sh` and `uninstall.sh` are the actual "integration test" surface for anything touching
-config defaults, model paths, or PAM — they encode where files land and how PAM stanzas are
-patched (see README's PAM Integration and Model sections for the specifics: insertion points
-per service, `.face-auth.bak` backups, SHA-256 checksum verification, SELinux policy
-compile/load). If you change a default path or add a new required file, update both scripts and
-`config/face-auth.toml.example` together, not just the Rust defaults — the deploy script is
-often the only thing that actually creates these files on a target system.
+`deploy.sh` and `uninstall.sh` are the integration-test surface for anything touching config
+defaults, model paths, or PAM — they encode where files land and how PAM stanzas are patched
+(see README's PAM Integration and Model sections for the specifics: insertion points per
+service, `.face-auth.bak` backups, SHA-256 checksum verification, SELinux policy compile/load).
+CI (`ci.yml`'s `deploy-script` job) actually runs both scripts on the runner, not just lints
+them, so a real regression here fails the build. If you change a default path or add a new
+required file, update both scripts and `config/face-auth.toml.example` together, not just the
+Rust defaults — the deploy script is often the only thing that actually creates these files on a
+target system.
 
 `pin-camera.sh` is a separate, opt-in hardening step (frame-injection defense via USB bus-path
 pinning) — read the README's "Camera identity / frame-injection" subsection before touching
