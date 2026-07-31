@@ -8,9 +8,14 @@
 - **No daemon, no systemd units, no D-Bus**
 - **Immutable-first** — everything fits in `/usr/local` and `~/.local`, no `/usr` modifications needed
 
+**Jump to:** [Quick Start](#quick-start) · [Requirements](#requirements) ·
+[Deployment](#deployment) · [Configuration](#configuration) · [Enrollment](#enrollment) ·
+[Diagnosing your camera](#diagnosing-your-camera) · [Troubleshooting](#troubleshooting) ·
+[Security & Limitations](#security--limitations)
+
 ## Features
 
-- **Windows Hello–compatible IR camera support** — raw GREY format, no RGB camera needed
+- **Windows Hello–compatible IR camera support** — auto-detects GREY, YUYV, or Y16 pixel formats, no RGB camera needed
 - **Automatic password fallback** — if face auth fails, times out, or no camera, PAM falls through to password
 - **Static musl binary** (~20 MB, zero runtime dependencies) — copy to any Linux system
 - **No daemon, no systemd, no D-Bus** — just `pam_exec.so` triggered by PAM
@@ -35,8 +40,13 @@ sudo true              # triggers IR camera → exit 0
 
 ### Hardware
 
-- **IR camera** exposing raw GREY format (Windows Hello compatible, e.g. Shinetech ASUS FHD webcam)
+- **IR camera** (Windows Hello compatible, e.g. Shinetech ASUS FHD webcam) — pixel format
+  (GREY, YUYV, or Y16) is auto-detected from the driver, not assumed
 - **Linux kernel** with `uvcvideo` (standard on all distros)
+
+Not sure which `/dev/video*` node is your IR camera, or whether it's a format face-auth
+understands? Build `face-camera-diag` and run `list` — see
+[Diagnosing your camera](#diagnosing-your-camera).
 
 ### Software (target system — where you deploy)
 
@@ -232,7 +242,7 @@ PAM (sudo / gdm-password / swaylock / polkit-1)
   │
   ▼
 face-auth (static binary)
-  ├─ V4L2 capture from IR camera (640×400 GREY, /dev/video3)
+  ├─ V4L2 capture from IR camera (auto-detected device + pixel format: GREY/YUYV/Y16)
   │   └─ poll() with 5s timeout — exits cleanly if camera hangs
   ├─ Histogram equalization
   ├─ Face detection (RetinaFace-derived ONNX model)
@@ -303,6 +313,41 @@ sudo dnf install -y policycoreutils
 sudo checkmodule -M -m -o face_auth.mod selinux/face-auth.te
 sudo semodule_package -o face_auth.pp -m face_auth.mod
 sudo semodule -i face_auth.pp
+```
+
+## Diagnosing your camera
+
+Not sure which `/dev/video*` node is the IR camera, or whether face-auth will understand its
+pixel format? `face-camera-diag` is a small offline tool for exactly that — it's not installed
+by `deploy.sh`, so build it once from source:
+
+```bash
+cargo build --release -p face-camera-diag
+```
+
+`list` enumerates every V4L2 node with its driver, card name, USB VID:PID, and current
+resolution/pixel format:
+
+```bash
+./target/release/face-camera-diag list
+
+DEVICE         DRIVER     CARD                     VID:PID    FORMAT       IR GUESS
+/dev/video0    uvcvideo   Integrated_Webcam_FHD    2b7e:55c0  1920x1080 YUYV
+/dev/video2    uvcvideo   Integrated_Webcam_FHD_IR 2b7e:55c0  360x360 GREY  likely
+/dev/video3    uvcvideo   Integrated_Webcam_FHD_IR 2b7e:55c0  -
+```
+
+A `FORMAT` of `GREY`, `YUYV`, or `Y16` is one face-auth can capture; anything else (or `-`,
+which usually means a paired metadata node rather than an actual capture device) isn't. The
+`IR GUESS` column is a heuristic based on the card name, not authoritative — cross-check against
+what `sudo ./deploy.sh` / `config.device()` actually picks.
+
+`dump` captures one frame from a specific device and writes it as a 16-bit PGM you can open in
+any image viewer that supports the format (e.g. GIMP), to confirm you're actually looking at a
+face-shaped IR image and not noise or a black frame:
+
+```bash
+./target/release/face-camera-diag dump --device /dev/video2 --out frame.pgm
 ```
 
 ## Troubleshooting
@@ -388,6 +433,8 @@ authFace/
         verify.rs            # Cosine similarity
     face-auth/               # PAM binary (stdin-less, PAM_USER fallback)
     face-enroll/             # Enrollment CLI
+    face-similarity-check/   # Offline FAR debug tool (photos vs enrolled embeddings)
+    face-camera-diag/        # Offline camera discovery/diagnostic tool (list, dump)
   config/
     face-auth.toml.example   # Documented config template
   selinux/

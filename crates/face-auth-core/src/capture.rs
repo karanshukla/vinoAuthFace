@@ -22,6 +22,72 @@ const V4L2_CAP_TIMEPERFRAME: u32 = 0x1000;
 const V4L2_BUF_TYPE_VIDEO_CAPTURE: u32 = 1;
 const V4L2_MEMORY_MMAP: u32 = 1;
 
+// FourCC pixel formats we know how to convert to IrFrame's u16-per-pixel representation.
+// v4l2_fourcc('G','R','E','Y'), v4l2_fourcc('Y','U','Y','V'), v4l2_fourcc('Y','1','6',' ').
+const V4L2_PIX_FMT_GREY: u32 = 0x59455247;
+const V4L2_PIX_FMT_YUYV: u32 = 0x56595559;
+const V4L2_PIX_FMT_Y16: u32 = 0x20363159;
+
+const VIDIOC_QUERYCAP: u64 = 0x80685600;
+
+// Kernel struct v4l2_capability: driver[16] + card[32] + bus_info[32] + version(4) +
+// capabilities(4) + device_caps(4) + reserved[3](12) = 104 bytes.
+#[repr(C)]
+struct v4l2_capability {
+    driver: [u8; 16],
+    card: [u8; 32],
+    bus_info: [u8; 32],
+    version: u32,
+    capabilities: u32,
+    device_caps: u32,
+    reserved: [u32; 3],
+}
+
+pub struct CameraCaps {
+    pub driver: String,
+    pub card: String,
+}
+
+fn cstr_to_string(bytes: &[u8]) -> String {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
+}
+
+/// Driver and card name via `VIDIOC_QUERYCAP` — doesn't request buffers or touch streaming
+/// state, so it's safe to call against a device already in use elsewhere, unlike `Camera::open`.
+pub fn query_caps(device_path: &str) -> Result<CameraCaps> {
+    let fd = open(device_path, OFlag::O_RDWR, Mode::empty())
+        .map_err(|e| anyhow::anyhow!("Failed to open {}: {}", device_path, e))?;
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    let mut cap: v4l2_capability = unsafe { std::mem::zeroed() };
+    ioctl(fd.as_raw_fd(), VIDIOC_QUERYCAP, &mut cap as *mut _ as *mut c_void)?;
+    Ok(CameraCaps {
+        driver: cstr_to_string(&cap.driver),
+        card: cstr_to_string(&cap.card),
+    })
+}
+
+/// Current width/height/pixelformat via `VIDIOC_G_FMT`, without the `REQBUFS`/mmap setup
+/// `Camera::open` does — for diagnostics that just want to report the format, not capture.
+pub fn query_format(device_path: &str) -> Result<(u32, u32, u32)> {
+    let fd = open(device_path, OFlag::O_RDWR, Mode::empty())
+        .map_err(|e| anyhow::anyhow!("Failed to open {}: {}", device_path, e))?;
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    let mut fmt = make_v4l2_format(V4L2_BUF_TYPE_VIDEO_CAPTURE, 0, 0, 0);
+    ioctl(fd.as_raw_fd(), VIDIOC_G_FMT, &mut fmt as *mut _ as *mut c_void)?;
+    let pix: &v4l2_pix_format = unsafe { &*(fmt.raw.as_ptr() as *const v4l2_pix_format) };
+    Ok((pix.width, pix.height, pix.pixelformat))
+}
+
+/// Human-readable FourCC (e.g. "GREY", "YUYV") for display in diagnostics.
+pub fn fourcc_to_string(fourcc: u32) -> String {
+    fourcc
+        .to_le_bytes()
+        .iter()
+        .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '?' })
+        .collect()
+}
+
 // Kernel struct v4l2_format: type(4) + padding(4) + union raw_data[200] = 208 bytes
 #[repr(C)]
 struct v4l2_format {
@@ -120,6 +186,7 @@ pub struct Camera {
     buffers: Vec<MappedBuffer>,
     width: u32,
     height: u32,
+    pixelformat: u32,
     stream_on: bool,
 }
 
@@ -141,6 +208,16 @@ impl Camera {
         let pix: &v4l2_pix_format = unsafe { &*(fmt.raw.as_ptr() as *const v4l2_pix_format) };
         let width = pix.width;
         let height = pix.height;
+        let pixelformat = pix.pixelformat;
+        match pixelformat {
+            V4L2_PIX_FMT_GREY | V4L2_PIX_FMT_YUYV | V4L2_PIX_FMT_Y16 => {}
+            other => {
+                return Err(anyhow::anyhow!(
+                    "Unsupported pixel format {:?} (0x{:08x}) on {} — expected GREY, YUYV, or Y16",
+                    fourcc_to_string(other), other, device_path
+                ));
+            }
+        }
 
         let mut reqbuf = v4l2_requestbuffers {
             count: BUFFER_COUNT,
@@ -180,7 +257,7 @@ impl Camera {
             buffers.push(MappedBuffer { ptr, length });
         }
 
-        Ok(Self { fd, buffers, width, height, stream_on: false })
+        Ok(Self { fd, buffers, width, height, pixelformat, stream_on: false })
     }
 
     pub fn capture_frame(&mut self, timeout_ms: i32) -> Result<IrFrame> {
@@ -224,7 +301,7 @@ impl Camera {
             let mapped = &self.buffers[buf.index as usize];
             let bytes_used = buf.bytesused as usize;
             let data_slice = unsafe { std::slice::from_raw_parts(mapped.ptr as *const u8, bytes_used) };
-            let data = data_slice.iter().map(|&b| (b as u16) * 257).collect();
+            let data = convert_frame_bytes(self.pixelformat, data_slice);
 
             // Requeue this same buffer (VIDIOC_QBUF reuses the index/type/memory DQBUF just
             // filled in) so the driver can write the next frame into it.
@@ -258,6 +335,27 @@ pub fn capture_ir_frame(device_path: &str, timeout_ms: i32) -> Result<IrFrame> {
     let frame = cam.capture_frame(timeout_ms)?;
     cam.stop_stream();
     Ok(frame)
+}
+
+/// Converts raw captured bytes to IrFrame's u16-per-pixel form, based on the format the driver
+/// reported at open time. GREY and the Y plane of YUYV are both native 8-bit, so they're
+/// upscaled by 257 (0..=255 -> 0..=65535) to fill the same dynamic range Y16 delivers natively —
+/// downstream code (CLAHE's `/257` bucketing, the *257 upscale in capture) assumes 16-bit-ranged
+/// input regardless of which format produced it.
+fn convert_frame_bytes(pixelformat: u32, data_slice: &[u8]) -> Vec<u16> {
+    match pixelformat {
+        V4L2_PIX_FMT_YUYV => data_slice
+            .iter()
+            .step_by(2) // Y0 U Y1 V ... — luma bytes sit at even offsets.
+            .map(|&y| (y as u16) * 257)
+            .collect(),
+        V4L2_PIX_FMT_Y16 => data_slice
+            .chunks_exact(2)
+            .map(|c| u16::from_ne_bytes([c[0], c[1]]))
+            .collect(),
+        // V4L2_PIX_FMT_GREY, and the fallback for anything Camera::open already validated.
+        _ => data_slice.iter().map(|&b| (b as u16) * 257).collect(),
+    }
 }
 
 fn ioctl(fd: i32, request: u64, arg: *mut c_void) -> Result<i32> {
@@ -337,6 +435,48 @@ fn video_kernel_name(video_path: &str) -> anyhow::Result<String> {
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("{} has no file name", real.display()))?;
     Ok(name.to_string_lossy().into_owned())
+}
+
+/// Resolves a V4L2 device's USB vendor:product ID by walking up from its sysfs bus path
+/// (`device_bus_path` resolves to the USB *interface* directory, e.g. `.../3-7:1.2`) until an
+/// ancestor directory exposing `idVendor`/`idProduct` is found — that's the parent USB *device*
+/// directory (`.../3-7`). Not all capture devices are USB (PCI, MIPI/CSI on other platforms), so
+/// this can legitimately fail; callers should treat that as "no VID:PID to report", not an error
+/// in the device itself.
+pub fn usb_ids(video_path: &str) -> anyhow::Result<(String, String)> {
+    let bus_path = device_bus_path(video_path)?;
+    let mut dir = std::path::PathBuf::from(&bus_path);
+    loop {
+        let vendor = dir.join("idVendor");
+        let product = dir.join("idProduct");
+        if vendor.is_file() && product.is_file() {
+            let vid = std::fs::read_to_string(&vendor)?.trim().to_string();
+            let pid = std::fs::read_to_string(&product)?.trim().to_string();
+            return Ok((vid, pid));
+        }
+        dir = match dir.parent() {
+            Some(p) => p.to_path_buf(),
+            None => anyhow::bail!("no idVendor/idProduct found walking up from {}", bus_path),
+        };
+    }
+}
+
+/// Lists every `/dev/videoN` node under `/sys/class/video4linux`, in ascending index order —
+/// the enumeration diagnostics (`face-camera-diag`) build their per-device report from.
+pub fn list_video_devices() -> Vec<String> {
+    let base = std::path::Path::new("/sys/class/video4linux");
+    let mut devices: Vec<String> = std::fs::read_dir(base)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|entry| entry.file_name().to_str().map(|s| format!("/dev/{}", s)))
+                .collect()
+        })
+        .unwrap_or_default();
+    devices.sort_by_key(|path| {
+        path.trim_start_matches("/dev/video").parse::<u32>().unwrap_or(u32::MAX)
+    });
+    devices
 }
 
 pub fn detect_ir_camera() -> Option<String> {
