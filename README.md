@@ -10,7 +10,8 @@
 
 **Jump to:** [Quick Start](#quick-start) · [Requirements](#requirements) ·
 [Deployment](#deployment) · [Configuration](#configuration) · [Enrollment](#enrollment) ·
-[Diagnosing your camera](#diagnosing-your-camera) · [Troubleshooting](#troubleshooting) ·
+[Diagnosing your camera](#diagnosing-your-camera) ·
+[Hardware compatibility](#hardware-compatibility) · [Troubleshooting](#troubleshooting) ·
 [Security & Limitations](#security--limitations)
 
 ## Features
@@ -43,6 +44,10 @@ sudo true              # triggers IR camera → exit 0
 - **IR camera** (Windows Hello compatible, e.g. Shinetech ASUS FHD webcam) — pixel format
   (GREY, YUYV, or Y16) is auto-detected from the driver, not assumed
 - **Linux kernel** with `uvcvideo` (standard on all distros)
+
+Not sure whether your laptop's camera stack will work at all? See
+[Hardware compatibility](#hardware-compatibility) for supported/unsupported camera stacks and
+known hardware reports.
 
 Not sure which `/dev/video*` node is your IR camera, or whether it's a format face-auth
 understands? Build `face-camera-diag` and run `list` — see
@@ -378,6 +383,37 @@ face-shaped IR image and not noise or a black frame:
 ```bash
 ./target/release/face-camera-diag dump --device /dev/video2 --out frame.pgm
 ```
+
+## Hardware compatibility
+
+face-auth only speaks V4L2 via `uvcvideo` — there's no libcamera integration, so a camera that
+shows up under a different kernel stack (Intel IPU6, MIPI CSI) is unreachable no matter what
+pixel format it reports. Within `uvcvideo`, it further needs an IR-oriented capture node
+(`GREY`, `YUYV`, or `Y16` — see [Diagnosing your camera](#diagnosing-your-camera)), not just any
+UVC webcam node, for the anti-spoofing properties described in
+[Security & Limitations](#security--limitations) to actually hold: a plain RGB `uvcvideo` node
+will capture and run, but without real IR behind it, the print/screen spoof resistance doesn't
+apply.
+
+| Camera stack | `face-camera-diag list` output | Support |
+|---|---|---|
+| UVC IR (`uvcvideo` + GREY/YUYV/Y16 IR node) | `DRIVER=uvcvideo`, IR-labeled node reports `GREY`/`YUYV`/`Y16` | ✅ Supported |
+| UVC RGB-only (`uvcvideo`, no IR node) | `DRIVER=uvcvideo`, only a color-format node exists | ⚠️ Captures, not secure-compatible — no real IR to resist spoofing |
+| Intel IPU6 / MIPI / libcamera | camera doesn't appear as a plain `uvcvideo` node at all | ❌ Not supported — no libcamera integration |
+| No IR camera | n/a | ❌ Not applicable |
+
+### Reports
+
+| Laptop | IR camera | Driver | Tier | Notes |
+|---|---|---|---|---|
+| ASUS laptop (exact model unconfirmed), Shinetech FHD IR webcam | Yes — `Integrated_Webcam_FHD_IR`, `2b7e:55c0` | `uvcvideo` | ✅ Supported | Reference hardware for this project — GREY-format node, enrollment and auth verified end-to-end. |
+
+Only one machine has been tested so far, borrowed table format from
+[Visage](https://github.com/sovren-software/visage)'s hardware-compatibility docs, which covers
+more ground across more hardware. If face-auth works — or doesn't — on yours, please
+[open an issue](https://github.com/karanshukla/vinoAuthFace/issues/new) with your
+`face-camera-diag list` output and which tier it fell into. This table is only as good as the
+reports in it.
 
 ## Troubleshooting
 
