@@ -270,7 +270,10 @@ face-auth (static binary)
 Uses InsightFace **`w600k_mbf.onnx`** (MobileFaceNet @ WebFace600K, ~13 MB, 512-d output)
 from the `buffalo_sc` model pack by default for recognition, plus **`version-slim-320.onnx`**
 (from [Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB),
-a different project — not InsightFace) for face detection. Both MIT-licensed.
+a different project — not InsightFace) for face detection. The detector is MIT-licensed. The
+recognition model's weights are **not** MIT: InsightFace's model zoo license is non-commercial
+research use only (see `model_zoo/README.md` and `python-package/README.md` in the InsightFace
+repo) — only InsightFace's library *code* is MIT, not the trained weights it distributes.
 
 Neither model is bundled in this repository. `deploy.sh` downloads both and verifies a SHA-256
 checksum before installing: the recognition model from InsightFace's official GitHub releases,
