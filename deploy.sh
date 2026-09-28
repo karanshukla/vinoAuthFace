@@ -39,6 +39,7 @@ CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
 VAR_DIR="/var/lib/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
+OPENVINO_INSTALL_DIR="/usr/local/lib/face-auth/openvino"
 
 PAM_LINE="auth       sufficient  pam_exec.so quiet /usr/local/bin/face-auth"
 
@@ -52,7 +53,7 @@ ACTUAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 # ---- Undo any previous partial setup ----
 echo "Cleaning up any previous partial setup..."
 
-for service in sudo swaylock gdm-password; do
+for service in sudo swaylock gdm-password polkit-1; do
     if [ -f "$PAM_DIR/$service" ]; then
         sed -i '/pam_exec\.so.*face-auth/d' "$PAM_DIR/$service" 2>/dev/null || true
     fi
@@ -92,7 +93,7 @@ as_user() {
 
 build_with_cargo() {
     local cargo="$1"
-    if ! as_user "$cargo" build --release --target "$MUSL_TARGET" \
+    if ! as_user "$cargo" build --release --locked --target "$MUSL_TARGET" \
             -p face-auth -p face-enroll; then
         echo ""
         echo "Build failed. If the error mentions a missing target, add it with:"
@@ -101,60 +102,170 @@ build_with_cargo() {
     fi
 }
 
-if [ -f "$ARTIFACT_DIR/face-auth" ] && [ -f "$ARTIFACT_DIR/face-enroll" ] \
+# ---- OpenVINO (NPU backend) detection ----
+# The `npu` feature links OpenVINO's glibc .so files, so an NPU build uses the
+# host (glibc) target instead of static musl. This script never installs
+# OpenVINO; it recognises the two ways Intel ships it:
+#
+#   system  RPM/DEB package: libopenvino_c lands in a standard lib dir and the
+#           package ran ldconfig, so build and PAM-time loading both just work.
+#   archive extracted tarball (~/.local/opt or /opt/intel) with setupvars.sh.
+#           That covers the build, but PAM runs face-auth with no shell
+#           profile, so the runtime libraries are copied system-wide below.
+ACTUAL_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
+OPENVINO_MODE=""
+for dir in /usr/lib64 /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /lib; do
+    if compgen -G "$dir/libopenvino_c.so*" >/dev/null 2>&1; then
+        OPENVINO_MODE="system"
+        break
+    fi
+done
+if [ -z "$OPENVINO_MODE" ]; then
+    # find exits non-zero on a missing search dir; that is not an error here.
+    OPENVINO_SRC="$(find "$ACTUAL_HOME/.local/opt" /opt/intel -maxdepth 1 -type d \
+        \( -iname "openvino_toolkit_*" -o -iname "openvino" -o -iname "openvino_2022" \) \
+        2>/dev/null | sort -V | tail -1 || true)"
+    if [ -n "$OPENVINO_SRC" ] && [ -f "$OPENVINO_SRC/setupvars.sh" ]; then
+        OPENVINO_MODE="archive"
+    fi
+fi
+
+NPU_FEATURES="face-auth-core/npu,face-auth/npu,face-enroll/npu"
+NPU_ACTIVE=0
+BIN_SRC="$ARTIFACT_DIR"
+
+if [ -n "$OPENVINO_MODE" ] && CARGO_BIN="$(find_cargo)"; then
+    echo "OpenVINO found ($OPENVINO_MODE install): building with the NPU backend (glibc target)..."
+    if [ "$OPENVINO_MODE" = "system" ]; then
+        as_user "$CARGO_BIN" build --release --locked --features "$NPU_FEATURES" \
+            -p face-auth -p face-enroll || exit 1
+    else
+        as_user bash -c "
+            set -eo pipefail
+            source '$OPENVINO_SRC/setupvars.sh' >/dev/null
+            set -u
+            '$CARGO_BIN' build --release --locked --features '$NPU_FEATURES' -p face-auth -p face-enroll
+        " || exit 1
+    fi
+    BIN_SRC="target/release"
+    NPU_ACTIVE=1
+elif [ -f "$ARTIFACT_DIR/face-auth" ] && [ -f "$ARTIFACT_DIR/face-enroll" ] \
    && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ]; then
-    echo "Using pre-built binaries from $ARTIFACT_DIR/"
+    echo "Using pre-built binaries from $ARTIFACT_DIR/ (FACE_AUTH_FORCE_BUILD=1 to rebuild)"
 elif CARGO_BIN="$(find_cargo)"; then
     echo "Building face-auth with $CARGO_BIN..."
     build_with_cargo "$CARGO_BIN" || exit 1
 else
-    CONTAINER_ENGINE=""
-    for engine in podman docker; do
-        command -v "$engine" &>/dev/null && { CONTAINER_ENGINE="$engine"; break; }
-    done
-
-    echo "Error: no Rust toolchain found, and no pre-built binaries in $ARTIFACT_DIR/."
-    echo ""
-
-    if [ -n "$CONTAINER_ENGINE" ]; then
-        # Deliberately not run from here: this script is under sudo, and
-        # rootless $CONTAINER_ENGINE driven through `sudo -u` frequently fails
-        # on a missing XDG_RUNTIME_DIR. Running it directly is reliable, and
-        # keeps the build artifacts owned by you.
-        echo "Option 1 — build in a container, no toolchain needed."
-        echo "Run this as yourself (NOT with sudo), then re-run sudo ./deploy.sh:"
-        echo ""
-        echo "  $CONTAINER_ENGINE run --rm -v \"\$PWD\":/src:Z -w /src \\"
-        echo "    docker.io/library/rust:alpine \\"
-        echo "    sh -c 'apk add --no-cache musl-dev && \\"
-        echo "           cargo build --release --target $MUSL_TARGET \\"
-        echo "             -p face-auth -p face-enroll'"
-        echo ""
-        echo "Option 2 — install a Rust toolchain:"
+    # No toolchain and nothing built locally: fetch the release binaries CI
+    # publishes, verified against the release's SHA256SUMS.
+    RELEASE_REPO="karanshukla/vinoAuthFace"
+    if [ -n "${FACE_AUTH_DEPLOY_RELEASE_BASE:-}" ]; then
+        # Override for air-gapped mirrors, and for CI exercising this path
+        # with a file:// URL.
+        DOWNLOAD_BASE="$FACE_AUTH_DEPLOY_RELEASE_BASE"
+    elif GIT_TAG="$(git describe --tags --exact-match 2>/dev/null)"; then
+        # A tagged checkout installs its own release, so the binaries match
+        # the deploy logic running them.
+        DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$GIT_TAG"
     else
-        echo "Install a Rust toolchain:"
+        DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/latest/download"
     fi
 
-    echo "  Arch/CachyOS:  sudo pacman -S --needed rust"
-    echo "  Fedora:        sudo dnf install rust cargo"
-    echo "  Or rustup:     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-    echo "  Then:          rustup target add $MUSL_TARGET"
-    echo ""
-    echo "Either way, re-run sudo ./deploy.sh afterwards."
-    exit 1
+    echo "No Rust toolchain or local build found; downloading release binaries from"
+    echo "  $DOWNLOAD_BASE"
+    DL_DIR="$(mktemp -d)"
+    DOWNLOAD_OK=1
+    for asset in face-auth-$MUSL_TARGET face-enroll-$MUSL_TARGET SHA256SUMS; do
+        curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+            -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" || { DOWNLOAD_OK=0; break; }
+    done
+    if [ "$DOWNLOAD_OK" = 1 ]; then
+        # Both binaries must be listed, not just match: --ignore-missing alone
+        # would pass a file SHA256SUMS never mentions.
+        if ! (cd "$DL_DIR" \
+                && grep -E "[ *](face-auth|face-enroll)-$MUSL_TARGET\$" SHA256SUMS > want \
+                && [ "$(wc -l < want)" -eq 2 ] \
+                && sha256sum -c --strict --quiet want); then
+            echo "Error: checksum verification failed for the downloaded binaries."
+            rm -rf "$DL_DIR"
+            exit 1
+        fi
+        mkdir -p "$DL_DIR/bin"
+        mv "$DL_DIR/face-auth-$MUSL_TARGET" "$DL_DIR/bin/face-auth"
+        mv "$DL_DIR/face-enroll-$MUSL_TARGET" "$DL_DIR/bin/face-enroll"
+        BIN_SRC="$DL_DIR/bin"
+    else
+        rm -rf "$DL_DIR"
+        CONTAINER_ENGINE=""
+        for engine in podman docker; do
+            command -v "$engine" &>/dev/null && { CONTAINER_ENGINE="$engine"; break; }
+        done
+
+        echo "Error: no Rust toolchain, no pre-built binaries in $ARTIFACT_DIR/,"
+        echo "and the release download failed."
+        echo ""
+
+        if [ -n "$CONTAINER_ENGINE" ]; then
+            # Deliberately not run from here: this script is under sudo, and
+            # rootless $CONTAINER_ENGINE driven through `sudo -u` frequently
+            # fails on a missing XDG_RUNTIME_DIR. Running it directly is
+            # reliable, and keeps the build artifacts owned by you.
+            echo "Option 1 — build in a container, no toolchain needed."
+            echo "Run this as yourself (NOT with sudo), then re-run sudo ./deploy.sh:"
+            echo ""
+            echo "  $CONTAINER_ENGINE run --rm -v \"\$PWD\":/src:Z -w /src \\"
+            echo "    docker.io/library/rust:alpine \\"
+            echo "    sh -c 'apk add --no-cache musl-dev && \\"
+            echo "           cargo build --release --locked --target $MUSL_TARGET \\"
+            echo "             -p face-auth -p face-enroll'"
+            echo ""
+            echo "Option 2 — install a Rust toolchain:"
+        else
+            echo "Install a Rust toolchain:"
+        fi
+
+        echo "  Arch/CachyOS:  sudo pacman -S --needed rust"
+        echo "  Fedora:        sudo dnf install rust cargo"
+        echo "  Or rustup:     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+        echo "  Then:          rustup target add $MUSL_TARGET"
+        echo ""
+        echo "Either way, re-run sudo ./deploy.sh afterwards."
+        exit 1
+    fi
 fi
 
 for bin in face-auth face-enroll; do
-    if [ ! -f "$ARTIFACT_DIR/$bin" ]; then
-        echo "Error: expected $ARTIFACT_DIR/$bin after the build, but it is missing."
+    if [ ! -f "$BIN_SRC/$bin" ]; then
+        echo "Error: expected $BIN_SRC/$bin after the build, but it is missing."
         exit 1
     fi
 done
 
+# A binary that does not match the backend written to the config fails at
+# unlock time with a confusing error, so check the linkage now.
+if [ "$NPU_ACTIVE" = 1 ] && ! ldd "$BIN_SRC/face-auth" | grep -q libopenvino; then
+    echo "Error: NPU build requested but $BIN_SRC/face-auth has no OpenVINO linkage."
+    exit 1
+fi
+
 # ---- Install binaries ----
 echo "Installing binaries..."
-install -Dm755 "$ARTIFACT_DIR/face-auth" "$BIN_DIR/face-auth"
-install -Dm755 "$ARTIFACT_DIR/face-enroll" "$BIN_DIR/face-enroll"
+install -Dm755 "$BIN_SRC/face-auth" "$BIN_DIR/face-auth"
+install -Dm755 "$BIN_SRC/face-enroll" "$BIN_DIR/face-enroll"
+[ -n "${DL_DIR:-}" ] && rm -rf "$DL_DIR"
+
+# ---- OpenVINO runtime libraries (archive installs only) ----
+# OpenVINO finds its device plugins and ONNX frontend by scanning the
+# directory libopenvino.so lives in, so intel64/ is copied as a unit.
+if [ "$NPU_ACTIVE" = 1 ] && [ "$OPENVINO_MODE" = "archive" ]; then
+    echo "Installing OpenVINO runtime libraries to $OPENVINO_INSTALL_DIR..."
+    mkdir -p "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb"
+    cp -a "$OPENVINO_SRC/runtime/lib/intel64/." "$OPENVINO_INSTALL_DIR/intel64/"
+    cp -a "$OPENVINO_SRC/runtime/3rdparty/tbb/lib/." "$OPENVINO_INSTALL_DIR/tbb/"
+    printf '%s\n' "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb" \
+        > /etc/ld.so.conf.d/face-auth-openvino.conf
+    ldconfig
+fi
 
 # ---- Install models ----
 # Staged in a private mktemp directory. A fixed /tmp path can be pre-created by
@@ -261,9 +372,37 @@ if [ "$RECOGNITION_MODEL" != "mbf" ]; then
     echo "NOTE: switching recognition models requires re-enrolling."
 fi
 
+# Keep the backend line in sync with what was actually built. A mismatch
+# (config says openvino, binary lacks it) fails at unlock time.
+CONF="$CONFIG_DIR/face-auth.toml"
+if [ "$NPU_ACTIVE" = 1 ]; then
+    if grep -q '^backend' "$CONF"; then
+        sed -i 's/^backend.*/backend = "openvino"/' "$CONF"
+    elif grep -q '^# backend = ' "$CONF"; then
+        sed -i 's/^# backend = .*/backend = "openvino"/' "$CONF"
+    else
+        [ -s "$CONF" ] && [ "$(tail -c1 "$CONF" | wc -l)" -eq 0 ] && echo >> "$CONF"
+        echo 'backend = "openvino"' >> "$CONF"
+    fi
+    echo "Set backend = \"openvino\" in $CONF (binary built with NPU support)"
+elif grep -q '^backend\s*=\s*"openvino"' "$CONF"; then
+    sed -i 's/^backend.*/backend = "tract"/' "$CONF"
+    echo "Warning: no NPU build this run; reverted backend to \"tract\" in $CONF"
+fi
+
 # ---- PAM setup ----
 echo "Installing PAM configs..."
-for service in sudo swaylock gdm-password; do
+
+# polkit-1 (pkexec, GUI admin prompts, Bitwarden's system unlock) usually has
+# no /etc/pam.d override: it falls back to the vendor file in /usr/lib/pam.d.
+# Materialise that as an override so there is something to patch, and mark it
+# so uninstall.sh deletes it rather than "restoring" a file that never was.
+if [ ! -f "$PAM_DIR/polkit-1" ] && [ -f /usr/lib/pam.d/polkit-1 ]; then
+    cp /usr/lib/pam.d/polkit-1 "$PAM_DIR/polkit-1"
+    touch "$PAM_DIR/.face-auth-polkit-1-created"
+fi
+
+for service in sudo swaylock gdm-password polkit-1; do
     conf="$PAM_DIR/$service"
     if [ ! -f "$conf" ]; then
         echo "Warning: $conf not found, skipping"
@@ -289,6 +428,50 @@ for service in sudo swaylock gdm-password; do
         echo "           $PAM_LINE"
     fi
 done
+
+# ---- Bitwarden polkit action (only if Bitwarden is installed) ----
+# Bitwarden's "Unlock with system authentication" is a polkit action that
+# re-authenticates through the polkit-1 stack patched above. Flatpak and Snap
+# builds cannot install the action themselves (see
+# https://bitwarden.com/help/biometrics/#tab-linux). The policy below is
+# transcribed from Bitwarden's own source, the string its native builds write
+# via pkexec: apps/desktop/src/key-management/biometrics/native-v2/
+# os-biometrics-linux.service.ts in github.com/bitwarden/clients.
+if command -v bitwarden &>/dev/null || command -v bitwarden-desktop &>/dev/null \
+   || flatpak info com.bitwarden.desktop &>/dev/null \
+   || snap list bitwarden-desktop &>/dev/null; then
+    BW_POLICY="/usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy"
+    if [ -f "$BW_POLICY" ]; then
+        echo "Bitwarden polkit action already present at $BW_POLICY"
+    elif ! touch "$BW_POLICY" 2>/dev/null; then
+        # Read-only /usr on image-based distros.
+        echo "Warning: cannot write $BW_POLICY (read-only /usr?); Bitwarden system unlock not wired."
+    else
+        cat > "$BW_POLICY" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+
+<policyconfig>
+    <action id="com.bitwarden.Bitwarden.unlock">
+      <description>Unlock Bitwarden</description>
+      <message>Authenticate to unlock Bitwarden</message>
+      <defaults>
+        <allow_any>no</allow_any>
+        <allow_inactive>no</allow_inactive>
+        <allow_active>auth_self</allow_active>
+      </defaults>
+    </action>
+</policyconfig>
+EOF
+        chown root:root "$BW_POLICY"
+        chmod 644 "$BW_POLICY"
+        touch "$SHARE_DIR/.bitwarden-policy-installed"
+        command -v restorecon &>/dev/null && restorecon "$BW_POLICY" 2>/dev/null || true
+        echo "Installed $BW_POLICY. In Bitwarden: Settings > 'Unlock with system authentication'."
+    fi
+fi
 
 # ---- SELinux policy (for lock screen) ----
 if command -v checkmodule &>/dev/null && command -v semodule_package &>/dev/null; then

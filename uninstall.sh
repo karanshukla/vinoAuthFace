@@ -44,6 +44,20 @@ echo "Removing binaries..."
 rm -f "$BIN_DIR/face-auth"
 rm -f "$BIN_DIR/face-enroll"
 
+# Only remove the Bitwarden action if deploy.sh wrote it, not one Bitwarden
+# or the admin installed. The marker lives in $SHARE_DIR, so check first.
+if [ -f "$SHARE_DIR/.bitwarden-policy-installed" ]; then
+    echo "Removing Bitwarden polkit action installed by face-auth..."
+    rm -f /usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy
+fi
+
+if [ -f /etc/ld.so.conf.d/face-auth-openvino.conf ]; then
+    echo "Removing bundled OpenVINO runtime..."
+    rm -f /etc/ld.so.conf.d/face-auth-openvino.conf
+    rm -rf /usr/local/lib/face-auth
+    ldconfig 2>/dev/null || true
+fi
+
 echo "Removing model and SELinux policy..."
 rm -rf "$SHARE_DIR"
 
@@ -70,8 +84,16 @@ rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/face-auth-gtk"
 rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/gnome-shell/extensions/authface-scan-indicator@samvivan.local"
 
 echo "Restoring PAM configs..."
-for service in sudo swaylock gdm-password; do
+for service in sudo swaylock gdm-password polkit-1; do
     conf="$PAM_DIR/$service"
+    if [ "$service" = polkit-1 ] && [ -f "$PAM_DIR/.face-auth-polkit-1-created" ]; then
+        # deploy.sh created this override from the vendor default; removing
+        # it restores exactly what polkit used before.
+        rm -f "$conf" "$conf.face-auth.bak" "$PAM_DIR/.face-auth-polkit-1-created"
+        echo "Removed $conf (created by face-auth)"
+        continue
+    fi
+    [ -f "$conf" ] || continue
     if [ -f "$conf.face-auth.bak" ]; then
         mv "$conf.face-auth.bak" "$conf"
         echo "Restored $conf from backup"
