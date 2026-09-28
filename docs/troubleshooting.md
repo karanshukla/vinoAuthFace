@@ -74,6 +74,15 @@ removable is still used with the lid shut. If yours isn't (a hub can hide it), s
 `abort_if_lid_closed = false` in `/etc/face-auth.toml`. `abort_if_ssh = false` turns the SSH check
 off.
 
+## The lock screen waits a couple of seconds before scanning
+
+On purpose. A screen locker runs face-auth the moment it starts, so if you lock the screen while
+still looking at the camera it would unlock straight away. face-auth waits until the locker has
+been running `start_delay_ms` (default 2000) before it scans, measured from when the locker
+started, so a retry on the same lock screen doesn't wait again. `sudo`, polkit and login prompts
+aren't delayed. Set `start_delay_ms = 0` in `/etc/face-auth.toml` to disable it, or
+`start_delay_scope = "all"` to delay every prompt.
+
 ## Face auth stopped being tried after a few failures
 
 That's the lockout. After 5 failed matches (a face was seen and rejected) face-auth skips the

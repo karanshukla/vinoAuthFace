@@ -2,6 +2,7 @@
 //! so PAM falls through to the password prompt straight away.
 
 use std::path::Path;
+use std::time::Duration;
 
 /// How far up the process tree to look for an SSH server.
 const MAX_ANCESTRY_DEPTH: usize = 16;
@@ -19,6 +20,47 @@ impl std::fmt::Display for SkipReason {
             SkipReason::LidClosed => "laptop lid is closed",
         })
     }
+}
+
+/// What is asking for authentication, judged from `PAM_SERVICE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Surface {
+    /// Deliberate escalation by someone already at the machine.
+    Elevation,
+    /// Greeters and login managers.
+    Login,
+    /// A screen locker, or anything unrecognised.
+    ScreenLock,
+}
+
+/// Unknown services count as a screen lock: an unrecognised locker gets the
+/// start delay rather than silently skipping it.
+pub fn classify_pam_service(service: Option<&str>) -> Surface {
+    match service {
+        Some("sudo" | "sudo-i" | "su" | "su-l" | "doas" | "run0" | "polkit-1" | "pkexec") => {
+            Surface::Elevation
+        }
+        Some(
+            "login" | "sddm" | "lightdm" | "greetd" | "gdm-password" | "gdm-launch-environment",
+        ) => Surface::Login,
+        _ => Surface::ScreenLock,
+    }
+}
+
+/// How long ago a process started, from its `/proc/<pid>/stat` and
+/// `/proc/uptime`. `starttime` is field 22, in clock ticks since boot. A retry
+/// on the same locker reads the same start time, so a delay measured this way
+/// is paid once per lock rather than once per attempt.
+pub fn process_age(stat: &str, uptime: &str, clock_ticks_per_sec: u64) -> Option<Duration> {
+    if clock_ticks_per_sec == 0 {
+        return None;
+    }
+    let (_, rest) = stat.rsplit_once(')')?;
+    let start_ticks: u64 = rest.split_whitespace().nth(19)?.parse().ok()?;
+    let uptime_secs: f64 = uptime.split_whitespace().next()?.parse().ok()?;
+    let start_secs = start_ticks as f64 / clock_ticks_per_sec as f64;
+    (uptime_secs.is_finite() && uptime_secs >= start_secs)
+        .then(|| Duration::from_secs_f64(uptime_secs - start_secs))
 }
 
 /// Is any ancestor of `pid` an SSH server process?
@@ -108,6 +150,42 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("comm"), format!("{comm}\n")).unwrap();
         std::fs::write(dir.join("stat"), format!("{pid} ({comm}) S {ppid} 1 1 0")).unwrap();
+    }
+
+    #[test]
+    fn pam_services_are_classified() {
+        assert_eq!(classify_pam_service(Some("sudo")), Surface::Elevation);
+        assert_eq!(classify_pam_service(Some("polkit-1")), Surface::Elevation);
+        assert_eq!(classify_pam_service(Some("gdm-password")), Surface::Login);
+        assert_eq!(classify_pam_service(Some("swaylock")), Surface::ScreenLock);
+        assert_eq!(classify_pam_service(Some("kde-fingerprint")), Surface::ScreenLock);
+        assert_eq!(classify_pam_service(None), Surface::ScreenLock);
+    }
+
+    /// 21 fields precede starttime after the command name; `rest` field 3 is 'S'.
+    fn stat_with_start(comm: &str, start_ticks: u64) -> String {
+        format!("42 ({comm}) S 1 42 42 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 {start_ticks} 0 0")
+    }
+
+    #[test]
+    fn process_age_is_uptime_minus_start() {
+        let age = process_age(&stat_with_start("swaylock", 10_000), "105.50 400.0", 100).unwrap();
+        assert_eq!(age, Duration::from_millis(5_500));
+    }
+
+    #[test]
+    fn process_age_survives_parentheses_in_comm() {
+        let age = process_age(&stat_with_start("a) (b", 500), "10.00 1.0", 100).unwrap();
+        assert_eq!(age, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn process_age_rejects_garbage() {
+        assert!(process_age("garbage", "10.0", 100).is_none());
+        assert!(process_age(&stat_with_start("x", 100), "nope", 100).is_none());
+        assert!(process_age(&stat_with_start("x", 100), "10.0", 0).is_none());
+        // Started "after" now: clock mismatch, don't guess.
+        assert!(process_age(&stat_with_start("x", 5_000), "10.0", 100).is_none());
     }
 
     #[test]
