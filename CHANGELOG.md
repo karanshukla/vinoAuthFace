@@ -1,6 +1,27 @@
 # Changelog
 
-## [Unreleased]
+## [Unreleased]: fork resync onto upstream
+
+This fork (karanshukla/vinoAuthFace) was rebuilt on top of upstream's security
+pass below instead of merging, so upstream's fixes all apply. Fork features
+replayed on top:
+
+- Motion liveness gate, failed-match lockout (`lockout.bin` in the root-owned
+  store), camera pinning (`pin-camera.sh`).
+- Detector box decode with face crop before encoding, and the detector's
+  trained `(px - 127) / 128` input normalisation.
+- Model-tagged template format (v2, v1 still loads) with mbf/r50 selection.
+- Optional OpenVINO/NPU backend, YUYV/Y16 capture, IR auto-detect for sensors
+  whose sysfs name does not say IR.
+- polkit-1 and Bitwarden unlock, release-binary download in `deploy.sh`, CI.
+- `face-camera-diag` and `face-similarity-check`; 30-frame enrolment default.
+
+Dropped from upstream: the GTK settings GUI and the GNOME scan indicator.
+
+Re-enrol after upgrading: the detector normalisation and CLAHE parameters
+changed, so old templates may score lower.
+
+## Upstream: SamVivan1 merge and security pass
 
 Merges the improvements from the `SamVivan1/authFace` fork and follows them
 with a security pass over the whole tree.
