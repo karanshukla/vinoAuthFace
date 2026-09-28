@@ -1,5 +1,4 @@
 use image::DynamicImage;
-use tract_ndarray::s;
 use tract_onnx::prelude::*;
 
 use crate::capture::IrFrame;
@@ -53,6 +52,107 @@ impl std::fmt::Display for FrameQuality {
 const DETECTOR_WIDTH: usize = 320;
 const DETECTOR_HEIGHT: usize = 240;
 
+/// Face bounding box, normalised to [0, 1] relative to the detector's input.
+/// That input is a resize of the whole frame, so the fractions apply directly
+/// to the original frame's width and height too.
+#[derive(Debug, Clone, Copy)]
+pub struct FaceBox {
+    pub x1: f32,
+    pub y1: f32,
+    pub x2: f32,
+    pub y2: f32,
+}
+
+/// One SSD-style anchor, normalised to the detector's 320x240 input.
+#[derive(Clone, Copy)]
+struct Prior {
+    cx: f32,
+    cy: f32,
+    w: f32,
+    h: f32,
+}
+
+/// `version-slim-320.onnx` strips anchor decoding out of the graph: its
+/// `boxes` output is raw regression deltas against a fixed 4420-anchor grid,
+/// not finished coordinates. This regenerates that grid (4 feature-map levels,
+/// strides 8/16/32/64, matching min-box sizes per level) the same way the
+/// reference implementation's Python postprocessing does.
+fn priors() -> &'static [Prior] {
+    use std::sync::OnceLock;
+    static PRIORS: OnceLock<Vec<Prior>> = OnceLock::new();
+    PRIORS.get_or_init(|| {
+        const FEATURE_W: [usize; 4] = [40, 20, 10, 5];
+        const FEATURE_H: [usize; 4] = [30, 15, 8, 4];
+        const MIN_BOXES: [&[f32]; 4] = [
+            &[10.0, 16.0, 24.0],
+            &[32.0, 48.0],
+            &[64.0, 96.0],
+            &[128.0, 192.0, 256.0],
+        ];
+
+        let mut priors = Vec::with_capacity(4420);
+        for level in 0..4 {
+            for j in 0..FEATURE_H[level] {
+                for i in 0..FEATURE_W[level] {
+                    let cx = (i as f32 + 0.5) / FEATURE_W[level] as f32;
+                    let cy = (j as f32 + 0.5) / FEATURE_H[level] as f32;
+                    for &min_box in MIN_BOXES[level] {
+                        priors.push(Prior {
+                            cx,
+                            cy,
+                            w: min_box / DETECTOR_WIDTH as f32,
+                            h: min_box / DETECTOR_HEIGHT as f32,
+                        });
+                    }
+                }
+            }
+        }
+        priors
+    })
+}
+
+const CENTER_VARIANCE: f32 = 0.1;
+const SIZE_VARIANCE: f32 = 0.2;
+
+/// Standard SSD decode of one anchor's `[dx, dy, dw, dh]` delta.
+fn decode_box(prior: &Prior, delta: &[f32]) -> FaceBox {
+    let cx = delta[0] * CENTER_VARIANCE * prior.w + prior.cx;
+    let cy = delta[1] * CENTER_VARIANCE * prior.h + prior.cy;
+    let w = (delta[2] * SIZE_VARIANCE).exp() * prior.w;
+    let h = (delta[3] * SIZE_VARIANCE).exp() * prior.h;
+    FaceBox { x1: cx - w / 2.0, y1: cy - h / 2.0, x2: cx + w / 2.0, y2: cy + h / 2.0 }
+}
+
+/// Pick the highest-scoring anchor and decode its box, or `None` if nothing
+/// clears `threshold`. `scores` is `[anchors * 2]` row-major with the face
+/// probability in column 1; `boxes` is `[anchors * 4]`.
+fn best_face(scores: &[f32], boxes: &[f32], threshold: f32) -> anyhow::Result<Option<FaceBox>> {
+    let anchors = priors().len();
+    anyhow::ensure!(
+        scores.len() == anchors * 2 && boxes.len() == anchors * 4,
+        "detector returned {} scores / {} box values, expected {} anchors",
+        scores.len(),
+        boxes.len(),
+        anchors
+    );
+
+    let (best, max_face) = scores
+        .chunks_exact(2)
+        .map(|pair| pair[1])
+        .enumerate()
+        .filter(|(_, v)| v.is_finite())
+        .fold((0usize, f32::NEG_INFINITY), |acc, (i, v)| if v > acc.1 { (i, v) } else { acc });
+
+    tracing::debug!(max_face, threshold, "detector: best face score");
+    if max_face < threshold {
+        return Ok(None);
+    }
+
+    let face_box = decode_box(&priors()[best], &boxes[best * 4..best * 4 + 4]);
+    tracing::debug!(?face_box, "detector: face box");
+    Ok(Some(face_box))
+}
+
 pub struct FaceDetector {
     model: TypedRunnableModel<TypedModel>,
     threshold: f32,
@@ -79,33 +179,18 @@ impl FaceDetector {
         Ok(Self { model, threshold })
     }
 
-    pub fn detect(&mut self, frame: &IrFrame) -> anyhow::Result<bool> {
+    pub fn detect(&mut self, frame: &IrFrame) -> anyhow::Result<Option<FaceBox>> {
         let input = preprocess_for_detector(frame)?;
         let mut input = input.into_dyn();
         input.insert_axis_inplace(tract_ndarray::Axis(0));
         let input_tensor = Tensor::from(input).into_tvalue();
         let result = self.model.run(tvec!(input_tensor))?;
+        anyhow::ensure!(result.len() >= 2, "detector returned {} outputs, expected scores and boxes", result.len());
 
-        let scores = result[0].to_array_view::<f32>()?;
-
-        // Expected shape is [1, anchors, 2] with the face probability in
-        // column 1. Check before slicing: `s![0, .., 1]` panics on anything
-        // else, and this runs inside PAM.
-        let shape = scores.shape();
-        anyhow::ensure!(
-            shape.len() == 3 && shape[0] == 1 && shape[2] >= 2,
-            "unexpected detector output shape {:?}, expected [1, N, 2]",
-            shape
-        );
-
-        let face_scores = scores.slice(s![0, .., 1]);
-        let max_face = face_scores
-            .iter()
-            .copied()
-            .filter(|v| v.is_finite())
-            .fold(f32::NEG_INFINITY, f32::max);
-
-        Ok(max_face >= self.threshold)
+        // Contiguous copies: the optimised plan may hand back strided views.
+        let scores: Vec<f32> = result[0].to_array_view::<f32>()?.iter().copied().collect();
+        let boxes: Vec<f32> = result[1].to_array_view::<f32>()?.iter().copied().collect();
+        best_face(&scores, &boxes, self.threshold)
     }
 }
 
@@ -159,12 +244,15 @@ fn preprocess_for_detector(frame: &IrFrame) -> anyhow::Result<tract_ndarray::Arr
     let mut array =
         tract_ndarray::Array3::<f32>::zeros((3, DETECTOR_HEIGHT, DETECTOR_WIDTH));
 
+    // (px - 127) / 128 is what the model was trained on (the reference
+    // implementation's image_mean/image_std). Plain [0, 1] scaling shifts every
+    // input and skews both the scores and the regressed boxes.
     for y in 0..DETECTOR_HEIGHT {
         for x in 0..DETECTOR_WIDTH {
             let pixel = rgb.get_pixel(x as u32, y as u32);
-            array[[0, y, x]] = pixel.0[0] as f32 / 255.0;
-            array[[1, y, x]] = pixel.0[1] as f32 / 255.0;
-            array[[2, y, x]] = pixel.0[2] as f32 / 255.0;
+            for c in 0..3 {
+                array[[c, y, x]] = (pixel.0[c] as f32 - 127.0) / 128.0;
+            }
         }
     }
 
@@ -227,6 +315,46 @@ mod tests {
             32,
             32
         )));
+    }
+
+    #[test]
+    fn prior_grid_matches_the_model() {
+        assert_eq!(priors().len(), 4420);
+    }
+
+    #[test]
+    fn zero_delta_reproduces_the_anchor_itself() {
+        let p = priors()[0];
+        let b = decode_box(&p, &[0.0, 0.0, 0.0, 0.0]);
+        assert!((b.x1 - (p.cx - p.w / 2.0)).abs() < 1e-6);
+        assert!((b.x2 - (p.cx + p.w / 2.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn decoded_box_for_small_delta_stays_well_ordered() {
+        let b = decode_box(&priors()[2000], &[0.1, -0.1, 0.05, -0.05]);
+        assert!(b.x1 < b.x2);
+        assert!(b.y1 < b.y2);
+    }
+
+    #[test]
+    fn best_face_picks_the_top_anchor_and_respects_threshold() {
+        let n = priors().len();
+        let mut scores = vec![0.0f32; n * 2];
+        let boxes = vec![0.0f32; n * 4];
+        scores[2 * 1234 + 1] = 0.9;
+        scores[2 * 99 + 1] = f32::NAN;
+
+        let b = best_face(&scores, &boxes, 0.5).unwrap().expect("face");
+        let p = priors()[1234];
+        assert!((b.x1 - (p.cx - p.w / 2.0)).abs() < 1e-6);
+
+        assert!(best_face(&scores, &boxes, 0.95).unwrap().is_none());
+    }
+
+    #[test]
+    fn best_face_rejects_mismatched_output_shapes() {
+        assert!(best_face(&[0.0; 10], &[0.0; 20], 0.5).is_err());
     }
 
     #[test]

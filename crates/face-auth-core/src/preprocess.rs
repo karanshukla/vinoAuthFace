@@ -1,4 +1,5 @@
 use crate::capture::IrFrame;
+use crate::detector::FaceBox;
 use image::{DynamicImage, ImageBuffer, Luma};
 use tract_onnx::prelude::tract_ndarray::Array3;
 
@@ -28,6 +29,68 @@ pub fn frame_to_luma16(frame: &IrFrame) -> anyhow::Result<ImageBuffer<Luma<u16>,
     Ok(ImageBuffer::from_fn(width, height, |x, y| {
         Luma([frame.data[(y * width + x) as usize]])
     }))
+}
+
+/// Crop a frame to the detected face, grown by `margin` (a fraction of the
+/// box's own size on each side) and squared up so the encoder's
+/// `resize_exact` does not distort the aspect ratio.
+///
+/// A window that runs off an edge is shifted back inside rather than shrunk,
+/// so a face near the border still gets a full-size crop.
+pub fn crop_to_face(frame: &IrFrame, face_box: &FaceBox, margin: f32) -> anyhow::Result<IrFrame> {
+    // Validates geometry against the buffer before any slicing below.
+    frame_to_luma16(frame)?;
+
+    let width = frame.width as f32;
+    let height = frame.height as f32;
+
+    let x1 = (face_box.x1 * width).clamp(0.0, width);
+    let y1 = (face_box.y1 * height).clamp(0.0, height);
+    let x2 = (face_box.x2 * width).clamp(0.0, width);
+    let y2 = (face_box.y2 * height).clamp(0.0, height);
+
+    let box_w = (x2 - x1).max(1.0);
+    let box_h = (y2 - y1).max(1.0);
+    let (mx, my) = (box_w * margin, box_h * margin);
+
+    let cx = (x1 + x2) / 2.0;
+    let cy = (y1 + y2) / 2.0;
+    let side = (box_w + 2.0 * mx).max(box_h + 2.0 * my).min(width.min(height));
+
+    let mut sx1 = cx - side / 2.0;
+    let mut sy1 = cy - side / 2.0;
+    let mut sx2 = cx + side / 2.0;
+    let mut sy2 = cy + side / 2.0;
+    if sx1 < 0.0 {
+        sx2 -= sx1;
+        sx1 = 0.0;
+    }
+    if sy1 < 0.0 {
+        sy2 -= sy1;
+        sy1 = 0.0;
+    }
+    if sx2 > width {
+        sx1 -= sx2 - width;
+        sx2 = width;
+    }
+    if sy2 > height {
+        sy1 -= sy2 - height;
+        sy2 = height;
+    }
+
+    let ix1 = (sx1.clamp(0.0, width).round() as u32).min(frame.width - 1);
+    let iy1 = (sy1.clamp(0.0, height).round() as u32).min(frame.height - 1);
+    let ix2 = (sx2.clamp(0.0, width).round() as u32).max(ix1 + 1).min(frame.width);
+    let iy2 = (sy2.clamp(0.0, height).round() as u32).max(iy1 + 1).min(frame.height);
+
+    let (crop_w, crop_h) = (ix2 - ix1, iy2 - iy1);
+    let mut data = Vec::with_capacity((crop_w * crop_h) as usize);
+    for y in iy1..iy2 {
+        let row = (y * frame.width + ix1) as usize;
+        data.extend_from_slice(&frame.data[row..row + crop_w as usize]);
+    }
+
+    Ok(IrFrame { data, width: crop_w, height: crop_h })
 }
 
 /// Resize and normalise a frame into the encoder's `[3, 112, 112]` input.
@@ -249,6 +312,31 @@ mod tests {
         let mut short = frame(vec![100; 10], 32, 32);
         histogram_equalize(&mut short);
         assert_eq!(short.data.len(), 10);
+    }
+
+    #[test]
+    fn crop_is_square_and_inside_the_frame() {
+        let f = frame((0..640 * 400).map(|i| (i % 65536) as u16).collect(), 640, 400);
+        let b = FaceBox { x1: 0.4, y1: 0.3, x2: 0.6, y2: 0.7 };
+        let c = crop_to_face(&f, &b, 0.3).unwrap();
+        assert_eq!(c.width, c.height);
+        assert_eq!(c.data.len(), (c.width * c.height) as usize);
+        assert!(c.width <= 400);
+    }
+
+    #[test]
+    fn crop_near_an_edge_shifts_instead_of_shrinking() {
+        let f = frame(vec![1; 640 * 400], 640, 400);
+        let centred = crop_to_face(&f, &FaceBox { x1: 0.4, y1: 0.4, x2: 0.5, y2: 0.6 }, 0.3).unwrap();
+        let edge = crop_to_face(&f, &FaceBox { x1: -0.05, y1: 0.4, x2: 0.05, y2: 0.6 }, 0.3).unwrap();
+        assert_eq!(edge.width, centred.width);
+    }
+
+    #[test]
+    fn crop_rejects_a_short_frame() {
+        let f = frame(vec![0; 10], 32, 32);
+        let b = FaceBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        assert!(crop_to_face(&f, &b, 0.3).is_err());
     }
 
     fn spread(f: &IrFrame) -> u16 {

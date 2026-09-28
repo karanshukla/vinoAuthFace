@@ -5,8 +5,8 @@
 use face_auth_core::capture::Camera;
 use face_auth_core::detector::{assess_frame, FaceDetector, FrameQuality};
 use face_auth_core::inference::FaceEncoder;
-use face_auth_core::preprocess::{histogram_equalize, preprocess_ir_frame};
-use face_auth_core::FaceAuthConfig;
+use face_auth_core::preprocess::{crop_to_face, histogram_equalize, preprocess_ir_frame};
+use face_auth_core::{FaceAuthConfig, FACE_CROP_MARGIN};
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
@@ -70,14 +70,15 @@ fn main() -> anyhow::Result<()> {
         let found = detector.detect(&frame)?;
         let t_detect = t.elapsed();
 
-        if !found {
+        let Some(face_box) = found else {
             println!("{n:>3} {t_capture:>10.1?} {t_eq:>10.1?} {t_detect:>10.1?} {:>10} {:>10}  no face",
                      "-", "-");
             continue;
-        }
+        };
 
         let t = Instant::now();
-        let input = preprocess_ir_frame(&frame)?;
+        let face = crop_to_face(&frame, &face_box, FACE_CROP_MARGIN)?;
+        let input = preprocess_ir_frame(&face)?;
         let t_pre = t.elapsed();
 
         let t = Instant::now();
