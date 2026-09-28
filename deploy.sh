@@ -332,8 +332,13 @@ if [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(fin
         # library path it found into its cached build output. Reused from an
         # earlier build, that is a -L to a directory that no longer exists.
         as_user "$CARGO_BIN" clean --quiet --release -p openvino-sys >/dev/null 2>&1 || true
+        # Rust 1.98's default linker, rust-lld, segfaults linking openvino-sys's
+        # build script (RUSTFLAGS reaches build scripts on a host-target build).
+        # GNU ld is the fallback where it exists.
+        NPU_RUSTFLAGS="-C link-arg=-Wl,--disable-new-dtags,-rpath,$OPENVINO_INSTALL_DIR"
+        command -v ld.bfd >/dev/null 2>&1 && NPU_RUSTFLAGS="$NPU_RUSTFLAGS -C link-arg=-fuse-ld=bfd"
         cargo_build "Compiling" "$NPU_UNITS" as_user env LD_LIBRARY_PATH="$OV_LIB_DIR" \
-            RUSTFLAGS="-C link-arg=-Wl,--disable-new-dtags,-rpath,$OPENVINO_INSTALL_DIR" \
+            RUSTFLAGS="$NPU_RUSTFLAGS" \
             "$CARGO_BIN" build --release --locked --features "$NPU_FEATURES" \
             -p face-auth -p face-enroll || { [ -n "$OV_STAGE" ] && rm -rf "$OV_STAGE"; exit 1; }
     elif [ "$OPENVINO_MODE" = "system" ]; then
