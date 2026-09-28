@@ -23,7 +23,10 @@ report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - **Identity comes from `PAM_USER` only.** `face-auth` refuses to run if PAM didn't set it.
 - **Remote sessions are refused.** If `PAM_RHOST` names a non-local host, face authentication is
   declined: the camera is at the console, so otherwise whoever sits at the desk would authenticate
-  an SSH session.
+  an SSH session. `sudo` over SSH doesn't set `PAM_RHOST`, so face-auth also walks its own
+  process ancestry and skips the scan if an `sshd` is found (`abort_if_ssh`, on by default). A
+  `tmux` or `screen` session started over SSH and reattached later isn't caught: its server's
+  parent is init, not `sshd`.
 - **Only the user at the seat.** face-auth reads logind's state in `/run/systemd` and declines
   unless the target account owns the active seat0 session, or seat0 is showing a login greeter.
   With fast user switching, a `sudo` in B's background session won't match A's face while A is at

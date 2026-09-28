@@ -39,6 +39,8 @@ pub struct FaceAuthConfig {
     pub lockout_base_delay_ms: Option<u64>,
     pub lockout_max_delay_ms: Option<u64>,
     pub seat_check: Option<bool>,
+    pub abort_if_ssh: Option<bool>,
+    pub abort_if_lid_closed: Option<bool>,
 }
 
 impl Default for FaceAuthConfig {
@@ -62,6 +64,8 @@ impl Default for FaceAuthConfig {
             lockout_base_delay_ms: None,
             lockout_max_delay_ms: None,
             seat_check: None,
+            abort_if_ssh: None,
+            abort_if_lid_closed: None,
         }
     }
 }
@@ -375,6 +379,18 @@ impl FaceAuthConfig {
     /// `seat::check`.
     pub fn seat_check(&self) -> bool {
         self.seat_check.unwrap_or(true)
+    }
+
+    /// Skip the scan when face-auth runs under an SSH session. See
+    /// `environment::under_ssh`.
+    pub fn abort_if_ssh(&self) -> bool {
+        self.abort_if_ssh.unwrap_or(true)
+    }
+
+    /// Skip the scan when the lid is closed and the camera is built in. See
+    /// `environment::lid_closed`.
+    pub fn abort_if_lid_closed(&self) -> bool {
+        self.abort_if_lid_closed.unwrap_or(true)
     }
 
     pub fn lockout_policy(&self) -> crate::lockout::LockoutPolicy {

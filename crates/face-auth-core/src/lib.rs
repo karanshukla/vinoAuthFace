@@ -1,6 +1,7 @@
 pub mod capture;
 pub mod config;
 pub mod detector;
+pub mod environment;
 pub mod error;
 pub mod inference;
 pub mod lockout;
