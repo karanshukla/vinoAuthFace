@@ -664,6 +664,19 @@ else
     CONF_STATE="installed"
 fi
 
+# An existing config is never rewritten, so a setting a newer release adds
+# shows up only in config/face-auth.toml.example. Name the ones yours lacks.
+if [ "$CONF_STATE" = kept ]; then
+    NEW_KEYS=()
+    while read -r key; do
+        grep -qE "^#? ?$key ?=" "$CONFIG_DIR/face-auth.toml" || NEW_KEYS+=("$key")
+    done < <(sed -nE 's/^#? ?([a-z][a-z0-9_]*) = .*/\1/p' config/face-auth.toml.example | sort -u)
+    if [ "${#NEW_KEYS[@]}" -gt 0 ]; then
+        warn Config "Not in your $CONFIG_DIR/face-auth.toml: ${NEW_KEYS[*]}" \
+            "Defaults apply. config/face-auth.toml.example says what each does."
+    fi
+fi
+
 # Point model_path at the model installed this run. Only touched for a
 # non-default model, so a plain deploy never rewrites an existing config.
 if [ "$RECOGNITION_MODEL" != "mbf" ]; then
