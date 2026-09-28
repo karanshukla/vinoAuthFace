@@ -239,6 +239,7 @@ CONF_NPU_DEVICE="$(sed -n 's/^npu_device *= *"\(.*\)"/\1/p' "$CONFIG_DIR/face-au
 if OVFETCH_BIN="$(find_ovfetch)"; then
     # Run as the user: resolving and downloading need no privileges. The plan
     # is reused below to install exactly what was checked here.
+    step "asking ovfetch which OpenVINO this machine needs (takes a few seconds)"
     if OVFETCH_PLAN="$(as_user "$OVFETCH_BIN" resolve --json)"; then
         # compiler_present is false on a machine with no NPU at all too, where
         # GPU or CPU can still use the OpenVINO build.
@@ -541,6 +542,7 @@ fi
 
 # ---- OpenVINO runtime libraries (ovfetch and archive installs) ----
 if [ -n "$OV_STAGE" ]; then
+    step "installing the OpenVINO runtime"
     # Also clears a tarball copy an older deploy left here.
     rm -rf "$OPENVINO_INSTALL_DIR"
     install -d -o root -g root -m 0755 "$OPENVINO_INSTALL_DIR"
@@ -802,6 +804,7 @@ fi
 
 # ---- SELinux policy (for lock screen) ----
 if command -v checkmodule &>/dev/null && command -v semodule_package &>/dev/null; then
+    step "loading the SELinux policy (semodule can take 10-30 seconds)"
     mkdir -p "$SELINUX_DIR"
     cp selinux/face-auth.te "$SELINUX_DIR/face_auth.te"
     checkmodule -M -m -o "$SELINUX_DIR/face_auth.mod" "$SELINUX_DIR/face_auth.te"
@@ -840,6 +843,7 @@ install -d -o root -g root -m 0755 "$NPU_CACHE_DIR"
 # Refill it now, as root. Left empty, every lock-screen unlock would compile
 # both models on the CPU until the next sudo or polkit prompt.
 if [ "$NPU_ACTIVE" = 1 ]; then
+    step "compiling the models for the NPU"
     if WARM="$("$BIN_DIR/face-auth" --warm-cache 2>&1)"; then
         ok "NPU cache" "$WARM"
     else
