@@ -91,9 +91,25 @@ jobs:
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y musl-tools cmake
 
+      # swaylock: requisite gates above the authenticator must stay above
+      # face-auth. gdm-password: its included stack already runs face-auth,
+      # so deploy.sh must leave it alone rather than scan twice.
+      - name: Stage PAM fixtures
+        run: |
+          printf '%s\n' '#%PAM-1.0' \
+            'auth       requisite    pam_nologin.so' \
+            'auth       required     pam_faillock.so preauth' \
+            'auth       include      login' | sudo tee /etc/pam.d/swaylock
+          echo 'auth sufficient pam_exec.so quiet /usr/local/bin/face-auth' | sudo tee /etc/pam.d/face-auth-ci-stack
+          printf '%s\n' '#%PAM-1.0' '@include face-auth-ci-stack' | sudo tee /etc/pam.d/gdm-password
+          sudo cp /etc/pam.d/gdm-password /tmp/gdm-password.orig
+
       - name: "Branch 1: cargo present -> build from source"
         run: |
           sudo ./deploy.sh
+          test "$(grep -nE 'pam_faillock|face-auth|include' /etc/pam.d/swaylock | cut -d: -f1 | tr '\n' ' ')" = "3 4 5 "
+          grep -A1 'pam_exec\.so.*face-auth' /etc/pam.d/sudo | grep -q '@include common-auth'
+          cmp /etc/pam.d/gdm-password /tmp/gdm-password.orig
           test -x /usr/local/bin/face-auth
           test -g /usr/local/bin/face-auth
           test "$(stat -c %G /usr/local/bin/face-auth)" = face-auth
@@ -137,3 +153,4 @@ jobs:
         run: |
           [ -d "$HOME/.cargo/bin.hidden" ] && mv "$HOME/.cargo/bin.hidden" "$HOME/.cargo/bin" || true
           sudo ./uninstall.sh || true
+          sudo rm -f /etc/pam.d/swaylock /etc/pam.d/gdm-password /etc/pam.d/face-auth-ci-stack
