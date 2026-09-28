@@ -7,49 +7,8 @@
 
 use face_auth_core::{user, FaceAuth, FaceAuthConfig};
 use std::env;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::PathBuf;
 use std::time::Instant;
 use tracing_subscriber::{fmt, EnvFilter};
-
-/// Status values consumed by the GNOME Shell scan indicator.
-const STATUS_SCANNING: &str = "scanning";
-const STATUS_OK: &str = "ok";
-const STATUS_FAIL: &str = "fail";
-
-/// Publish scan state to `/run/user/<uid>/face-auth-status` for the lock-screen
-/// indicator extension.
-///
-/// This process runs as root while the target directory belongs to the user,
-/// so the write must not follow a symlink: without `O_NOFOLLOW` a user could
-/// point `face-auth-status` at `/etc/shadow` and have root truncate it on
-/// their next unlock attempt. `O_NOFOLLOW` fails rather than following.
-///
-/// The file stays root-owned; the extension can still unlink it, because
-/// removing a directory entry needs write permission on the directory (which
-/// the user owns), not on the file.
-fn write_status(info: &user::UserInfo, status: &str) {
-    let dir = PathBuf::from(format!("/run/user/{}", info.uid));
-    if !dir.is_dir() {
-        return;
-    }
-    let path = dir.join("face-auth-status");
-
-    let result = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o644)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&path)
-        .and_then(|mut f| f.write_all(status.as_bytes()));
-
-    if let Err(e) = result {
-        tracing::debug!("could not write scan status to {}: {e}", path.display());
-    }
-}
 
 /// Refuse to authenticate a session that is not physically at this machine.
 ///
@@ -145,7 +104,7 @@ fn main() {
 
     let t0 = Instant::now();
 
-    // `--verify <user>` is the settings GUI's "Test Authentication" path. It
+    // `--verify <user>` tests a stored face without going through PAM. It
     // reads the same root-owned templates the PAM path does, so it requires
     // root; it grants nothing a root caller did not already have.
     let argv: Vec<String> = env::args().skip(1).collect();
@@ -202,23 +161,12 @@ fn main() {
         "starting scan"
     );
 
-    write_status(&info, STATUS_SCANNING);
-
     let result = auth.authenticate_scan(&info.name, scan_duration, scan_interval);
     tracing::debug!(total = ?t0.elapsed(), "scan finished");
 
     match result {
-        Ok(true) => {
-            write_status(&info, STATUS_OK);
-            std::process::exit(0);
-        }
-        Ok(false) => {
-            write_status(&info, STATUS_FAIL);
-            fail_auth(&format!("face not recognised for '{}'", info.name));
-        }
-        Err(e) => {
-            write_status(&info, STATUS_FAIL);
-            fail_setup(&format!("face authentication error: {e}"));
-        }
+        Ok(true) => std::process::exit(0),
+        Ok(false) => fail_auth(&format!("face not recognised for '{}'", info.name)),
+        Err(e) => fail_setup(&format!("face authentication error: {e}")),
     }
 }

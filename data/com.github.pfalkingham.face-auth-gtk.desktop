@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Face Authentication Settings
-Comment=Configure face unlock camera and threshold
-Exec=face-auth-gtk
-Icon=com.github.pfalkingham.face-auth-gtk
-Categories=Settings;Security;
-Terminal=false
-X-GNOME-Settings-Panel=face-auth

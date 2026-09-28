@@ -51,8 +51,8 @@ impl FaceAuth {
         &self.config
     }
 
-    /// Single-shot verification. Used by the settings GUI's test button; the
-    /// PAM path uses [`FaceAuth::authenticate_scan`].
+    /// Single-shot verification. The PAM path uses
+    /// [`FaceAuth::authenticate_scan`].
     pub fn authenticate_once(&mut self, user: &str) -> Result<bool> {
         let t0 = Instant::now();
         let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
