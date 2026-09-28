@@ -396,7 +396,7 @@ fn load_user_overlay(username: &str) -> Option<FaceAuthConfig> {
         .ok()?;
 
     // The parse error is not logged: it quotes the offending line, and under
-    // the set-user-ID lock-screen path the caller reads our stderr.
+    // the set-group-ID lock-screen path the caller reads our stderr.
     match toml::from_str::<FaceAuthConfig>(&contents) {
         Ok(cfg) => Some(cfg),
         Err(_) => {

@@ -250,13 +250,15 @@ fi
 
 # ---- Install binaries ----
 echo "Installing binaries..."
-# Set-user-ID root (mode 4755): KScreenLocker and swaylock run PAM as the
-# logged-in user, and the template store is root-only. face-auth scrubs its
-# environment and only lets a non-root caller authenticate its own account
-# (see crates/face-auth/src/main.rs).
-install -Dm4755 "$BIN_SRC/face-auth" "$BIN_DIR/face-auth"
+# Set-group-ID face-auth (mode 2755): KScreenLocker and swaylock run PAM as
+# the logged-in user, so face-auth borrows the face-auth group to read the
+# store, which nothing else can open. face-auth scrubs its environment and only
+# lets a non-root caller authenticate its own account (see
+# crates/face-auth/src/main.rs).
+getent group face-auth >/dev/null || groupadd --system face-auth
+install -D -o root -g face-auth -m 2755 "$BIN_SRC/face-auth" "$BIN_DIR/face-auth"
 if findmnt -no OPTIONS --target "$BIN_DIR" 2>/dev/null | tr ',' '\n' | grep -qx nosuid; then
-    echo "Warning: $BIN_DIR is mounted nosuid, which ignores the set-user-ID bit."
+    echo "Warning: $BIN_DIR is mounted nosuid, which ignores the set-group-ID bit."
     echo "         sudo, polkit and GDM still work, but"
     echo "         the KDE lock screen and swaylock will fall back to the password."
 fi
@@ -504,12 +506,21 @@ fi
 # ---- Embeddings directory ----
 #
 # Face templates are authentication data. Anything that can write them can
-# choose whose face unlocks an account, so the store is root-owned and 0700 and
-# enrolment goes through sudo/pkexec. Earlier versions made this 1777 with
+# choose whose face unlocks an account, so templates are root-owned and
+# enrolment goes through sudo/pkexec. The face-auth group (only the
+# set-group-ID face-auth binary has it) may read templates and write only the
+# per-user lockout/ directory:
+#
+#   $VAR_DIR/                        root:face-auth 2750
+#   $VAR_DIR/<user>/                 root:face-auth 2750
+#   $VAR_DIR/<user>/embeddings.bin   root:face-auth 0640
+#   $VAR_DIR/<user>/lockout/         root:face-auth 2770
+#
+# The set-group-ID bit on the directories makes new entries inherit the group. Earlier versions made this 1777 with
 # user-owned subdirectories, which let any local user create a template
 # directory for an account that had not enrolled yet.
 echo "Securing embeddings directory..."
-install -d -o root -g root -m 0700 "$VAR_DIR"
+install -d -o root -g face-auth -m 2750 "$VAR_DIR"
 
 if [ -n "$(find "$VAR_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
     # Existing templates are kept; only their ownership and modes change, so
@@ -529,10 +540,18 @@ if [ -n "$(find "$VAR_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ];
         find "$VAR_DIR" -mindepth 1 ! -type d ! -type f -delete 2>/dev/null || true
     fi
 
+    # Lockout state moved into <user>/lockout/; the old counters are dropped.
+    find "$VAR_DIR" -mindepth 2 -maxdepth 2 -type f \( -name 'lockout.bin' -o -name 'lockout.bin.tmp' \) -delete
+
     # -h so the chown applies to entries themselves, never through a link.
-    find "$VAR_DIR" -mindepth 1 \( -type d -o -type f \) -exec chown -h root:root {} +
-    find "$VAR_DIR" -mindepth 1 -type d -exec chmod 0700 {} +
-    find "$VAR_DIR" -mindepth 1 -type f -exec chmod 0600 {} +
+    find "$VAR_DIR" -mindepth 1 \( -type d -o -type f \) -exec chown -h root:face-auth {} +
+    find "$VAR_DIR" -mindepth 1 -type d -exec chmod 2750 {} +
+    find "$VAR_DIR" -mindepth 1 -type f -exec chmod 0640 {} +
+    for user_dir in "$VAR_DIR"/*/; do
+        [ -d "$user_dir" ] || continue
+        install -d -o root -g face-auth -m 2770 "${user_dir}lockout"
+        find "${user_dir}lockout" -mindepth 1 -type f -exec chmod 0660 {} +
+    done
 
     echo "If this system had the old world-writable store and you want to be"
     echo "certain no one planted a template, purge and re-enrol:"

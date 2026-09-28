@@ -48,13 +48,14 @@ fn fail_setup(msg: &str) -> ! {
     std::process::exit(1)
 }
 
-/// Drop everything the caller put in the environment when the real user ID
-/// differs from the effective user ID: installed set-user-ID root for lock
-/// screens that run as the user (KScreenLocker, swaylock), or started from
-/// sudo's own set-user-ID process. Only what `pam_exec` sets survives, and `PATH` is pinned
-/// because `user::lookup` runs `getent` through it.
+/// Drop everything the caller put in the environment when running with
+/// borrowed privileges: the set-group-ID `face-auth` group for lock screens
+/// that run as the user (KScreenLocker, swaylock), or root from sudo's own
+/// set-user-ID process. Only what `pam_exec` sets survives, and `PATH` is
+/// pinned because `user::lookup` runs `getent` through it.
 fn scrub_caller_environment() {
-    if unsafe { libc::getuid() == libc::geteuid() } {
+    let borrowed = unsafe { libc::getuid() != libc::geteuid() || libc::getgid() != libc::getegid() };
+    if !borrowed {
         return;
     }
     const KEEP: [&str; 4] = ["PAM_USER", "PAM_SERVICE", "PAM_RHOST", "PAM_TTY"];
@@ -73,7 +74,7 @@ fn scrub_caller_environment() {
 }
 
 /// A caller that is not root may only test its own face. Without this, the
-/// set-user-ID binary would let any user probe another account's templates and
+/// set-group-ID binary would let any user probe another account's templates and
 /// drive that account's lockout.
 fn caller_may_authenticate(target_uid: u32) -> bool {
     let caller = unsafe { libc::getuid() };
@@ -83,8 +84,8 @@ fn caller_may_authenticate(target_uid: u32) -> bool {
 /// Interactive verification against a stored template. Prints a human-readable
 /// result and exits 0 on a match, 1 otherwise.
 fn run_verify(name: &str) -> ! {
-    // Real user ID, not effective: the binary is set-user-ID root, so the
-    // effective user ID is 0 for everyone.
+    // Real user ID, not effective: under sudo the effective user ID is 0 even
+    // though the caller is not root.
     if unsafe { libc::getuid() } != 0 {
         eprintln!("--verify reads root-owned templates; re-run with sudo or pkexec");
         std::process::exit(2);

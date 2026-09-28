@@ -112,6 +112,8 @@ echo ""
 if [ "$PURGE" = true ]; then
     echo "Removing user embeddings..."
     rm -rf /var/lib/face-auth/
+    # The group only exists for the store; with the store gone nothing owns it.
+    getent group face-auth >/dev/null && groupdel face-auth
     echo "Uninstall complete (including user embeddings)."
 else
     echo "Uninstall complete!"

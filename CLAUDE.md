@@ -146,8 +146,9 @@ behavior if you touch this path; it's what keeps existing installs from breaking
 
 ### Lockout (`lockout.rs`)
 
-Per-user exponential backoff state (`lockout.bin`, next to `embeddings.bin` in the root-owned
-store, so a user cannot delete it to reset the count) tracked across
+Per-user exponential backoff state (`<user>/lockout/state.bin`, the one group-writable
+directory in the store, so the set-group-ID `face-auth` can update it from a lock screen running
+as the user, while the user themselves cannot reach it to reset the count) tracked across
 separate PAM invocations (each `face-auth` run is a fresh process). Only throttles the *face*
 factor — never blocks PAM's password fallback — and caps the actual sleep at `max_tarpit_ms`
 regardless of the computed cooldown, so a long lockout window still can't stall the password
@@ -157,11 +158,13 @@ camera isn't a failed *attempt*.
 
 ### On-disk formats
 
-Both `embeddings.bin` and `lockout.bin` are little-endian binary, versioned, written via
-temp-file + fsync + `fs::rename` + directory fsync, with `0o600` file / `0o700` directory
-permissions set explicitly rather than trusted to umask, under a path built by
-`storage::user_store_dir` (which validates the username). Loads bound every length read from
-disk before allocating (`MAX_EMBEDDINGS`, `MAX_MODEL_TAG_LEN`) and reject trailing bytes and
+Both `embeddings.bin` and `lockout/state.bin` are little-endian binary, versioned, written via
+temp-file + fsync + `fs::rename` + directory fsync, with modes set explicitly rather than trusted
+to umask (`storage.rs`: templates `0o640` in `0o2750` directories, lockout `0o660` in `0o2770`;
+the set-group-ID bit on directories makes entries inherit the `face-auth` group). New state the
+lock-screen path must write goes under `lockout/`; anything else stays group read-only. Paths
+are built by `storage::user_store_dir` (which validates the username). Loads bound every length
+read from disk before allocating (`MAX_EMBEDDINGS`, `MAX_MODEL_TAG_LEN`) and reject trailing bytes and
 non-finite values. Follow this pattern for any new per-user state file.
 
 `/var/lib/face-auth` itself is root:root `0700`. Never make it user-writable: whatever can write
