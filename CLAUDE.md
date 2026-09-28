@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `authFace`: a Rust PAM authentication module that unlocks Linux (sudo, lock screen, polkit)
 via an IR camera, Windows Hello-style. Static musl binary, no daemon, no systemd, no D-Bus.
 Designed to work on immutable distros (Bazzite, Bluefin, Silverblue, Kinoite) with zero system
-packages beyond what's already there. See README.md for the full feature/security writeup;
-don't duplicate it here.
+packages beyond what's already there. User docs live in `docs/`; README.md is only the pitch,
+quick start and an index. Don't duplicate them here, and when a change alters user-visible
+behaviour, update the matching page.
 
 ## Build & test commands
 
@@ -89,8 +90,8 @@ Five crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/
   not deployed by `deploy.sh`. `list` enumerates every `/dev/video*` node with driver/card name
   (`VIDIOC_QUERYCAP`), resolved USB VID:PID (walks up sysfs from `capture::device_bus_path`), and
   current pixel format/resolution (`VIDIOC_G_FMT` via `capture::query_format`), for figuring out
-  which node is the IR sensor and what format it reports without reading through the whole
-  README. `dump` captures one frame from a given device and writes it as a 16-bit PGM for visual
+  which node is the IR sensor and what format it reports without reading through the
+  docs. `dump` captures one frame from a given device and writes it as a 16-bit PGM for visual
   inspection. Purely read-only against devices it's just listing; `dump` takes the target device
   the same way live face-auth would.
 
@@ -147,7 +148,7 @@ making the raw field required, so old config files without the new key keep work
 ### Recognition-model identity (`storage.rs`, `config.rs::model_tag()`)
 
 Two interchangeable recognition models are supported (`mbf` default / `r50` opt-in, selected at
-deploy time via `FACE_AUTH_RECOGNITION_MODEL`, see README's model table). They produce
+deploy time via `FACE_AUTH_RECOGNITION_MODEL`, see `docs/configuration.md`'s model table). They produce
 numerically incompatible 512-d embedding spaces, so mixing them silently would corrupt matching.
 `EmbeddingStore` (v2 binary format) tags each saved embeddings file with `model_tag` (the
 `model_path` basename); `FaceAuth::check_model_tag` refuses to authenticate or `--improve`
@@ -186,7 +187,7 @@ a template chooses whose face unlocks the account (upstream's privesc fix, issue
 
 `deploy.sh` and `uninstall.sh` are the integration-test surface for anything touching config
 defaults, model paths, or PAM: they encode where files land and how PAM stanzas are patched
-(see README's PAM Integration and Model sections for the specifics: insertion points per
+(see `docs/pam.md` and `docs/install.md` for the specifics: insertion points per
 service, `.face-auth.bak` backups, SHA-256 checksum verification, SELinux policy compile/load).
 CI (`ci.yml`'s `deploy-script` job) actually runs both scripts on the runner, not just lints
 them, so a real regression here fails the build. If you change a default path or add a new
@@ -195,7 +196,7 @@ Rust defaults. The deploy script is often the only thing that actually creates t
 target system.
 
 `pin-camera.sh` is a separate, opt-in hardening step (frame-injection defense via USB bus-path
-pinning). Read the README's "Frame injection (a fake camera)" subsection before touching
+pinning). Read `docs/security.md`'s "Frame injection (a fake camera)" section before touching
 `config.rs::verify_pinned_camera` or `capture.rs`'s `device_bus_path`/`device_capture_index`.
 
 ### Platform constraint
