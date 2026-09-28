@@ -31,6 +31,8 @@ pub struct FaceAuthConfig {
     pub scan_duration_ms: Option<u64>,
     pub scan_interval_ms: Option<u64>,
     pub liveness_motion_threshold: Option<f32>,
+    pub pinned_camera_path: Option<String>,
+    pub pinned_camera_index: Option<u32>,
     pub lockout_threshold: Option<u32>,
     pub lockout_base_delay_ms: Option<u64>,
     pub lockout_max_delay_ms: Option<u64>,
@@ -49,6 +51,8 @@ impl Default for FaceAuthConfig {
             scan_duration_ms: Some(5000),
             scan_interval_ms: Some(0),
             liveness_motion_threshold: None,
+            pinned_camera_path: None,
+            pinned_camera_index: None,
             lockout_threshold: None,
             lockout_base_delay_ms: None,
             lockout_max_delay_ms: None,
@@ -193,8 +197,9 @@ impl FaceAuthConfig {
         }
 
         // model_path, detector_model_path and embeddings_dir stay system
-        // policy: each decides what gets compared against what. The lockout
-        // policy does too: a user must not be able to lift their own throttle.
+        // policy: each decides what gets compared against what. So do the
+        // camera pin and the lockout policy: a user must not be able to unpin
+        // the camera or lift their own throttle.
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -300,6 +305,34 @@ impl FaceAuthConfig {
     /// `preprocess::frame_motion_fraction`. Zero disables the check.
     pub fn liveness_motion_threshold(&self) -> f32 {
         self.liveness_motion_threshold.unwrap_or(0.01)
+    }
+
+    /// If `pin-camera.sh` has pinned a camera, check that `device()` still
+    /// resolves to that exact bus path and V4L2 index before trusting a frame.
+    ///
+    /// This is the enforcement point. The udev rule keeps `/dev/face-auth-ir`
+    /// pointed at the right hardware, but this re-derives the identity from
+    /// sysfs on every call and fails closed on any mismatch, independent of
+    /// that rule. VID/PID is deliberately not compared: any device can claim
+    /// it. A no-op until a camera is pinned.
+    pub fn verify_pinned_camera(&self) -> Result<()> {
+        let (Some(pinned_path), Some(pinned_index)) =
+            (self.pinned_camera_path.as_deref(), self.pinned_camera_index)
+        else {
+            return Ok(());
+        };
+
+        let device = self.device();
+        let path = crate::capture::device_bus_path(&device)?;
+        let index = crate::capture::device_capture_index(&device)?;
+        if path != pinned_path || index != pinned_index {
+            bail!(
+                "camera identity mismatch: pinned to {pinned_path} (index {pinned_index}), but \
+                 {device} resolves to {path} (index {index}); refusing to trust its frames. \
+                 If you replaced or moved the hardware on purpose, re-run pin-camera.sh."
+            );
+        }
+        Ok(())
     }
 
     pub fn lockout_policy(&self) -> crate::lockout::LockoutPolicy {
@@ -408,6 +441,8 @@ mod tests {
             model_path: Some("/home/mallory/evil.onnx".to_string()),
             detector_model_path: Some("/home/mallory/evil2.onnx".to_string()),
             lockout_threshold: Some(u32::MAX),
+            pinned_camera_path: Some("/sys/devices/evil".to_string()),
+            pinned_camera_index: Some(9),
             ..FaceAuthConfig::default()
         };
         cfg.apply_user_overlay(&overlay);
@@ -415,6 +450,7 @@ mod tests {
         assert!(cfg.model_path().starts_with("/usr/local/share"));
         assert!(cfg.detector_model_path().starts_with("/usr/local/share"));
         assert_eq!(cfg.lockout_policy().threshold, 5);
+        assert!(cfg.pinned_camera_path.is_none() && cfg.pinned_camera_index.is_none());
     }
 
     #[test]
@@ -495,6 +531,22 @@ mod tests {
         };
         assert_eq!(cfg.model_tag(), "w600k_r50.onnx");
         assert_eq!(FaceAuthConfig::default().model_tag(), "w600k_mbf.onnx");
+    }
+
+    #[test]
+    fn unpinned_camera_is_not_checked() {
+        assert!(FaceAuthConfig::default().verify_pinned_camera().is_ok());
+    }
+
+    #[test]
+    fn pinned_camera_fails_closed_when_it_cannot_be_resolved() {
+        let cfg = FaceAuthConfig {
+            device: Some("/dev/video-does-not-exist".to_string()),
+            pinned_camera_path: Some("/sys/devices/pci0000:00/usb3/3-7/3-7:1.2".to_string()),
+            pinned_camera_index: Some(0),
+            ..FaceAuthConfig::default()
+        };
+        assert!(cfg.verify_pinned_camera().is_err());
     }
 
     #[test]

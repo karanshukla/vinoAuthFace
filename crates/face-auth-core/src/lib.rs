@@ -75,6 +75,7 @@ impl FaceAuth {
     /// Single-shot verification. The PAM path uses
     /// [`FaceAuth::authenticate_scan`].
     pub fn authenticate_once(&mut self, user: &str) -> Result<bool> {
+        self.config.verify_pinned_camera()?;
         let embeddings_dir = self.config.embeddings_dir();
         if lockout::check(user, &embeddings_dir, &self.config.lockout_policy()).is_some() {
             return Ok(false);
@@ -122,6 +123,7 @@ impl FaceAuth {
         duration_ms: u64,
         interval_ms: u64,
     ) -> Result<bool> {
+        self.config.verify_pinned_camera()?;
         let embeddings_dir = self.config.embeddings_dir();
         if lockout::check(user, &embeddings_dir, &self.config.lockout_policy()).is_some() {
             return Ok(false);
@@ -317,6 +319,7 @@ impl FaceAuth {
         interval_ms: u64,
         progress: ProgressFn<'_>,
     ) -> Result<usize> {
+        self.config.verify_pinned_camera()?;
         let mut store = EmbeddingStore::default();
         let mut cam = Camera::open(&self.config.device())?;
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms, progress)?;
@@ -335,6 +338,7 @@ impl FaceAuth {
         interval_ms: u64,
         progress: ProgressFn<'_>,
     ) -> Result<(usize, usize)> {
+        self.config.verify_pinned_camera()?;
         let mut store = match EmbeddingStore::load(user, &self.config.embeddings_dir()) {
             Ok(s) => s,
             // Only "nothing enrolled yet" starts from empty. Any other error

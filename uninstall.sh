@@ -50,6 +50,12 @@ rm -rf "$SHARE_DIR"
 echo "Removing config..."
 rm -f "$CONFIG_DIR/face-auth.toml"
 
+if [ -f /etc/udev/rules.d/99-face-auth-camera.rules ]; then
+    echo "Removing pinned-camera udev rule..."
+    rm -f /etc/udev/rules.d/99-face-auth-camera.rules
+    udevadm control --reload-rules 2>/dev/null || true
+fi
+
 # The GTK settings GUI and GNOME scan indicator were removed from this repo;
 # clean up anything an older install left behind.
 echo "Removing any leftover GUI files from an older install..."

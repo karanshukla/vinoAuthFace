@@ -93,6 +93,8 @@ fn main() -> anyhow::Result<()> {
     println!("  templates:  {}", config.embeddings_dir().display());
     println!();
 
+    let pinned = config.pinned_camera_path.is_some();
+    let device = config.device();
     let mut auth = FaceAuth::new(config)?;
 
     let mut progress = |p: EnrollProgress| match p {
@@ -113,6 +115,11 @@ fn main() -> anyhow::Result<()> {
     } else {
         let saved = auth.enroll(&info.name, args.frames, args.interval, &mut progress)?;
         println!("\nSaved {} embeddings for '{}'", saved, info.name);
+        if !pinned {
+            println!("\nThat confirms {device} is the right camera. Recommended next step:");
+            println!("  sudo ./pin-camera.sh {device}");
+            println!("so a spoofed USB device claiming the same VID/PID cannot inject frames.");
+        }
     }
 
     Ok(())

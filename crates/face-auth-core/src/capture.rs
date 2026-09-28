@@ -371,6 +371,42 @@ fn ioctl(fd: i32, request: u64, arg: *mut c_void) -> Result<i32> {
     }
 }
 
+/// Physical bus path a V4L2 device is attached to, from its canonicalised
+/// sysfs `device` link (e.g. `/sys/devices/pci0000:00/0000:00:14.0/usb3/3-7/3-7:1.2`).
+///
+/// This is the identity udev's `ID_PATH` derives from: the port chain the
+/// device is wired to. A spoofed device can claim the real camera's VID/PID
+/// but cannot sit on the same port at the same time. Read from sysfs directly
+/// because a PAM-invoked process has no guaranteed `PATH` for `udevadm`.
+pub fn device_bus_path(video_path: &str) -> Result<String> {
+    let link = format!("/sys/class/video4linux/{}/device", video_kernel_name(video_path)?);
+    let bus_path = std::fs::canonicalize(&link)
+        .map_err(|e| anyhow::anyhow!("failed to resolve {link}: {e}"))?;
+    Ok(bus_path.to_string_lossy().into_owned())
+}
+
+/// The V4L2 `index` attribute. UVC cameras often expose a capture node and a
+/// metadata node at the *same* bus path, so the path alone is not enough.
+pub fn device_capture_index(video_path: &str) -> Result<u32> {
+    let path = format!("/sys/class/video4linux/{}/index", video_kernel_name(video_path)?);
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| anyhow::anyhow!("failed to read {path}: {e}"))?;
+    raw.trim()
+        .parse()
+        .map_err(|e| anyhow::anyhow!("bad index value in {path}: {e}"))
+}
+
+/// Kernel name (`videoN`) behind a device path, following symlinks such as the
+/// `/dev/face-auth-ir` link `pin-camera.sh` creates.
+fn video_kernel_name(video_path: &str) -> Result<String> {
+    let real = std::fs::canonicalize(video_path)
+        .map_err(|e| anyhow::anyhow!("failed to resolve {video_path}: {e}"))?;
+    let name = real
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("{} has no file name", real.display()))?;
+    Ok(name.to_string_lossy().into_owned())
+}
+
 /// Does this V4L2 device name look like an IR sensor?
 ///
 /// Matched on word boundaries rather than as a substring: plain `contains("ir")`

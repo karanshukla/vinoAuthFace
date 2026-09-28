@@ -13,7 +13,8 @@
 #                                   device present on this machine
 #   scan_duration_ms, scan_interval_ms, capture_timeout_ms
 #                                   honoured within built-in bounds
-#   model_path, detector_model_path, embeddings_dir, lockout_*
+#   model_path, detector_model_path, embeddings_dir,
+#   pinned_camera_*, lockout_*
 #                                   ignored — system policy only
 #
 # FACE_AUTH_* environment variables affect face-enroll and the settings GUI.
@@ -78,3 +79,10 @@ scan_interval_ms = 0
 # consecutive face frames. Defeats a rigidly held photo; a real face always
 # has some micro-motion. 0 disables it. A user's own config may only raise it.
 # liveness_motion_threshold = 0.01
+
+# Camera pin, written by pin-camera.sh. When set, face-auth refuses frames
+# unless `device` resolves to this exact USB port and V4L2 index. Do not
+# hand-edit; re-run pin-camera.sh after intentionally changing hardware.
+# System policy only.
+# pinned_camera_path = "/sys/devices/pci0000:00/0000:00:14.0/usb3/3-7/3-7:1.2"
+# pinned_camera_index = 0
