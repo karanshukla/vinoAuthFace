@@ -73,6 +73,25 @@ fn scrub_caller_environment() {
     env::set_var("PATH", "/usr/sbin:/usr/bin:/sbin:/bin");
 }
 
+/// Root-owned directory the Intel NPU driver may cache compiled models in.
+/// Created by `deploy.sh`, `root:root 0755`.
+const NPU_CACHE_HOME: &str = "/var/cache/face-auth";
+
+/// Pin the working directory and `HOME` before OpenVINO loads.
+///
+/// The NPU driver caches compiled model blobs under `$HOME/.cache`, falling
+/// back to a *relative* `.cache` when `HOME` is unset, so it used whatever
+/// directory face-auth was started from. Under sudo that meant root reading
+/// and writing a model cache in a directory the user controls, and the blobs
+/// are only checksummed, not authenticated: a planted one is a model the NPU
+/// runs. Pointing `HOME` at a root-owned directory means only root paths
+/// (sudo, GDM, polkit) populate the cache, and the lock screen, running as
+/// the user, can read it but gets a cache miss rather than a write.
+fn pin_process_context() {
+    let _ = env::set_current_dir("/");
+    env::set_var("HOME", NPU_CACHE_HOME);
+}
+
 /// A caller that is not root may only test its own face. Without this, the
 /// set-group-ID binary would let any user probe another account's templates and
 /// drive that account's lockout.
@@ -131,6 +150,7 @@ fn run_verify(name: &str) -> ! {
 
 fn main() {
     scrub_caller_environment();
+    pin_process_context();
 
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("face_auth_core=error,face_auth=error"));

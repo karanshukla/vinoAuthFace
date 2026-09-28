@@ -100,9 +100,12 @@ jobs:
           test -x /usr/local/bin/face-enroll
           grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/sudo
           test "$(stat -c %a /var/lib/face-auth)" = 2750
+          test "$(stat -c %U:%a /var/cache/face-auth)" = root:755
 
       - name: Reset install
-        run: sudo ./uninstall.sh
+        run: |
+          sudo ./uninstall.sh
+          test ! -e /var/cache/face-auth
 
       - name: "Branch 2: no cargo -> reuse local target/ binaries"
         run: |

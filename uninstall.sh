@@ -27,6 +27,7 @@ fi
 
 BIN_DIR="/usr/local/bin"
 SHARE_DIR="/usr/local/share/face-auth"
+NPU_CACHE_DIR="/var/cache/face-auth"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
 
@@ -43,6 +44,7 @@ fi
 echo "Removing binaries..."
 rm -f "$BIN_DIR/face-auth"
 rm -f "$BIN_DIR/face-enroll"
+rm -rf "$NPU_CACHE_DIR"
 
 # Only remove the Bitwarden action if deploy.sh wrote it, not one Bitwarden
 # or the admin installed. The marker lives in $SHARE_DIR, so check first.

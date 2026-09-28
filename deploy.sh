@@ -38,6 +38,7 @@ SHARE_DIR="/usr/local/share/face-auth"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
 VAR_DIR="/var/lib/face-auth"
+NPU_CACHE_DIR="/var/cache/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
 OPENVINO_INSTALL_DIR="/usr/local/lib/face-auth/openvino"
 
@@ -519,6 +520,15 @@ fi
 # The set-group-ID bit on the directories makes new entries inherit the group. Earlier versions made this 1777 with
 # user-owned subdirectories, which let any local user create a template
 # directory for an account that had not enrolled yet.
+# ---- NPU compile cache ----
+#
+# face-auth points the Intel NPU driver's cache (normally $HOME/.cache) here.
+# Root-owned so only root paths (sudo, GDM, polkit) write compiled blobs; the
+# lock screen runs as the user and only reads. Emptied on every deploy, since
+# new models or a new driver leave stale entries.
+rm -rf "$NPU_CACHE_DIR"
+install -d -o root -g root -m 0755 "$NPU_CACHE_DIR"
+
 echo "Securing embeddings directory..."
 install -d -o root -g face-auth -m 2750 "$VAR_DIR"
 
