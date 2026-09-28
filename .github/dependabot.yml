@@ -1,0 +1,38 @@
+# face-auth runs as root inside PAM, so nothing auto-merges. The 7-day
+# cooldown keeps a freshly compromised release out of a PR until the
+# ecosystem has had time to notice. Security updates bypass the cooldown.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      cargo:
+        patterns: ["*"]
+    ignore:
+      # tract 0.22+ changed the plan types the detector and encoder are built
+      # on (Dependabot's 0.23 bump broke the build once already). Moving off
+      # 0.21 is a deliberate port, not a routine bump.
+      - dependency-name: "tract-*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # The npu backend is written against the openvino 0.11 API and CI
+      # cannot build it, so a bump here would land untested.
+      - dependency-name: "openvino*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+
+  # Actions stay pinned to commit SHAs; Dependabot bumps the SHA and the
+  # version comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

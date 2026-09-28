@@ -8,6 +8,10 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+license = "MIT"
+publish = false
+
 [workspace.dependencies]
 tract-onnx = "0.21"
 openvino = "0.11"

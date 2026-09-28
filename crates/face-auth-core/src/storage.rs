@@ -50,7 +50,7 @@ pub(crate) fn user_store_dir(user: &str, embeddings_dir: &Path) -> anyhow::Resul
 
 impl EmbeddingStore {
     pub fn model_tag_matches(&self, current_tag: &str) -> bool {
-        self.model_tag.as_deref().map_or(true, |t| t == current_tag)
+        self.model_tag.as_deref().is_none_or(|t| t == current_tag)
     }
 
     pub fn load(user: &str, embeddings_dir: &Path) -> anyhow::Result<Self> {

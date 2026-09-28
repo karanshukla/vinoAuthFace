@@ -50,7 +50,7 @@ fn convert_frame_bytes(pixelformat: u32, bytes: &[u8]) -> Vec<u16> {
     match pixelformat {
         // Y0 U Y1 V ...: luma sits at even offsets.
         V4L2_PIX_FMT_YUYV => bytes.iter().step_by(2).map(|&y| y as u16 * 257).collect(),
-        V4L2_PIX_FMT_Y16 => bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect(),
+        V4L2_PIX_FMT_Y16 => bytes.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect(),
         _ => bytes.iter().map(|&b| b as u16 * 257).collect(),
     }
 }
@@ -538,10 +538,10 @@ pub fn name_suggests_ir(name: &str) -> bool {
 /// existing v4l2loopback device takes whatever format its writer sets, which
 /// any local user can do.
 fn is_physical_greyscale(path: &str) -> bool {
-    let physical = device_bus_path(path).map_or(false, |p| !p.contains("/virtual/"));
+    let physical = device_bus_path(path).is_ok_and(|p| !p.contains("/virtual/"));
     physical
         && query_format(path)
-            .map_or(false, |(_, _, fourcc)| matches!(fourcc, V4L2_PIX_FMT_GREY | V4L2_PIX_FMT_Y16))
+            .is_ok_and(|(_, _, fourcc)| matches!(fourcc, V4L2_PIX_FMT_GREY | V4L2_PIX_FMT_Y16))
 }
 
 fn looks_like_ir(path: &str, name: &str) -> bool {

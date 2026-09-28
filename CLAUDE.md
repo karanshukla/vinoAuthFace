@@ -32,7 +32,12 @@ cargo test -p face-auth-core storage::tests::save_then_load_round_trips_embeddin
 cargo check --workspace
 ```
 
-There is no clippy/rustfmt config committed — match existing style by hand. Two workflows exist:
+CI enforces `cargo clippy --locked --workspace --all-targets -- -D warnings` and `cargo deny
+check` (`deny.toml`: crates.io only, license allow-list, advisories; any ignore needs a written
+reason). rustfmt is deliberately *not* enforced: upstream isn't fmt-clean and reformatting its
+files would make every resync conflict, so match surrounding style by hand. Every Actions `uses:`
+is pinned to a commit SHA with a version comment. `guard.yml` fails non-owner PRs touching
+security-relevant paths (see SECURITY.md). Workflows:
 `.github/workflows/ci.yml` runs on every push/PR — `cargo test --workspace`, a from-source musl
 build, and (in a separate job) every branch of `deploy.sh`'s cargo-availability fallback chain
 against a real `sudo ./deploy.sh`/`./uninstall.sh` cycle on the runner, including the
