@@ -23,7 +23,8 @@ const MAX_MODEL_TAG_LEN: u32 = 255;
 ///
 /// `count` is read straight off disk and drives an allocation, so it is
 /// bounded before use: an unbounded `u32` here asks for ~96 GB and aborts
-/// the process. Enrolment adds 5 at a time, so this is generous in practice.
+/// the process. Enrolment adds 30 at a time by default, leaving room for
+/// several `--improve` passes.
 const MAX_EMBEDDINGS: u32 = 256;
 
 /// Biometric templates. Readable only by root — see `deploy.sh`.
