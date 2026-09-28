@@ -137,7 +137,9 @@ fn best_face(scores: &[f32], boxes: &[f32], threshold: f32) -> anyhow::Result<Op
     );
 
     let (best, max_face) = scores
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| pair[1])
         .enumerate()
         .filter(|(_, v)| v.is_finite())

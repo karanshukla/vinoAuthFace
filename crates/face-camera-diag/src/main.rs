@@ -49,8 +49,8 @@ fn list_devices() -> anyhow::Result<()> {
 
     let chosen = capture::detect_ir_camera();
     println!(
-        "{:<14} {:<10} {:<28} {:<10} {:<14} {}",
-        "DEVICE", "DRIVER", "CARD", "VID:PID", "FORMAT", "NOTES"
+        "{:<14} {:<10} {:<28} {:<10} {:<14} NOTES",
+        "DEVICE", "DRIVER", "CARD", "VID:PID", "FORMAT"
     );
     for device in &devices {
         let (driver, card) = match capture::query_caps(device) {
