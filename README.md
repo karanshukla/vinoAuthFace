@@ -181,10 +181,10 @@ sudo ./deploy.sh
 | Step | What | Details |
 |------|------|---------|
 | Build | Picks the first that applies | OpenVINO + cargo: NPU build. Prebuilt binaries in `target/`: use them (`FACE_AUTH_FORCE_BUILD=1` to rebuild). Cargo: static musl build. Otherwise: download and checksum-verify the release binaries |
-| Binaries | Installs to `/usr/local/bin` | `face-auth` + `face-enroll` |
+| Binaries | Installs to `/usr/local/bin` | `face-auth` (set-user-ID root, so lock screens running as the user can read the root-only store; a non-root caller can only authenticate itself) + `face-enroll` |
 | Models | Downloads and SHA-256 verifies | Recognition model (`w600k_mbf.onnx` by default) and `version-slim-320.onnx` detector, to `/usr/local/share/face-auth/`. A copy in `models/` is used first, and verified too |
 | Config | Installs default config | `/etc/face-auth.toml`, kept if it already exists |
-| PAM | Patches PAM service files | Adds `sufficient` `pam_exec.so quiet` to `sudo`, `gdm-password`, `swaylock`, `polkit-1` |
+| PAM | Patches PAM service files | Adds `sufficient` `pam_exec.so quiet` to `sudo`, `gdm-password`, `swaylock`, `polkit-1`, `kde-fingerprint` |
 | Bitwarden | Only if installed | Adds Bitwarden's polkit unlock action |
 | SELinux | Compiles and loads policy | Allows `xdm_t` to mmap camera for lock-screen auth |
 | Storage | Secures template store | `/var/lib/face-auth`, root-owned `0700`, templates `0600`. An existing store is re-secured in place |
@@ -305,6 +305,7 @@ The deploy script adds a `sufficient` `pam_exec.so quiet` line to:
 | `gdm-password` | `/etc/pam.d/gdm-password` | After `pam_selinux_permit.so` (Fedora) / after `#%PAM-1.0` (Ubuntu/Debian) |
 | `swaylock` | `/etc/pam.d/swaylock` | After `#%PAM-1.0` |
 | `polkit-1` | `/etc/pam.d/polkit-1` | After `#%PAM-1.0` |
+| `kde-fingerprint` | `/etc/pam.d/kde-fingerprint` | Above the first `auth` line. KScreenLocker runs this slot alongside the password field |
 
 `sufficient` means: if face-auth exits 0, the user is authenticated immediately. If it fails
 (no match, no camera, timeout, lockout), PAM falls through to the password prompt. `quiet`
@@ -334,7 +335,7 @@ screen locks, so there is nothing for face-auth to gate.
 ## How It Works
 
 ```
-PAM (sudo / gdm-password / swaylock / polkit-1)
+PAM (sudo / gdm-password / swaylock / polkit-1 / kde-fingerprint)
   │
   ▼
 face-auth (static binary)

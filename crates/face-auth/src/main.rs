@@ -48,10 +48,44 @@ fn fail_setup(msg: &str) -> ! {
     std::process::exit(1)
 }
 
+/// Drop everything the caller put in the environment when the real user ID
+/// differs from the effective user ID: installed set-user-ID root for lock
+/// screens that run as the user (KScreenLocker, swaylock), or started from
+/// sudo's own set-user-ID process. Only what `pam_exec` sets survives, and `PATH` is pinned
+/// because `user::lookup` runs `getent` through it.
+fn scrub_caller_environment() {
+    if unsafe { libc::getuid() == libc::geteuid() } {
+        return;
+    }
+    const KEEP: [&str; 4] = ["PAM_USER", "PAM_SERVICE", "PAM_RHOST", "PAM_TTY"];
+    let kept: Vec<(&str, std::ffi::OsString)> = KEEP
+        .iter()
+        .filter_map(|k| env::var_os(k).map(|v| (*k, v)))
+        .collect();
+    let all: Vec<std::ffi::OsString> = env::vars_os().map(|(k, _)| k).collect();
+    for key in all {
+        env::remove_var(key);
+    }
+    for (key, value) in kept {
+        env::set_var(key, value);
+    }
+    env::set_var("PATH", "/usr/sbin:/usr/bin:/sbin:/bin");
+}
+
+/// A caller that is not root may only test its own face. Without this, the
+/// set-user-ID binary would let any user probe another account's templates and
+/// drive that account's lockout.
+fn caller_may_authenticate(target_uid: u32) -> bool {
+    let caller = unsafe { libc::getuid() };
+    caller == 0 || caller == target_uid
+}
+
 /// Interactive verification against a stored template. Prints a human-readable
 /// result and exits 0 on a match, 1 otherwise.
 fn run_verify(name: &str) -> ! {
-    if unsafe { libc::geteuid() } != 0 {
+    // Real user ID, not effective: the binary is set-user-ID root, so the
+    // effective user ID is 0 for everyone.
+    if unsafe { libc::getuid() } != 0 {
         eprintln!("--verify reads root-owned templates; re-run with sudo or pkexec");
         std::process::exit(2);
     }
@@ -95,6 +129,8 @@ fn run_verify(name: &str) -> ! {
 }
 
 fn main() {
+    scrub_caller_environment();
+
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("face_auth_core=error,face_auth=error"));
     fmt()
@@ -134,6 +170,14 @@ fn main() {
         Ok(info) => info,
         Err(e) => fail_setup(&format!("cannot authenticate '{username}': {e}")),
     };
+
+    if !caller_may_authenticate(info.uid) {
+        fail_auth(&format!(
+            "caller user ID {} may not authenticate '{}'",
+            unsafe { libc::getuid() },
+            info.name
+        ));
+    }
 
     if let Err(reason) = reject_remote_session() {
         fail_auth(&format!("refusing face authentication for {reason}"));

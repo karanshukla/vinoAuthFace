@@ -53,7 +53,7 @@ ACTUAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 # ---- Undo any previous partial setup ----
 echo "Cleaning up any previous partial setup..."
 
-for service in sudo swaylock gdm-password polkit-1; do
+for service in sudo swaylock gdm-password polkit-1 kde-fingerprint; do
     if [ -f "$PAM_DIR/$service" ]; then
         sed -i '/pam_exec\.so.*face-auth/d' "$PAM_DIR/$service" 2>/dev/null || true
     fi
@@ -250,7 +250,16 @@ fi
 
 # ---- Install binaries ----
 echo "Installing binaries..."
-install -Dm755 "$BIN_SRC/face-auth" "$BIN_DIR/face-auth"
+# Set-user-ID root (mode 4755): KScreenLocker and swaylock run PAM as the
+# logged-in user, and the template store is root-only. face-auth scrubs its
+# environment and only lets a non-root caller authenticate its own account
+# (see crates/face-auth/src/main.rs).
+install -Dm4755 "$BIN_SRC/face-auth" "$BIN_DIR/face-auth"
+if findmnt -no OPTIONS --target "$BIN_DIR" 2>/dev/null | tr ',' '\n' | grep -qx nosuid; then
+    echo "Warning: $BIN_DIR is mounted nosuid, which ignores the set-user-ID bit."
+    echo "         sudo, polkit and GDM still work, but"
+    echo "         the KDE lock screen and swaylock will fall back to the password."
+fi
 install -Dm755 "$BIN_SRC/face-enroll" "$BIN_DIR/face-enroll"
 [ -n "${DL_DIR:-}" ] && rm -rf "$DL_DIR"
 
@@ -402,7 +411,7 @@ if [ ! -f "$PAM_DIR/polkit-1" ] && [ -f /usr/lib/pam.d/polkit-1 ]; then
     touch "$PAM_DIR/.face-auth-polkit-1-created"
 fi
 
-for service in sudo swaylock gdm-password polkit-1; do
+for service in sudo swaylock gdm-password polkit-1 kde-fingerprint; do
     conf="$PAM_DIR/$service"
     if [ ! -f "$conf" ]; then
         echo "Warning: $conf not found, skipping"
@@ -410,7 +419,11 @@ for service in sudo swaylock gdm-password polkit-1; do
     fi
     cp "$conf" "$conf.face-auth.bak"
 
-    if [ "$service" = "gdm-password" ] && grep -q "pam_selinux_permit\.so" "$conf"; then
+    if [ "$service" = "kde-fingerprint" ]; then
+        # KScreenLocker's non-interactive slot, started alongside the password
+        # field. No #%PAM-1.0 header here: go in above the first auth line.
+        sed -i "0,/^auth/s|^auth|$PAM_LINE\n&|" "$conf"
+    elif [ "$service" = "gdm-password" ] && grep -q "pam_selinux_permit\.so" "$conf"; then
         # Insert after pam_selinux_permit.so (Fedora lock screen)
         sed -i "/^auth.*pam_selinux_permit\.so\$/a $PAM_LINE" "$conf"
     else

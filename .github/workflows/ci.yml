@@ -95,6 +95,7 @@ jobs:
         run: |
           sudo ./deploy.sh
           test -x /usr/local/bin/face-auth
+          test -u /usr/local/bin/face-auth
           test -x /usr/local/bin/face-enroll
           grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/sudo
           test "$(stat -c %a /var/lib/face-auth)" = 700
