@@ -28,9 +28,9 @@ fn main() {
     // applies, and must resolve to the same account.
     let info = user::by_uid(uid)
         .and_then(|info| user::lookup(&info.name))
-        .unwrap_or_else(|e| die(&format!("user ID {uid}: {e}")));
+        .unwrap_or_else(|_| die("the calling account is not a valid local user"));
     if info.uid != uid {
-        die(&format!("user ID {uid} resolves to {}, which is user ID {}", info.name, info.uid));
+        die("the calling account resolves to a different user ID");
     }
 
     let (program, argv) = helper::command(verb, &info.name);
