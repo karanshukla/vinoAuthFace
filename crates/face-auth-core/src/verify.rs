@@ -6,14 +6,27 @@ pub fn verify_embedding(
     store: &EmbeddingStore,
     threshold: f32,
 ) -> anyhow::Result<bool> {
-    if store.embeddings.is_empty() {
-        return Err(FaceAuthError::NoEmbeddings.into());
-    }
-
     // A threshold of zero or below matches anything. Config validation should
     // already have caught it; refuse rather than authenticate if it has not.
     if !threshold.is_finite() || threshold <= 0.0 {
         anyhow::bail!("refusing to verify against non-positive threshold {threshold}");
+    }
+
+    let max_similarity = max_similarity(probe, store)?;
+    tracing::debug!(
+        similarity = max_similarity,
+        threshold,
+        "verification complete"
+    );
+
+    Ok(max_similarity >= threshold)
+}
+
+/// Best cosine similarity between `probe` and any stored embedding. Public so
+/// offline tooling can report the raw score rather than a bare pass/fail.
+pub fn max_similarity(probe: &[f32], store: &EmbeddingStore) -> anyhow::Result<f32> {
+    if store.embeddings.is_empty() {
+        return Err(FaceAuthError::NoEmbeddings.into());
     }
 
     // A non-finite probe makes every comparison NaN, which compares false and
@@ -37,13 +50,7 @@ pub fn verify_embedding(
         }
     }
 
-    tracing::debug!(
-        similarity = max_similarity,
-        threshold,
-        "verification complete"
-    );
-
-    Ok(max_similarity >= threshold)
+    Ok(max_similarity)
 }
 
 /// Cosine similarity of two equal-length vectors.
