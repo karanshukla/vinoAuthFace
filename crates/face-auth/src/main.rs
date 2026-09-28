@@ -5,7 +5,8 @@
 //! reads from its environment is attacker-influenced except `PAM_USER`, which
 //! `pam_exec` sets from the PAM handle itself.
 
-use face_auth_core::{seat, user, FaceAuth, FaceAuthConfig};
+use face_auth_core::environment::{self, SkipReason};
+use face_auth_core::{capture, seat, user, FaceAuth, FaceAuthConfig};
 use std::env;
 use std::path::Path;
 use std::time::Instant;
@@ -31,6 +32,26 @@ fn reject_remote_session() -> Result<(), String> {
     } else {
         Err(format!("remote session from {rhost}"))
     }
+}
+
+/// A scan that can't succeed: nobody at the camera over SSH, or a built-in
+/// camera behind a closed lid. Checked before `FaceAuth::new`, which loads
+/// both models, so the fallback to password is immediate. Never recorded as
+/// a lockout failure: no face was presented.
+fn skip_reason(config: &FaceAuthConfig) -> Option<SkipReason> {
+    let proc_root = Path::new("/proc");
+    if config.abort_if_ssh() && environment::under_ssh(proc_root, std::process::id()) {
+        return Some(SkipReason::SshSession);
+    }
+    if config.abort_if_lid_closed() && environment::lid_closed(Path::new("/proc/acpi/button/lid")) {
+        // An external IR camera still sees a docked user with the lid shut.
+        let external = capture::device_bus_path(&config.device())
+            .is_ok_and(|bus| environment::camera_is_external(Path::new(&bus)));
+        if !external {
+            return Some(SkipReason::LidClosed);
+        }
+    }
+    None
 }
 
 /// A routine authentication outcome: no match, or a session this tool declines
@@ -215,6 +236,10 @@ fn main() {
         if let Err(reason) = seat::check(Path::new("/run/systemd"), info.uid) {
             fail_auth(&format!("refusing face authentication for '{}': {reason}", info.name));
         }
+    }
+
+    if let Some(reason) = skip_reason(&config) {
+        fail_auth(&format!("skipping face authentication: {reason}"));
     }
 
     let scan_duration = config.scan_duration_ms();

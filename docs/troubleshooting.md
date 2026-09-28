@@ -56,6 +56,14 @@ The lock screen runs `face-auth` as you, through its set-group-ID bit.
 If you're still in front of the camera, it sees you and unlocks. Known issue:
 [#21](https://github.com/karanshukla/vinoAuthFace/issues/21).
 
+## Face auth never runs over SSH, or with the lid closed
+
+On purpose. Under SSH nobody is at the camera, and a built-in camera can't see through a closed
+lid, so face-auth goes straight to the password. An IR camera on a port the firmware reports as
+removable is still used with the lid shut. If yours isn't (a hub can hide it), set
+`abort_if_lid_closed = false` in `/etc/face-auth.toml`. `abort_if_ssh = false` turns the SSH check
+off.
+
 ## Face auth stopped being tried after a few failures
 
 That's the lockout. After 5 failed matches (a face was seen and rejected) face-auth skips the
