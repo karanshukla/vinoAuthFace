@@ -14,7 +14,7 @@
 #   scan_duration_ms, scan_interval_ms, capture_timeout_ms
 #                                   honoured within built-in bounds
 #   model_path, detector_model_path, embeddings_dir,
-#   pinned_camera_*, lockout_*
+#   pinned_camera_*, lockout_*, backend, npu_device
 #                                   ignored — system policy only
 #
 # FACE_AUTH_* environment variables affect face-enroll and the settings GUI.
@@ -86,3 +86,10 @@ scan_interval_ms = 0
 # System policy only.
 # pinned_camera_path = "/sys/devices/pci0000:00/0000:00:14.0/usb3/3-7/3-7:1.2"
 # pinned_camera_index = 0
+
+# Inference backend: "tract" (default, pure-Rust CPU, works in the static musl
+# build) or "openvino" (needs a build with the `npu` feature, which deploy.sh
+# does automatically when it finds an OpenVINO install, and keeps in sync).
+# backend = "tract"
+# OpenVINO device when backend = "openvino": "NPU", "GPU" or "CPU".
+# npu_device = "NPU"

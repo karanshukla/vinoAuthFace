@@ -30,6 +30,8 @@ pub struct FaceAuthConfig {
     pub detector_threshold: Option<f32>,
     pub scan_duration_ms: Option<u64>,
     pub scan_interval_ms: Option<u64>,
+    pub backend: Option<String>,
+    pub npu_device: Option<String>,
     pub liveness_motion_threshold: Option<f32>,
     pub pinned_camera_path: Option<String>,
     pub pinned_camera_index: Option<u32>,
@@ -50,6 +52,8 @@ impl Default for FaceAuthConfig {
             detector_threshold: Some(0.5),
             scan_duration_ms: Some(5000),
             scan_interval_ms: Some(0),
+            backend: None,
+            npu_device: None,
             liveness_motion_threshold: None,
             pinned_camera_path: None,
             pinned_camera_index: None,
@@ -216,6 +220,9 @@ impl FaceAuthConfig {
         if !d.is_finite() || !DETECTOR_THRESHOLD_RANGE.contains(&d) {
             bail!("detector_threshold {} outside safe range", d);
         }
+        if !matches!(self.backend().as_str(), "tract" | "openvino") {
+            bail!("backend must be \"tract\" or \"openvino\", not {:?}", self.backend());
+        }
         let m = self.liveness_motion_threshold();
         if !m.is_finite() || !LIVENESS_MOTION_RANGE.contains(&m) {
             bail!("liveness_motion_threshold {} outside 0.0..=1.0", m);
@@ -300,6 +307,17 @@ impl FaceAuthConfig {
 impl FaceAuthConfig {
     /// Backoff after repeated face-match failures. See `lockout::check`: it
     /// never blocks the password fallback, only how fast face attempts retry.
+    /// Inference backend: "tract" (default, pure-Rust CPU) or "openvino"
+    /// (needs a build with the `npu` feature; runs on `npu_device()`).
+    pub fn backend(&self) -> String {
+        self.backend.clone().unwrap_or_else(|| "tract".to_string())
+    }
+
+    /// OpenVINO device when `backend() == "openvino"`: "NPU", "GPU" or "CPU".
+    pub fn npu_device(&self) -> String {
+        self.npu_device.clone().unwrap_or_else(|| "NPU".to_string())
+    }
+
     /// Minimum fraction of pixels that must change between consecutive face
     /// frames in a scan before a match is accepted. See
     /// `preprocess::frame_motion_fraction`. Zero disables the check.
@@ -547,6 +565,14 @@ mod tests {
             ..FaceAuthConfig::default()
         };
         assert!(cfg.verify_pinned_camera().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_unknown_backend() {
+        let cfg = FaceAuthConfig { backend: Some("cuda".to_string()), ..FaceAuthConfig::default() };
+        assert!(cfg.validate().is_err());
+        let cfg = FaceAuthConfig { backend: Some("openvino".to_string()), ..FaceAuthConfig::default() };
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]

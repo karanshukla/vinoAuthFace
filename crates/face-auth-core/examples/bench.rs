@@ -20,11 +20,16 @@ fn main() -> anyhow::Result<()> {
     println!("device: {device}\n");
 
     let t = Instant::now();
-    let mut encoder = FaceEncoder::new(&config.model_path())?;
+    let mut encoder = FaceEncoder::new(&config.model_path(), &config.backend(), &config.npu_device())?;
     let encoder_load = t.elapsed();
 
     let t = Instant::now();
-    let mut detector = FaceDetector::new(&config.detector_model_path(), config.detector_threshold())?;
+    let mut detector = FaceDetector::new(
+        &config.detector_model_path(),
+        config.detector_threshold(),
+        &config.backend(),
+        &config.npu_device(),
+    )?;
     let detector_load = t.elapsed();
 
     let t = Instant::now();

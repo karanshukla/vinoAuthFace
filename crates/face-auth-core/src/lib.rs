@@ -49,8 +49,14 @@ pub struct FaceAuth {
 impl FaceAuth {
     pub fn new(config: FaceAuthConfig) -> Result<Self> {
         config.validate()?;
-        let encoder = FaceEncoder::new(&config.model_path())?;
-        let detector = FaceDetector::new(&config.detector_model_path(), config.detector_threshold())?;
+        let (backend, device) = (config.backend(), config.npu_device());
+        let encoder = FaceEncoder::new(&config.model_path(), &backend, &device)?;
+        let detector = FaceDetector::new(
+            &config.detector_model_path(),
+            config.detector_threshold(),
+            &backend,
+            &device,
+        )?;
         Ok(Self { config, encoder, detector })
     }
 

@@ -7,3 +7,6 @@ edition = "2021"
 face-auth-core = { path = "../face-auth-core" }
 clap = { workspace = true }
 anyhow = { workspace = true }
+
+[features]
+npu = ["face-auth-core/npu"]

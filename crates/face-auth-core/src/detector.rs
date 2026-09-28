@@ -153,16 +153,38 @@ fn best_face(scores: &[f32], boxes: &[f32], threshold: f32) -> anyhow::Result<Op
     Ok(Some(face_box))
 }
 
-pub struct FaceDetector {
-    model: TypedRunnableModel<TypedModel>,
-    threshold: f32,
+#[cfg(feature = "npu")]
+use openvino::{Core as OvCore, DeviceType, ElementType, InferRequest, PartialShape, Shape, Tensor as OvTensor};
+
+pub enum FaceDetector {
+    Tract {
+        model: TypedRunnableModel<TypedModel>,
+        threshold: f32,
+    },
+    #[cfg(feature = "npu")]
+    OpenVino {
+        request: InferRequest,
+        input_name: String,
+        scores_name: String,
+        boxes_name: String,
+        threshold: f32,
+    },
 }
 
 impl FaceDetector {
-    pub fn new(model_path: &str, threshold: f32) -> anyhow::Result<Self> {
+    /// `backend` is "tract" (pure-Rust CPU) or "openvino", which needs a build
+    /// with the `npu` feature and runs on `device` ("NPU", "GPU" or "CPU").
+    pub fn new(model_path: &str, threshold: f32, backend: &str, device: &str) -> anyhow::Result<Self> {
         if !std::path::Path::new(model_path).exists() {
             anyhow::bail!("face detector model not found at {model_path}");
         }
+        match backend {
+            "openvino" => Self::new_openvino(model_path, threshold, device),
+            _ => Self::new_tract(model_path, threshold),
+        }
+    }
+
+    fn new_tract(model_path: &str, threshold: f32) -> anyhow::Result<Self> {
         // The input fact is required before optimisation: without a concrete
         // shape the graph stays symbolic and tract cannot lower it.
         let model = onnx()
@@ -176,21 +198,65 @@ impl FaceDetector {
             )?
             .into_optimized()?
             .into_runnable()?;
-        Ok(Self { model, threshold })
+        Ok(Self::Tract { model, threshold })
+    }
+
+    #[cfg(feature = "npu")]
+    fn new_openvino(model_path: &str, threshold: f32, device: &str) -> anyhow::Result<Self> {
+        let t0 = std::time::Instant::now();
+        let mut core = OvCore::new()?;
+        let mut model = core.read_model_from_file(model_path, "")?;
+        let input_name = model.get_input_by_index(0)?.get_name()?;
+        let scores_name = model.get_output_by_index(0)?.get_name()?;
+        let boxes_name = model.get_output_by_index(1)?.get_name()?;
+        model.reshape_single_input(&PartialShape::new_static(
+            4,
+            &[1, 3, DETECTOR_HEIGHT as i64, DETECTOR_WIDTH as i64],
+        )?)?;
+        let mut compiled = core.compile_model(&model, DeviceType::from(device))?;
+        let request = compiled.create_infer_request()?;
+        tracing::debug!(device, compile_ms = t0.elapsed().as_millis() as u64, "detector compiled (openvino)");
+        Ok(Self::OpenVino { request, input_name, scores_name, boxes_name, threshold })
+    }
+
+    #[cfg(not(feature = "npu"))]
+    fn new_openvino(_model_path: &str, _threshold: f32, _device: &str) -> anyhow::Result<Self> {
+        anyhow::bail!("backend = \"openvino\" but this build was compiled without the `npu` feature")
     }
 
     pub fn detect(&mut self, frame: &IrFrame) -> anyhow::Result<Option<FaceBox>> {
         let input = preprocess_for_detector(frame)?;
-        let mut input = input.into_dyn();
-        input.insert_axis_inplace(tract_ndarray::Axis(0));
-        let input_tensor = Tensor::from(input).into_tvalue();
-        let result = self.model.run(tvec!(input_tensor))?;
-        anyhow::ensure!(result.len() >= 2, "detector returned {} outputs, expected scores and boxes", result.len());
-
-        // Contiguous copies: the optimised plan may hand back strided views.
-        let scores: Vec<f32> = result[0].to_array_view::<f32>()?.iter().copied().collect();
-        let boxes: Vec<f32> = result[1].to_array_view::<f32>()?.iter().copied().collect();
-        best_face(&scores, &boxes, self.threshold)
+        match self {
+            Self::Tract { model, threshold } => {
+                let mut input = input.into_dyn();
+                input.insert_axis_inplace(tract_ndarray::Axis(0));
+                let result = model.run(tvec!(Tensor::from(input).into_tvalue()))?;
+                anyhow::ensure!(
+                    result.len() >= 2,
+                    "detector returned {} outputs, expected scores and boxes",
+                    result.len()
+                );
+                // Contiguous copies: the optimised plan may hand back strided views.
+                let scores: Vec<f32> = result[0].to_array_view::<f32>()?.iter().copied().collect();
+                let boxes: Vec<f32> = result[1].to_array_view::<f32>()?.iter().copied().collect();
+                best_face(&scores, &boxes, *threshold)
+            }
+            #[cfg(feature = "npu")]
+            Self::OpenVino { request, input_name, scores_name, boxes_name, threshold } => {
+                let standard = input.as_standard_layout();
+                let data = standard
+                    .as_slice()
+                    .ok_or_else(|| anyhow::anyhow!("non-contiguous detector input"))?;
+                let shape = Shape::new(&[1, 3, DETECTOR_HEIGHT as i64, DETECTOR_WIDTH as i64])?;
+                let mut tensor = OvTensor::new(ElementType::F32, &shape)?;
+                tensor.get_data_mut::<f32>()?.copy_from_slice(data);
+                request.set_tensor(input_name, &tensor)?;
+                request.infer()?;
+                let scores = request.get_tensor(scores_name)?;
+                let boxes = request.get_tensor(boxes_name)?;
+                best_face(scores.get_data::<f32>()?, boxes.get_data::<f32>()?, *threshold)
+            }
+        }
     }
 }
 
