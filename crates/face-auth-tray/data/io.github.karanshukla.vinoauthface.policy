@@ -5,7 +5,7 @@
 
 <!--
   The tray's three root actions. Each pins both the binary (exec.path) and
-  its only argument (exec.argv1), so pkexec cannot be pointed at face-enroll
+  its only argument (the first-argument annotation), so pkexec cannot be pointed at face-enroll
   with caller-chosen flags. The helper acts only for PKEXEC_UID.
   auth_admin, never yes: every action changes who a face unlocks.
 -->
