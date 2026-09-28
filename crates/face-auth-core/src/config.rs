@@ -17,6 +17,7 @@ const DETECTOR_THRESHOLD_RANGE: std::ops::RangeInclusive<f32> = 0.05..=1.0;
 const CAPTURE_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 100..=30_000;
 const SCAN_DURATION_RANGE: std::ops::RangeInclusive<u64> = 500..=30_000;
 const SCAN_INTERVAL_RANGE: std::ops::RangeInclusive<u64> = 0..=5_000;
+const LIVENESS_MOTION_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct FaceAuthConfig {
@@ -29,6 +30,7 @@ pub struct FaceAuthConfig {
     pub detector_threshold: Option<f32>,
     pub scan_duration_ms: Option<u64>,
     pub scan_interval_ms: Option<u64>,
+    pub liveness_motion_threshold: Option<f32>,
     pub lockout_threshold: Option<u32>,
     pub lockout_base_delay_ms: Option<u64>,
     pub lockout_max_delay_ms: Option<u64>,
@@ -46,6 +48,7 @@ impl Default for FaceAuthConfig {
             detector_threshold: Some(0.5),
             scan_duration_ms: Some(5000),
             scan_interval_ms: Some(0),
+            liveness_motion_threshold: None,
             lockout_threshold: None,
             lockout_base_delay_ms: None,
             lockout_max_delay_ms: None,
@@ -150,6 +153,15 @@ impl FaceAuthConfig {
             }
         }
 
+        if let Some(t) = overlay.liveness_motion_threshold {
+            if t.is_finite()
+                && t >= self.liveness_motion_threshold()
+                && LIVENESS_MOTION_RANGE.contains(&t)
+            {
+                self.liveness_motion_threshold = Some(t);
+            }
+        }
+
         // Timing preferences cannot weaken a match decision, only how long the
         // user is willing to wait, so they are honoured within bounds.
         if let Some(v) = overlay.capture_timeout_ms {
@@ -198,6 +210,10 @@ impl FaceAuthConfig {
         let d = self.detector_threshold();
         if !d.is_finite() || !DETECTOR_THRESHOLD_RANGE.contains(&d) {
             bail!("detector_threshold {} outside safe range", d);
+        }
+        let m = self.liveness_motion_threshold();
+        if !m.is_finite() || !LIVENESS_MOTION_RANGE.contains(&m) {
+            bail!("liveness_motion_threshold {} outside 0.0..=1.0", m);
         }
         if !self.embeddings_dir().is_absolute() {
             bail!("embeddings_dir must be an absolute path");
@@ -279,6 +295,13 @@ impl FaceAuthConfig {
 impl FaceAuthConfig {
     /// Backoff after repeated face-match failures. See `lockout::check`: it
     /// never blocks the password fallback, only how fast face attempts retry.
+    /// Minimum fraction of pixels that must change between consecutive face
+    /// frames in a scan before a match is accepted. See
+    /// `preprocess::frame_motion_fraction`. Zero disables the check.
+    pub fn liveness_motion_threshold(&self) -> f32 {
+        self.liveness_motion_threshold.unwrap_or(0.01)
+    }
+
     pub fn lockout_policy(&self) -> crate::lockout::LockoutPolicy {
         let d = crate::lockout::LockoutPolicy::default();
         crate::lockout::LockoutPolicy {
@@ -348,6 +371,22 @@ mod tests {
             0.6,
             "user must not be able to relax matching"
         );
+    }
+
+    #[test]
+    fn user_overlay_may_only_raise_liveness_threshold() {
+        let mut cfg = system_baseline();
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            liveness_motion_threshold: Some(0.0),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.liveness_motion_threshold(), 0.01);
+
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            liveness_motion_threshold: Some(0.05),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.liveness_motion_threshold(), 0.05);
     }
 
     #[test]

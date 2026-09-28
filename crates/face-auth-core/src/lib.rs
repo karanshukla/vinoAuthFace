@@ -142,6 +142,11 @@ impl FaceAuth {
         // Only a scan that saw a face counts toward lockout: an unattended
         // `sudo` with nobody at the camera is not a failed attempt.
         let mut face_seen = false;
+        // Motion liveness: a match only counts once real motion has been seen
+        // between consecutive face frames, which defeats a static photo.
+        let motion_threshold = self.config.liveness_motion_threshold();
+        let mut prev_face: Option<crate::capture::IrFrame> = None;
+        let mut motion_seen = motion_threshold <= 0.0;
 
         // Wait out the remainder of the interval without overrunning the window.
         let nap = |deadline: Instant| {
@@ -203,11 +208,27 @@ impl FaceAuth {
             };
             face_seen = true;
 
+            // The first face frame has nothing to diff against, so it can never
+            // pass the liveness gate. Use it as the baseline and skip encoding.
+            let Some(prev) = prev_face.replace(frame.clone()) else {
+                tracing::debug!(frame = frame_num, "liveness baseline");
+                nap(deadline);
+                continue;
+            };
+            let motion = crate::preprocess::frame_motion_fraction(&prev, &frame);
+            motion_seen |= motion >= motion_threshold;
+            tracing::debug!(frame = frame_num, motion, motion_threshold, motion_seen, "liveness");
+
             let face = crate::preprocess::crop_to_face(&frame, &face_box, FACE_CROP_MARGIN)?;
             let input = crate::preprocess::preprocess_ir_frame(&face)?;
             let embedding = self.encoder.encode(input.view())?;
 
             if verify_embedding(&embedding, &store, self.config.threshold())? {
+                if !motion_seen {
+                    tracing::debug!(frame = frame_num, "match without liveness motion yet; continuing");
+                    nap(deadline);
+                    continue;
+                }
                 tracing::debug!(frame = frame_num, elapsed = ?t0.elapsed(), "match");
                 record_attempt(user, &embeddings_dir, true);
                 return Ok(true);

@@ -7,7 +7,8 @@
 # Users may also keep ~/.config/face-auth.toml. At the login and sudo prompt
 # that file may only ever make authentication STRICTER:
 #
-#   threshold, detector_threshold   honoured only if >= the value set here
+#   threshold, detector_threshold,
+#   liveness_motion_threshold       honoured only if >= the value set here
 #   device                          honoured only if it is a real IR capture
 #                                   device present on this machine
 #   scan_duration_ms, scan_interval_ms, capture_timeout_ms
@@ -71,3 +72,9 @@ scan_interval_ms = 0
 # lockout_threshold = 5          # failures allowed before any cooldown
 # lockout_base_delay_ms = 2000   # first cooldown, doubles per further failure
 # lockout_max_delay_ms = 300000  # cooldown ceiling
+
+# Motion liveness (0.0 - 1.0, default 0.01). During a scan, a match is only
+# accepted once at least this fraction of pixels has changed between two
+# consecutive face frames. Defeats a rigidly held photo; a real face always
+# has some micro-motion. 0 disables it. A user's own config may only raise it.
+# liveness_motion_threshold = 0.01

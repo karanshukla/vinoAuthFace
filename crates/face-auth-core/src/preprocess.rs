@@ -123,6 +123,30 @@ pub fn preprocess_ir_frame(frame: &IrFrame) -> anyhow::Result<Array3<f32>> {
     Ok(array)
 }
 
+/// Fraction of pixels that changed by more than a noise floor between two
+/// equalised frames of the same size.
+///
+/// A cheap liveness signal: a rigidly held photo produces near-zero motion,
+/// while a real face has micro-motion (blinks, breathing, sway) even when
+/// holding still. Counting changed pixels rather than averaging differences
+/// keeps a small, local change like a blink from being diluted by the static
+/// background.
+pub fn frame_motion_fraction(a: &IrFrame, b: &IrFrame) -> f32 {
+    if a.width != b.width || a.height != b.height || a.data.len() != b.data.len() || a.data.is_empty() {
+        return 0.0;
+    }
+
+    const PER_PIXEL_NOISE_FLOOR: i32 = 1500; // ~2.3% of the u16 range
+
+    let changed = a
+        .data
+        .iter()
+        .zip(&b.data)
+        .filter(|(&x, &y)| (x as i32 - y as i32).abs() > PER_PIXEL_NOISE_FLOOR)
+        .count();
+    changed as f32 / a.data.len() as f32
+}
+
 /// Default CLAHE parameters. `CLIP_LIMIT` follows OpenCV's convention: the
 /// per-bin ceiling is `clip * tile_pixels / 256`, with the clipped mass
 /// redistributed. Howdy uses 2.0; 3.0 measured better on this sensor's frames
@@ -337,6 +361,33 @@ mod tests {
         let f = frame(vec![0; 10], 32, 32);
         let b = FaceBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
         assert!(crop_to_face(&f, &b, 0.3).is_err());
+    }
+
+    #[test]
+    fn identical_frames_have_zero_motion() {
+        let a = frame(vec![1000, 2000, 3000, 4000], 2, 2);
+        assert_eq!(frame_motion_fraction(&a, &a.clone()), 0.0);
+    }
+
+    #[test]
+    fn large_change_in_one_pixel_is_motion() {
+        let a = frame(vec![1000, 2000, 3000, 4000], 2, 2);
+        let b = frame(vec![1000, 2000, 3000, 40000], 2, 2);
+        assert_eq!(frame_motion_fraction(&a, &b), 0.25);
+    }
+
+    #[test]
+    fn sensor_noise_is_not_motion() {
+        let a = frame(vec![1000, 2000, 3000, 4000], 2, 2);
+        let b = frame(vec![1050, 2050, 2950, 3950], 2, 2);
+        assert_eq!(frame_motion_fraction(&a, &b), 0.0);
+    }
+
+    #[test]
+    fn mismatched_frames_have_zero_motion() {
+        let a = frame(vec![1000, 2000, 3000, 4000], 2, 2);
+        let b = frame(vec![1000, 2000], 2, 1);
+        assert_eq!(frame_motion_fraction(&a, &b), 0.0);
     }
 
     fn spread(f: &IrFrame) -> u16 {
