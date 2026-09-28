@@ -16,7 +16,7 @@
 #                                   honoured within built-in bounds
 #   model_path, detector_model_path, embeddings_dir,
 #   pinned_camera_*, lockout_*, backend, npu_device,
-#   seat_check, abort_if_*
+#   seat_check, abort_if_*, start_delay_*
 #                                   ignored — system policy only
 #
 # FACE_AUTH_* environment variables affect face-enroll and the settings GUI.
@@ -89,6 +89,17 @@ scan_interval_ms = 0
 # System policy only.
 # abort_if_ssh = true
 # abort_if_lid_closed = true
+
+# Start delay (ms, 0 - 10000, default 2000, 0 disables). A screen locker runs
+# face-auth the instant it starts, so someone still at the camera after
+# locking would be unlocked at once. face-auth waits until the locker
+# (its parent process) has been running this long, then scans. A retry on the
+# same lock screen does not wait again.
+# start_delay_scope: "screen_lock" (default; sudo, polkit and login are not
+# delayed) or "all". Decided from PAM_SERVICE; unknown services count as
+# screen lockers. System policy only.
+# start_delay_ms = 2000
+# start_delay_scope = "screen_lock"
 
 # Motion liveness (0.0 - 1.0, default 0.01). During a scan, a match is only
 # accepted once at least this fraction of pixels has changed between two

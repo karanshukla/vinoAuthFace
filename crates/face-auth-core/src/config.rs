@@ -18,6 +18,7 @@ const CAPTURE_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 100..=30_000;
 const SCAN_DURATION_RANGE: std::ops::RangeInclusive<u64> = 500..=30_000;
 const SCAN_INTERVAL_RANGE: std::ops::RangeInclusive<u64> = 0..=5_000;
 const LIVENESS_MOTION_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
+const START_DELAY_RANGE: std::ops::RangeInclusive<u64> = 0..=10_000;
 const MIN_FACE_SIZE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.75;
 
 #[derive(Debug, Deserialize, Clone)]
@@ -43,6 +44,8 @@ pub struct FaceAuthConfig {
     pub seat_check: Option<bool>,
     pub abort_if_ssh: Option<bool>,
     pub abort_if_lid_closed: Option<bool>,
+    pub start_delay_ms: Option<u64>,
+    pub start_delay_scope: Option<String>,
 }
 
 impl Default for FaceAuthConfig {
@@ -69,6 +72,8 @@ impl Default for FaceAuthConfig {
             seat_check: None,
             abort_if_ssh: None,
             abort_if_lid_closed: None,
+            start_delay_ms: None,
+            start_delay_scope: None,
         }
     }
 }
@@ -271,6 +276,9 @@ impl FaceAuthConfig {
         if !r.is_finite() || !MIN_FACE_SIZE_RANGE.contains(&r) {
             bail!("min_face_size_ratio {} outside 0.0..=0.75", r);
         }
+        if !matches!(self.start_delay_scope().as_str(), "screen_lock" | "all") {
+            bail!("start_delay_scope must be \"screen_lock\" or \"all\", not {:?}", self.start_delay_scope());
+        }
         if !self.embeddings_dir().is_absolute() {
             bail!("embeddings_dir must be an absolute path");
         }
@@ -373,6 +381,27 @@ impl FaceAuthConfig {
     /// side of the frame. Zero disables the check.
     pub fn min_face_size_ratio(&self) -> f32 {
         self.min_face_size_ratio.unwrap_or(0.0)
+    }
+
+    /// How long a screen locker must have been running before face-auth scans.
+    /// Zero disables it.
+    pub fn start_delay_ms(&self) -> u64 {
+        self.start_delay_ms
+            .unwrap_or(2000)
+            .clamp(*START_DELAY_RANGE.start(), *START_DELAY_RANGE.end())
+    }
+
+    /// `"screen_lock"` (default) delays only lockers; `"all"` also delays
+    /// login and elevation.
+    pub fn start_delay_scope(&self) -> String {
+        self.start_delay_scope.clone().unwrap_or_else(|| "screen_lock".to_string())
+    }
+
+    /// The start delay that applies to `surface`.
+    pub fn start_delay_for(&self, surface: crate::environment::Surface) -> std::time::Duration {
+        let applies = self.start_delay_scope() == "all"
+            || surface == crate::environment::Surface::ScreenLock;
+        std::time::Duration::from_millis(if applies { self.start_delay_ms() } else { 0 })
     }
 
     /// If `pin-camera.sh` has pinned a camera, check that `device()` still
@@ -541,6 +570,46 @@ mod tests {
             ..FaceAuthConfig::default()
         });
         assert_eq!(cfg.min_face_size_ratio(), 0.3);
+    }
+
+    #[test]
+    fn start_delay_applies_to_lockers_by_default() {
+        use crate::environment::Surface;
+        let cfg = FaceAuthConfig::default();
+        assert_eq!(cfg.start_delay_for(Surface::ScreenLock).as_millis(), 2000);
+        assert_eq!(cfg.start_delay_for(Surface::Elevation).as_millis(), 0);
+        assert_eq!(cfg.start_delay_for(Surface::Login).as_millis(), 0);
+    }
+
+    #[test]
+    fn start_delay_scope_all_covers_every_surface() {
+        use crate::environment::Surface;
+        let cfg = FaceAuthConfig {
+            start_delay_scope: Some("all".into()),
+            ..FaceAuthConfig::default()
+        };
+        assert_eq!(cfg.start_delay_for(Surface::Elevation).as_millis(), 2000);
+    }
+
+    #[test]
+    fn start_delay_zero_disables_and_is_bounded() {
+        use crate::environment::Surface;
+        let off = FaceAuthConfig { start_delay_ms: Some(0), ..FaceAuthConfig::default() };
+        assert_eq!(off.start_delay_for(Surface::ScreenLock).as_millis(), 0);
+        let huge = FaceAuthConfig { start_delay_ms: Some(999_999), ..FaceAuthConfig::default() };
+        assert_eq!(huge.start_delay_ms(), 10_000);
+    }
+
+    #[test]
+    fn user_overlay_cannot_change_start_delay() {
+        let mut cfg = system_baseline();
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            start_delay_ms: Some(0),
+            start_delay_scope: Some("all".into()),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.start_delay_ms(), 2000);
+        assert_eq!(cfg.start_delay_scope(), "screen_lock");
     }
 
     #[test]

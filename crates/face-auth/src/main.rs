@@ -54,6 +54,33 @@ fn skip_reason(config: &FaceAuthConfig) -> Option<SkipReason> {
     None
 }
 
+/// Give a freshly started screen locker time to be walked away from.
+///
+/// The locker runs PAM the moment it starts, so a user still sitting at the
+/// camera after locking would be unlocked at once. Sleeps out the remainder of
+/// `start_delay_ms`, measured from the locker's own start time (our parent,
+/// since `pam_exec` execs us directly): a retry on the same lock screen sees
+/// the same start time and does not pay the delay again. Not a failed attempt,
+/// so nothing is recorded against the lockout. If the age can't be read, scan
+/// straight away rather than stall.
+fn wait_for_start_delay(config: &FaceAuthConfig) {
+    let surface = environment::classify_pam_service(env::var("PAM_SERVICE").ok().as_deref());
+    let delay = config.start_delay_for(surface);
+    if delay.is_zero() {
+        return;
+    }
+    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    let ppid = std::os::unix::process::parent_id();
+    let age = std::fs::read_to_string(format!("/proc/{ppid}/stat"))
+        .ok()
+        .zip(std::fs::read_to_string("/proc/uptime").ok())
+        .and_then(|(stat, uptime)| environment::process_age(&stat, &uptime, ticks.max(0) as u64));
+    if let Some(remaining) = age.and_then(|age| delay.checked_sub(age)) {
+        tracing::debug!(?surface, ?remaining, "waiting out the start delay");
+        std::thread::sleep(remaining);
+    }
+}
+
 /// A routine authentication outcome: no match, or a session this tool declines
 /// to handle. Logged below the default level, because `pam_exec` relays our
 /// stderr to the terminal and this would otherwise print on every failed sudo.
@@ -275,6 +302,8 @@ fn main() {
     if let Some(reason) = skip_reason(&config) {
         fail_auth(&format!("skipping face authentication: {reason}"));
     }
+
+    wait_for_start_delay(&config);
 
     let scan_duration = config.scan_duration_ms();
     let scan_interval = config.scan_interval_ms();
