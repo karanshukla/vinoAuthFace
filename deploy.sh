@@ -664,16 +664,26 @@ else
     CONF_STATE="installed"
 fi
 
-# An existing config is never rewritten, so a setting a newer release adds
-# shows up only in config/face-auth.toml.example. Name the ones yours lacks.
+# An existing config keeps every value it has, so a setting a newer release
+# adds would stay invisible. Append the ones it lacks as commented-out
+# defaults, copied from the example: nothing changes until someone edits them.
 if [ "$CONF_STATE" = kept ]; then
-    NEW_KEYS=()
+    NEW_KEYS=() NEW_LINES=()
     while read -r key; do
-        grep -qE "^#? ?$key ?=" "$CONFIG_DIR/face-auth.toml" || NEW_KEYS+=("$key")
+        grep -qE "^#? ?$key ?=" "$CONFIG_DIR/face-auth.toml" && continue
+        NEW_KEYS+=("$key")
+        NEW_LINES+=("# ${key} = $(grep -m1 -E "^#? ?$key ?= " config/face-auth.toml.example | sed -E 's/^#? ?[a-z0-9_]+ = //')")
     done < <(sed -nE 's/^#? ?([a-z][a-z0-9_]*) = .*/\1/p' config/face-auth.toml.example | sort -u)
     if [ "${#NEW_KEYS[@]}" -gt 0 ]; then
-        warn Config "Not in your $CONFIG_DIR/face-auth.toml: ${NEW_KEYS[*]}" \
-            "Defaults apply. config/face-auth.toml.example says what each does."
+        CONF="$CONFIG_DIR/face-auth.toml"
+        [ -s "$CONF" ] && [ "$(tail -c1 "$CONF" | wc -l)" -eq 0 ] && echo >> "$CONF"
+        {
+            echo
+            echo "# Added by deploy.sh: newer settings, at their defaults. See"
+            echo "# config/face-auth.toml.example for what each does."
+            printf '%s\n' "${NEW_LINES[@]}"
+        } >> "$CONF"
+        ok Config "added ${#NEW_KEYS[@]} new settings to $CONF as commented defaults: ${NEW_KEYS[*]}"
     fi
 fi
 
