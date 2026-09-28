@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 # Runs on every push/PR (unlike release.yml, which only fires on version tags). Exercises the
 # things a contributor or a downstream packager would actually rely on: the test suite, building
 # from source, and every branch of deploy.sh's cargo-availability fallback chain — including the
