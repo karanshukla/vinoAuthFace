@@ -79,3 +79,15 @@ it needs sudo:
 ```bash
 sudo face-similarity-check --user $USER photo1.jpg photo2.png
 ```
+
+Batch mode measures the pipeline instead of eyeballing single scores. Point it at a directory of
+photos of you and a directory of other people; it reports TAR, FAR and the equal error rate at the
+configured threshold. Photos with no detectable face are skipped and counted on stderr.
+
+```bash
+sudo face-similarity-check --user $USER --genuine-dir me/ --impostor-dir others/ \
+  --sweep 0.30:0.70:0.02 --csv scores.csv
+```
+
+`--sweep` prints `threshold,far,frr` rows (CSV) so runs can be diffed; `--csv` writes every
+per-image score. Either directory may be given alone, in which case only its own rate is reported.
