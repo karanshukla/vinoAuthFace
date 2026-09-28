@@ -195,8 +195,22 @@ impl ksni::Tray for Tray {
         "vinoAuthFace".into()
     }
 
+    // Left click opens the menu, which is the status panel; without this
+    // it does nothing.
+    const MENU_ON_ACTIVATE: bool = true;
+
+    // ApplicationStatus, like vinoWhisper's tray: Plasma files Hardware
+    // items in a different place in the panel.
     fn category(&self) -> Category {
-        Category::Hardware
+        Category::ApplicationStatus
+    }
+
+    fn icon_name(&self) -> String {
+        self.state().icon_name().into()
+    }
+
+    fn attention_icon_name(&self) -> String {
+        self.icon_name()
     }
 
     fn status(&self) -> ksni::Status {
@@ -210,7 +224,7 @@ impl ksni::Tray for Tray {
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         static ICONS: OnceLock<[Vec<ksni::Icon>; 3]> = OnceLock::new();
         let [ready, scanning, attention] = ICONS.get_or_init(|| {
-            [State::Ready, State::Scanning, State::Attention].map(icon::tray_icons)
+            State::ALL.map(icon::tray_icons)
         });
         match self.state() {
             State::Ready => ready.clone(),

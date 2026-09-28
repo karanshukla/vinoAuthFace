@@ -28,6 +28,57 @@ fail() {
     for line in "$@"; do printf '  %s\n' "$line" >&2; done
 }
 
+# ---- Progress ----
+# Bars only on a terminal; a log (CI, a pipe) keeps the quiet one-line steps.
+if [ -t 1 ]; then INTERACTIVE=1; CURL_FLAGS=(-fL -#); else INTERACTIVE=0; CURL_FLAGS=(-fsSL); fi
+
+# bar <done> <total> <label>: redraws one line in place, capped at 99% so a
+# rough total never claims to be finished before the build is.
+bar() {
+    local n="$1" total="$2" label="$3" width=30 pct filled
+    [ "$n" -ge "$total" ] && n=$((total - 1))
+    [ "$n" -lt 0 ] && n=0
+    pct=$((n * 100 / total)); filled=$((n * width / total))
+    printf '\r\e[K  %s%s%s %s%s%s %3d%% %s(%d/%d)%s' "$DIM" "$label" "$RESET" \
+        "$GREEN" "$(printf '%*s' "$filled" '' | tr ' ' '#')$(printf '%*s' $((width - filled)) '' | tr ' ' '-')" "$RESET" \
+        "$pct" "$DIM" "$n" "$total" "$RESET"
+}
+
+# count_units <cargo> <args...>: the crates a build compiles, for the bar's
+# total. A `cargo tree` of the same packages, so it is close, not exact.
+count_units() {
+    as_user "$@" -e normal,build --prefix none --format '{p}' 2>/dev/null | sort -u | wc -l
+}
+
+# cargo_build <label> <total> <command...>: run a cargo build. On a terminal
+# it reads cargo's JSON artifact stream and draws a bar; warnings and errors
+# still print (cargo renders them on stderr). Otherwise it is just --quiet.
+cargo_build() {
+    local label="$1" total="$2"
+    shift 2
+    if [ "$INTERACTIVE" != 1 ] || [ "$total" -lt 1 ]; then
+        "$@" --quiet
+        return
+    fi
+    # Cargo's output goes to a file that is polled while it runs, not down a
+    # pipe: a pipe only ends when every holder of it exits, so anything cargo
+    # left running (a compiler server, say) would hang the build here.
+    local seen out pid rc=0
+    out="$(mktemp)"
+    bar 0 "$total" "$label"
+    "$@" --quiet --message-format=json-render-diagnostics >"$out" &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        seen="$(grep -c '"reason":"compiler-artifact"' "$out" || true)"
+        bar "$seen" "$total" "$label"
+        sleep 0.2
+    done
+    wait "$pid" || rc=$?
+    rm -f "$out"
+    printf '\r\e[K'
+    return "$rc"
+}
+
 # ---- Options ----
 # --with-tray (or FACE_AUTH_TRAY=1): also install the tray icon, its root
 # helper and polkit actions (docs/tray.md). Off by default: it adds a
@@ -136,7 +187,10 @@ build_with_cargo() {
     local cargo="$1" tray=()
     [ "$WITH_TRAY" = 1 ] && tray=(-p face-auth-tray)
     step "building (a first build takes a few minutes)"
-    if ! as_user "$cargo" build --quiet --release --locked --target "$MUSL_TARGET" \
+    local total=0
+    [ "$INTERACTIVE" = 1 ] && total="$(count_units "$cargo" tree --locked --target "$MUSL_TARGET" \
+        -p face-auth -p face-enroll "${tray[@]}")"
+    if ! cargo_build "Compiling" "$total" as_user "$cargo" build --release --locked --target "$MUSL_TARGET" \
             -p face-auth -p face-enroll "${tray[@]}"; then
         fail "Build failed" "If the error mentions a missing target, add it with:" "  rustup target add $MUSL_TARGET"
         return 1
@@ -185,6 +239,7 @@ CONF_NPU_DEVICE="$(sed -n 's/^npu_device *= *"\(.*\)"/\1/p' "$CONFIG_DIR/face-au
 if OVFETCH_BIN="$(find_ovfetch)"; then
     # Run as the user: resolving and downloading need no privileges. The plan
     # is reused below to install exactly what was checked here.
+    step "asking ovfetch which OpenVINO this machine needs (takes a few seconds)"
     if OVFETCH_PLAN="$(as_user "$OVFETCH_BIN" resolve --json)"; then
         # compiler_present is false on a machine with no NPU at all too, where
         # GPU or CPU can still use the OpenVINO build.
@@ -252,6 +307,9 @@ stage_ovfetch() {
 if [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(find_cargo)"; then
     [ "$OPENVINO_MODE" = "ovfetch" ] || ok OpenVINO "$OPENVINO_MODE install"
     NPU_STEP="building with the NPU backend (a first build takes a few minutes)"
+    NPU_UNITS=0
+    [ "$INTERACTIVE" = 1 ] && NPU_UNITS="$(count_units "$CARGO_BIN" tree --locked --features "$NPU_FEATURES" \
+        -p face-auth -p face-enroll)"
     if [ "$OPENVINO_MODE" = "ovfetch" ]; then
         stage_ovfetch || { [ -n "$OV_STAGE" ] && rm -rf "$OV_STAGE"; exit 1; }
         # openvino-sys's build script records where it found OpenVINO and
@@ -274,22 +332,27 @@ if [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(fin
         # library path it found into its cached build output. Reused from an
         # earlier build, that is a -L to a directory that no longer exists.
         as_user "$CARGO_BIN" clean --quiet --release -p openvino-sys >/dev/null 2>&1 || true
-        as_user env LD_LIBRARY_PATH="$OV_LIB_DIR" \
-            RUSTFLAGS="-C link-arg=-Wl,--disable-new-dtags,-rpath,$OPENVINO_INSTALL_DIR" \
-            "$CARGO_BIN" build --quiet --release --locked --features "$NPU_FEATURES" \
+        # Rust 1.98's default linker, rust-lld, segfaults linking openvino-sys's
+        # build script (RUSTFLAGS reaches build scripts on a host-target build).
+        # GNU ld is the fallback where it exists.
+        NPU_RUSTFLAGS="-C link-arg=-Wl,--disable-new-dtags,-rpath,$OPENVINO_INSTALL_DIR"
+        command -v ld.bfd >/dev/null 2>&1 && NPU_RUSTFLAGS="$NPU_RUSTFLAGS -C link-arg=-fuse-ld=bfd"
+        cargo_build "Compiling" "$NPU_UNITS" as_user env LD_LIBRARY_PATH="$OV_LIB_DIR" \
+            RUSTFLAGS="$NPU_RUSTFLAGS" \
+            "$CARGO_BIN" build --release --locked --features "$NPU_FEATURES" \
             -p face-auth -p face-enroll || { [ -n "$OV_STAGE" ] && rm -rf "$OV_STAGE"; exit 1; }
     elif [ "$OPENVINO_MODE" = "system" ]; then
         step "$NPU_STEP"
-        as_user "$CARGO_BIN" build --quiet --release --locked --features "$NPU_FEATURES" \
-            -p face-auth -p face-enroll || exit 1
+        cargo_build "Compiling" "$NPU_UNITS" as_user "$CARGO_BIN" build --release --locked \
+            --features "$NPU_FEATURES" -p face-auth -p face-enroll || exit 1
     else
         step "$NPU_STEP"
-        as_user bash -c "
+        cargo_build "Compiling" "$NPU_UNITS" as_user bash -c "
             set -eo pipefail
             source '$OPENVINO_SRC/setupvars.sh' >/dev/null
             set -u
-            '$CARGO_BIN' build --quiet --release --locked --features '$NPU_FEATURES' -p face-auth -p face-enroll
-        " || exit 1
+            '$CARGO_BIN' build --release --locked --features '$NPU_FEATURES' -p face-auth -p face-enroll \"\$@\"
+        " _ || exit 1
     fi
     BIN_SRC="target/release"
     NPU_ACTIVE=1
@@ -321,7 +384,7 @@ else
     DL_DIR="$(mktemp -d)"
     DOWNLOAD_OK=1
     for asset in face-auth-$MUSL_TARGET face-enroll-$MUSL_TARGET SHA256SUMS; do
-        curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+        curl "${CURL_FLAGS[@]}" --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
             -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" || { DOWNLOAD_OK=0; break; }
     done
     if [ "$DOWNLOAD_OK" = 1 ]; then
@@ -344,7 +407,7 @@ else
         if [ "$WITH_TRAY" = 1 ]; then
             TRAY_DL_OK=1
             for asset in face-auth-tray-$MUSL_TARGET face-auth-helper-$MUSL_TARGET; do
-                curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+                curl "${CURL_FLAGS[@]}" --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
                     -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" || { TRAY_DL_OK=0; break; }
             done
             if [ "$TRAY_DL_OK" = 1 ] && (cd "$DL_DIR" \
@@ -412,8 +475,11 @@ if [ "$WITH_TRAY" = 1 ]; then
         TRAY_SRC="$ARTIFACT_DIR"
     elif CARGO_BIN="$(find_cargo)"; then
         step "building the tray"
-        as_user "$CARGO_BIN" build --quiet --release --locked --target "$MUSL_TARGET" \
-            -p face-auth-tray && TRAY_SRC="$ARTIFACT_DIR"
+        TRAY_UNITS=0
+        [ "$INTERACTIVE" = 1 ] && TRAY_UNITS="$(count_units "$CARGO_BIN" tree --locked --target "$MUSL_TARGET" \
+            -p face-auth-tray)"
+        cargo_build "Compiling" "$TRAY_UNITS" as_user "$CARGO_BIN" build --release --locked \
+            --target "$MUSL_TARGET" -p face-auth-tray && TRAY_SRC="$ARTIFACT_DIR"
     fi
 fi
 
@@ -464,6 +530,11 @@ if [ -n "$TRAY_SRC" ]; then
     install -Dm644 "$TRAY_DATA/vinoauthface-tray.desktop" /usr/local/share/applications/vinoauthface-tray.desktop
     install -Dm644 "$TRAY_DATA/vinoauthface-enrol.desktop" /usr/local/share/applications/vinoauthface-enrol.desktop
     install -Dm644 "$TRAY_DATA/vinoauthface.svg" /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
+    # The tray asks for these by name so Plasma recolours them to the panel.
+    for icon in vinoauthface vinoauthface-scanning vinoauthface-attention; do
+        install -Dm644 "$TRAY_DATA/$icon-symbolic.svg" \
+            "/usr/local/share/icons/hicolor/symbolic/apps/$icon-symbolic.svg"
+    done
     if command -v restorecon &>/dev/null; then
         restorecon "$BIN_DIR/face-auth-tray" /usr/local/libexec/face-auth-helper \
             "$POLKIT_ACTIONS_DIR/io.github.karanshukla.vinoauthface.policy" 2>/dev/null || true
@@ -476,6 +547,7 @@ fi
 
 # ---- OpenVINO runtime libraries (ovfetch and archive installs) ----
 if [ -n "$OV_STAGE" ]; then
+    step "installing the OpenVINO runtime"
     # Also clears a tarball copy an older deploy left here.
     rm -rf "$OPENVINO_INSTALL_DIR"
     install -d -o root -g root -m 0755 "$OPENVINO_INSTALL_DIR"
@@ -535,7 +607,7 @@ verify() {
 # fetch <url> <dest> <manual-recovery-hint>
 fetch() {
     local url="$1" dest="$2" hint="$3"
-    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+    curl "${CURL_FLAGS[@]}" --retry 5 --retry-delay 2 --retry-all-errors \
          --connect-timeout 20 -o "$dest" "$url" && return 0
 
     fail "Download failed after retries: $url" \
@@ -590,6 +662,29 @@ if [ -f "$CONFIG_DIR/face-auth.toml" ]; then
 else
     install -Dm644 config/face-auth.toml.example "$CONFIG_DIR/face-auth.toml"
     CONF_STATE="installed"
+fi
+
+# An existing config keeps every value it has, so a setting a newer release
+# adds would stay invisible. Append the ones it lacks as commented-out
+# defaults, copied from the example: nothing changes until someone edits them.
+if [ "$CONF_STATE" = kept ]; then
+    NEW_KEYS=() NEW_LINES=()
+    while read -r key; do
+        grep -qE "^#? ?$key ?=" "$CONFIG_DIR/face-auth.toml" && continue
+        NEW_KEYS+=("$key")
+        NEW_LINES+=("# ${key} = $(grep -m1 -E "^#? ?$key ?= " config/face-auth.toml.example | sed -E 's/^#? ?[a-z0-9_]+ = //')")
+    done < <(sed -nE 's/^#? ?([a-z][a-z0-9_]*) = .*/\1/p' config/face-auth.toml.example | sort -u)
+    if [ "${#NEW_KEYS[@]}" -gt 0 ]; then
+        CONF="$CONFIG_DIR/face-auth.toml"
+        [ -s "$CONF" ] && [ "$(tail -c1 "$CONF" | wc -l)" -eq 0 ] && echo >> "$CONF"
+        {
+            echo
+            echo "# Added by deploy.sh: newer settings, at their defaults. See"
+            echo "# config/face-auth.toml.example for what each does."
+            printf '%s\n' "${NEW_LINES[@]}"
+        } >> "$CONF"
+        ok Config "added ${#NEW_KEYS[@]} new settings to $CONF as commented defaults: ${NEW_KEYS[*]}"
+    fi
 fi
 
 # Point model_path at the model installed this run. Only touched for a
@@ -737,6 +832,7 @@ fi
 
 # ---- SELinux policy (for lock screen) ----
 if command -v checkmodule &>/dev/null && command -v semodule_package &>/dev/null; then
+    step "loading the SELinux policy (semodule can take 10-30 seconds)"
     mkdir -p "$SELINUX_DIR"
     cp selinux/face-auth.te "$SELINUX_DIR/face_auth.te"
     checkmodule -M -m -o "$SELINUX_DIR/face_auth.mod" "$SELINUX_DIR/face_auth.te"
@@ -775,6 +871,7 @@ install -d -o root -g root -m 0755 "$NPU_CACHE_DIR"
 # Refill it now, as root. Left empty, every lock-screen unlock would compile
 # both models on the CPU until the next sudo or polkit prompt.
 if [ "$NPU_ACTIVE" = 1 ]; then
+    step "compiling the models for the NPU"
     if WARM="$("$BIN_DIR/face-auth" --warm-cache 2>&1)"; then
         ok "NPU cache" "$WARM"
     else

@@ -22,7 +22,7 @@ the release's `SHA256SUMS`. Build from source for an unreleased change or the NP
 | Build | Picks the first that applies | OpenVINO + cargo: NPU build. Prebuilt binaries in `target/`: use them (`FACE_AUTH_FORCE_BUILD=1` to rebuild). Cargo: static musl build. Otherwise: download and checksum-verify the release binaries |
 | Binaries | Installs to `/usr/local/bin` | `face-auth` (set-group-ID `face-auth`, see [security.md](security.md#trust-model)) and `face-enroll` |
 | Models | Downloads and SHA-256 verifies | Recognition model (`w600k_mbf.onnx` by default) and the `version-slim-320.onnx` detector, to `/usr/local/share/face-auth/`. A copy in `models/` is used first, and verified too |
-| Config | Installs default config | `/etc/face-auth.toml`, kept if it already exists |
+| Config | Installs default config | `/etc/face-auth.toml`, kept if it already exists; the deploy appends any settings from `config/face-auth.toml.example` it lacks, commented out at their defaults |
 | PAM | Patches PAM service files | See [pam.md](pam.md). Each file is backed up with a `.face-auth.bak` suffix |
 | Bitwarden | Only if installed | Adds Bitwarden's polkit unlock action |
 | SELinux | Compiles and loads policy | Allows `xdm_t` to mmap the camera for lock-screen auth |

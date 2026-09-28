@@ -32,6 +32,11 @@ impl Shape {
         }
     }
 
+    fn svg_path(self) -> String {
+        let Shape { x, y, w, h, .. } = self;
+        format!("M{x} {y}h{w}v{h}h-{w}z")
+    }
+
     fn svg_rect(self, paint: &str) -> String {
         let Shape { x, y, w, h, r } = self;
         format!(r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{r}" {paint}/>"#)
@@ -124,6 +129,29 @@ const SMALL: Grid = Grid {
     size: 16.0,
 };
 
+/// 16-unit design for the symbolic tray icon, which has no tile: the
+/// viewfinder fills the icon like vinoWhisper's outline does, instead of
+/// sitting in the middle of it with a wide margin.
+const SYMBOLIC: Grid = Grid {
+    tile: Shape::new(0.0, 0.0, 16.0, 16.0, 0.0),
+    edge: 0.0,
+    marks: &[
+        (Shape::new(1.0, 1.0, 4.0, 1.0, 0.0), Part::Bracket),
+        (Shape::new(1.0, 1.0, 1.0, 4.0, 0.0), Part::Bracket),
+        (Shape::new(11.0, 1.0, 4.0, 1.0, 0.0), Part::Bracket),
+        (Shape::new(14.0, 1.0, 1.0, 4.0, 0.0), Part::Bracket),
+        (Shape::new(1.0, 14.0, 4.0, 1.0, 0.0), Part::Bracket),
+        (Shape::new(1.0, 11.0, 1.0, 4.0, 0.0), Part::Bracket),
+        (Shape::new(11.0, 14.0, 4.0, 1.0, 0.0), Part::Bracket),
+        (Shape::new(14.0, 11.0, 1.0, 4.0, 0.0), Part::Bracket),
+        (Shape::new(5.0, 4.0, 2.0, 3.0, 0.0), Part::Feature),
+        (Shape::new(9.0, 4.0, 2.0, 3.0, 0.0), Part::Feature),
+        (Shape::new(5.0, 11.0, 6.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(3.0, 8.0, 10.0, 1.0, 0.0), Part::ScanLine),
+    ],
+    size: 16.0,
+};
+
 fn hex(Rgba(r, g, b, _): Rgba) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
 }
@@ -147,6 +175,54 @@ pub fn app_svg() -> String {
     for &(shape, part) in LARGE.marks {
         if let Some(color) = paint(State::Ready, part) {
             line(shape.svg_rect(&format!(r#"fill="{}""#, hex(color))));
+        }
+    }
+    svg.push_str("</svg>\n");
+    svg
+}
+
+impl State {
+    pub const ALL: [State; 3] = [State::Ready, State::Scanning, State::Attention];
+
+    /// The themed icon name the tray asks for, as vinoWhisper's tray does:
+    /// Plasma recolours a `-symbolic` icon to the panel's text colour, and the
+    /// pixmaps below are only the fallback when the theme has none.
+    pub fn icon_name(self) -> &'static str {
+        match self {
+            State::Ready => "vinoauthface-symbolic",
+            State::Scanning => "vinoauthface-scanning-symbolic",
+            State::Attention => "vinoauthface-attention-symbolic",
+        }
+    }
+}
+
+/// A monochrome tray icon for one state, in the KDE symbolic format: the
+/// `ColorScheme-Text` class is what Plasma recolours. The viewfinder follows
+/// the theme; the accent (green face, amber scan) stays fixed.
+pub fn symbolic_svg(state: State) -> String {
+    let (mut text, mut accent, mut dim) = (String::new(), String::new(), String::new());
+    for &(shape, part) in SYMBOLIC.marks {
+        let bucket = match (state, part) {
+            (State::Ready, Part::Feature) | (State::Scanning, Part::Bracket | Part::ScanLine) => &mut accent,
+            (State::Attention, _) => &mut dim,
+            (_, Part::ScanLine) => continue,
+            _ => &mut text,
+        };
+        bucket.push_str(&shape.svg_path());
+    }
+    let accent_fill = hex(if state == State::Ready { GREEN } else { AMBER });
+    let mut svg = String::from(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\">\n  \
+         <style id=\"current-color-scheme\" type=\"text/css\">.ColorScheme-Text { color: #232629; }</style>\n",
+    );
+    for (path, style) in [
+        (text, "fill:currentColor".to_string()),
+        (dim, "fill:currentColor;fill-opacity:0.5".to_string()),
+        (accent, format!("fill:{accent_fill}")),
+    ] {
+        if !path.is_empty() {
+            let class = if style.contains("currentColor") { r#" class="ColorScheme-Text""# } else { "" };
+            svg.push_str(&format!("  <path{class} style=\"{style}\" d=\"{path}\"/>\n"));
         }
     }
     svg.push_str("</svg>\n");
@@ -187,7 +263,7 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    const STATES: [State; 3] = [State::Ready, State::Scanning, State::Attention];
+    const STATES: [State; 3] = State::ALL;
 
     #[test]
     fn every_size_is_a_complete_argb_image() {
@@ -215,7 +291,7 @@ mod tests {
 
     #[test]
     fn the_marks_sit_inside_the_tile() {
-        for grid in [&LARGE, &SMALL] {
+        for grid in [&LARGE, &SMALL, &SYMBOLIC] {
             let inner = grid.tile.inset(grid.edge);
             for (m, _) in grid.marks {
                 assert!(
@@ -232,7 +308,7 @@ mod tests {
 
     #[test]
     fn the_face_and_scan_line_do_not_touch_the_brackets_or_each_other() {
-        for grid in [&LARGE, &SMALL] {
+        for grid in [&LARGE, &SMALL, &SYMBOLIC] {
             for (i, (a, part)) in grid.marks.iter().enumerate() {
                 if *part == Part::Bracket {
                     continue;
@@ -247,7 +323,7 @@ mod tests {
 
     #[test]
     fn the_small_icon_lands_on_whole_pixels() {
-        let shapes = std::iter::once(SMALL.tile).chain(SMALL.marks.iter().map(|(s, _)| *s));
+        let shapes = std::iter::once(SMALL.tile).chain(SMALL.marks.iter().chain(SYMBOLIC.marks).map(|(s, _)| *s));
         for s in shapes {
             for edge in [s.x, s.y, s.w, s.h, SMALL.edge] {
                 assert_eq!(edge.fract(), 0.0, "{s:?} is off the pixel grid");
@@ -256,17 +332,22 @@ mod tests {
     }
 
     #[test]
-    fn the_checked_in_icon_is_the_one_drawn_here() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/vinoauthface.svg");
-        let svg = app_svg();
-        if std::env::var_os("FACE_AUTH_BLESS_ICONS").is_some() {
-            std::fs::write(&path, &svg).unwrap();
+    fn the_checked_in_icons_are_the_ones_drawn_here() {
+        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("data");
+        let bless = std::env::var_os("FACE_AUTH_BLESS_ICONS").is_some();
+        let mut icons = vec![("vinoauthface.svg".to_string(), app_svg())];
+        icons.extend(STATES.map(|s| (format!("{}.svg", s.icon_name()), symbolic_svg(s))));
+        for (name, svg) in icons {
+            let path = data.join(name);
+            if bless {
+                std::fs::write(&path, &svg).unwrap();
+            }
+            let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(
+                on_disk == svg,
+                "{} is stale; regenerate it with FACE_AUTH_BLESS_ICONS=1 cargo test -p face-auth-tray",
+                path.display()
+            );
         }
-        let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
-        assert!(
-            on_disk == svg,
-            "{} is stale; regenerate it with FACE_AUTH_BLESS_ICONS=1 cargo test -p face-auth-tray",
-            path.display()
-        );
     }
 }
