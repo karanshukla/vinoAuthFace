@@ -414,35 +414,50 @@ if [ ! -f "$PAM_DIR/polkit-1" ] && [ -f /usr/lib/pam.d/polkit-1 ]; then
     touch "$PAM_DIR/.face-auth-polkit-1-created"
 fi
 
+# A face match ends the auth stack, so the line goes just above the first
+# module that actually authenticates. Gates above that (pam_nologin,
+# pam_faillock preauth, pam_selinux_permit) stay in front of it.
+PAM_AUTHENTICATOR='^[[:space:]]*-?auth[[:space:]]+(include|substack)[[:space:]]|^[[:space:]]*-?auth[[:space:]].*pam_(unix|sss|fprintd|u2f)|^[[:space:]]*@include[[:space:]]'
+
+# Stacks this file pulls its auth lines from, one level deep.
+pam_included_stacks() {
+    awk '$1 ~ /^-?auth$/ && ($2 == "include" || $2 == "substack") { print $3 }
+         $1 == "@include" { print $2 }' "$1"
+}
+
 for service in sudo swaylock gdm-password polkit-1 kde-fingerprint; do
     conf="$PAM_DIR/$service"
     if [ ! -f "$conf" ]; then
         echo "Warning: $conf not found, skipping"
         continue
     fi
-    cp "$conf" "$conf.face-auth.bak"
 
-    if [ "$service" = "kde-fingerprint" ]; then
-        # KScreenLocker's non-interactive slot, started alongside the password
-        # field. No #%PAM-1.0 header here: go in above the first auth line.
-        sed -i "0,/^auth/s|^auth|$PAM_LINE\n&|" "$conf"
-    elif [ "$service" = "gdm-password" ] && grep -q "pam_selinux_permit\.so" "$conf"; then
-        # Insert after pam_selinux_permit.so (Fedora lock screen)
-        sed -i "/^auth.*pam_selinux_permit\.so\$/a $PAM_LINE" "$conf"
-    else
-        # Insert after #%PAM-1.0, which must remain the first line
-        sed -i "/^#%PAM-1\.0/a $PAM_LINE" "$conf"
+    # A face-auth line in an included stack (added by hand, an authselect
+    # profile, an older install) already covers this service. A second one
+    # would scan the camera twice per attempt.
+    covered_by=""
+    for stack in $(pam_included_stacks "$conf"); do
+        if [ -f "$PAM_DIR/$stack" ] && grep -q "pam_exec\.so.*face-auth" "$PAM_DIR/$stack"; then
+            covered_by="$PAM_DIR/$stack"
+            break
+        fi
+    done
+    if [ -n "$covered_by" ]; then
+        echo "Skipping $conf: $covered_by already runs face-auth"
+        continue
     fi
 
-    # sed silently does nothing when the anchor is absent, which would leave
-    # the service unconfigured while the script still reported success.
-    if grep -q "pam_exec\.so.*face-auth" "$conf"; then
-        echo "Updated $conf (backup at $conf.face-auth.bak)"
-    else
-        echo "Warning: could not find an insertion point in $conf."
-        echo "         Add this line manually, after the first line:"
+    line_no=$(grep -nE "$PAM_AUTHENTICATOR" "$conf" | head -n1 | cut -d: -f1)
+    if [ -z "$line_no" ]; then
+        echo "Warning: no authenticating auth line found in $conf."
+        echo "         Add this line manually, above the module that asks for the password:"
         echo "           $PAM_LINE"
+        continue
     fi
+
+    cp "$conf" "$conf.face-auth.bak"
+    sed -i "${line_no}i $PAM_LINE" "$conf"
+    echo "Updated $conf (backup at $conf.face-auth.bak)"
 done
 
 # ---- Bitwarden polkit action (only if Bitwarden is installed) ----

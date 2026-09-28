@@ -2,13 +2,22 @@
 
 `deploy.sh` adds `auth sufficient pam_exec.so quiet /usr/local/bin/face-auth` to:
 
-| Service | File | Insertion point | Covers |
-|---------|------|-----------------|--------|
-| `sudo` | `/etc/pam.d/sudo` | After `#%PAM-1.0` | sudo |
-| `gdm-password` | `/etc/pam.d/gdm-password` | After `pam_selinux_permit.so` (Fedora), else after `#%PAM-1.0` (Ubuntu/Debian) | GNOME lock screen |
-| `swaylock` | `/etc/pam.d/swaylock` | After `#%PAM-1.0` | swaylock |
-| `polkit-1` | `/etc/pam.d/polkit-1` | After `#%PAM-1.0` | polkit prompts |
-| `kde-fingerprint` | `/etc/pam.d/kde-fingerprint` | Above the first `auth` line | KDE lock screen |
+| Service | File | Covers |
+|---------|------|--------|
+| `sudo` | `/etc/pam.d/sudo` | sudo |
+| `gdm-password` | `/etc/pam.d/gdm-password` | GNOME lock screen |
+| `swaylock` | `/etc/pam.d/swaylock` | swaylock |
+| `polkit-1` | `/etc/pam.d/polkit-1` | polkit prompts |
+| `kde-fingerprint` | `/etc/pam.d/kde-fingerprint` | KDE lock screen |
+
+The line goes just above the first `auth` line that actually authenticates: `pam_unix`,
+`pam_sss`, `pam_fprintd`, `pam_u2f`, or an `include`/`substack`/`@include` of another stack.
+Gates above that point, like `pam_nologin`, `pam_faillock preauth` and Fedora's
+`pam_selinux_permit`, still run before a face match can end the stack. Gates inside an included
+stack (Fedora's `system-auth`, say) don't.
+
+If a stack the service includes already runs face-auth (added by hand, an authselect profile,
+an older install), `deploy.sh` skips the service rather than scan the camera twice per attempt.
 
 `sufficient` means a face match (exit 0) authenticates immediately. Anything else (no match, no
 camera, timeout, lockout) falls through to the password prompt. `quiet` keeps `pam_exec` chatter
