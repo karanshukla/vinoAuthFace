@@ -118,7 +118,9 @@ build_with_cargo() {
 #           profile, so the runtime libraries are copied system-wide below.
 ACTUAL_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
 OPENVINO_MODE=""
-OVFETCH_MIN="0.2.0"
+# 0.2.2 installs every SONAME link. Before it, TBB loaded libtbbmalloc.so.2
+# from wherever else the system had one.
+OVFETCH_MIN="0.2.2"
 
 # secure_path drops ~/.cargo/bin under sudo, the same as for cargo.
 find_ovfetch() {
@@ -142,7 +144,11 @@ if OVFETCH_BIN="$(find_ovfetch)"; then
     # Run as the user: resolving and downloading need no privileges. The plan
     # is reused below to install exactly what was checked here.
     if OVFETCH_PLAN="$(as_user "$OVFETCH_BIN" resolve --json)"; then
-        if [ "${CONF_NPU_DEVICE:-NPU}" = "NPU" ] && grep -q '"compiler_present": false' <<<"$OVFETCH_PLAN"; then
+        # compiler_present is false on a machine with no NPU at all too, where
+        # GPU or CPU can still use the OpenVINO build.
+        if [ "${CONF_NPU_DEVICE:-NPU}" = "NPU" ] \
+           && as_user "$OVFETCH_BIN" detect | grep -q '"kind": "npu"' \
+           && grep -q '"compiler_present": false' <<<"$OVFETCH_PLAN"; then
             # Every compile_model would fail with ZE_RESULT_ERROR_UNSUPPORTED_FEATURE,
             # and every unlock would silently fall through to the password.
             echo "Warning: the installed NPU driver has no compiler library, so OpenVINO"
