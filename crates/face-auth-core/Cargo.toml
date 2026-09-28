@@ -18,8 +18,8 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.8"
-nix = { version = "0.28", features = ["fs"] }
+toml = "1.1"
+nix = { version = "0.31", features = ["fs"] }
 libc = "0.2"
 openvino = { workspace = true, optional = true }
 
