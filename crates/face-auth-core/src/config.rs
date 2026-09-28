@@ -38,6 +38,7 @@ pub struct FaceAuthConfig {
     pub lockout_threshold: Option<u32>,
     pub lockout_base_delay_ms: Option<u64>,
     pub lockout_max_delay_ms: Option<u64>,
+    pub seat_check: Option<bool>,
 }
 
 impl Default for FaceAuthConfig {
@@ -60,6 +61,7 @@ impl Default for FaceAuthConfig {
             lockout_threshold: None,
             lockout_base_delay_ms: None,
             lockout_max_delay_ms: None,
+            seat_check: None,
         }
     }
 }
@@ -367,6 +369,12 @@ impl FaceAuthConfig {
             );
         }
         Ok(())
+    }
+
+    /// Only authenticate the user who owns the active seat0 session. See
+    /// `seat::check`.
+    pub fn seat_check(&self) -> bool {
+        self.seat_check.unwrap_or(true)
     }
 
     pub fn lockout_policy(&self) -> crate::lockout::LockoutPolicy {

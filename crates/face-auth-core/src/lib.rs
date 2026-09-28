@@ -5,6 +5,7 @@ pub mod error;
 pub mod inference;
 pub mod lockout;
 pub mod preprocess;
+pub mod seat;
 pub mod storage;
 pub mod user;
 pub mod verify;

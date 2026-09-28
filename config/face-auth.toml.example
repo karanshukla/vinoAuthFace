@@ -14,7 +14,8 @@
 #   scan_duration_ms, scan_interval_ms, capture_timeout_ms
 #                                   honoured within built-in bounds
 #   model_path, detector_model_path, embeddings_dir,
-#   pinned_camera_*, lockout_*, backend, npu_device
+#   pinned_camera_*, lockout_*, backend, npu_device,
+#   seat_check
 #                                   ignored — system policy only
 #
 # FACE_AUTH_* environment variables affect face-enroll and the settings GUI.
@@ -73,6 +74,12 @@ scan_interval_ms = 0
 # lockout_threshold = 5          # failures allowed before any cooldown
 # lockout_base_delay_ms = 2000   # first cooldown, doubles per further failure
 # lockout_max_delay_ms = 300000  # cooldown ceiling
+
+# Only authenticate the account that owns the active session on seat0 (any
+# account while seat0 shows a login greeter). Stops a sudo in a background or
+# fast-switched session matching whoever is at the camera. Skipped on systems
+# without logind. System policy only.
+# seat_check = true
 
 # Motion liveness (0.0 - 1.0, default 0.01). During a scan, a match is only
 # accepted once at least this fraction of pixels has changed between two
