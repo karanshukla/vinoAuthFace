@@ -561,16 +561,26 @@ fi
 echo ""
 echo "=== Install complete! ==="
 echo ""
-echo "Enrol your face (enrolment writes a root-owned store, so it needs sudo):"
+if [ -f "$VAR_DIR/$ACTUAL_USER/embeddings.bin" ]; then
+    echo "$ACTUAL_USER is already enrolled (templates kept). To re-enrol:"
+else
+    echo "Enrol your face (enrolment writes a root-owned store, so it needs sudo):"
+fi
 echo ""
 echo "  sudo face-enroll --user $ACTUAL_USER"
 echo ""
 echo "Then test:"
 echo "  sudo -k && sudo true    # should authenticate via face"
-echo "  (lock screen: Super+L, then press a key to unlock)"
+echo "  (lock screen: Super+L, then look at the camera)"
 echo ""
-echo "Once enrolment and a test unlock both work, pin the camera so a spoofed"
-echo "USB device claiming the same VID/PID cannot inject frames:"
-echo "  sudo ./pin-camera.sh /dev/videoN   (face-enroll prints the exact command)"
+PINNED="$(sed -n 's/^pinned_camera_path *= *"\(.*\)"/\1/p' "$CONF" 2>/dev/null | head -1)"
+if [ -n "$PINNED" ]; then
+    echo "Camera is pinned to $PINNED."
+    echo "Re-run pin-camera.sh only if you replace or move the camera on purpose."
+else
+    echo "Once enrolment and a test unlock both work, pin the camera so a spoofed"
+    echo "USB device claiming the same VID/PID cannot inject frames:"
+    echo "  sudo ./pin-camera.sh /dev/videoN   (face-enroll prints the exact command)"
+fi
 echo ""
 echo "To uninstall: sudo ./uninstall.sh"
