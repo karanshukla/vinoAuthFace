@@ -3,7 +3,7 @@ use crate::user::validate_username;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 /// v1: version, count, dim, embeddings. No model identity. Still readable so
@@ -27,9 +27,30 @@ const MAX_MODEL_TAG_LEN: u32 = 255;
 /// several `--improve` passes.
 const MAX_EMBEDDINGS: u32 = 256;
 
-/// Biometric templates. Readable only by root — see `deploy.sh`.
-pub(crate) const EMBEDDINGS_FILE_MODE: u32 = 0o600;
-pub(crate) const EMBEDDINGS_DIR_MODE: u32 = 0o700;
+/// Biometric templates: root-owned, readable by the `face-auth` group that the
+/// set-group-ID `face-auth` binary runs with, never writable by it. The
+/// set-group-ID bit on the directories makes new entries inherit that group.
+/// See `deploy.sh`.
+pub(crate) const EMBEDDINGS_FILE_MODE: u32 = 0o640;
+pub(crate) const EMBEDDINGS_DIR_MODE: u32 = 0o2750;
+/// The one place the group may write: lockout state, which lock screens
+/// running as the user have to update.
+pub(crate) const LOCKOUT_DIR_MODE: u32 = 0o2770;
+pub(crate) const LOCKOUT_FILE_MODE: u32 = 0o660;
+
+pub(crate) fn lockout_dir(user_dir: &Path) -> PathBuf {
+    user_dir.join("lockout")
+}
+
+/// mkdir(2) ignores the set-group-ID bit in its mode argument and the umask
+/// strips group bits, so the mode is applied explicitly after creation.
+pub(crate) fn ensure_dir(path: &Path, mode: u32) -> std::io::Result<()> {
+    match fs::DirBuilder::new().mode(mode).create(path) {
+        Ok(()) => fs::set_permissions(path, fs::Permissions::from_mode(mode)),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(e),
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct EmbeddingStore {
@@ -121,10 +142,13 @@ impl EmbeddingStore {
         }
 
         let user_dir = user_store_dir(user, embeddings_dir)?;
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(EMBEDDINGS_DIR_MODE)
-            .create(&user_dir)?;
+        if let Some(parent) = user_dir.parent() {
+            fs::DirBuilder::new().recursive(true).mode(EMBEDDINGS_DIR_MODE).create(parent)?;
+        }
+        ensure_dir(&user_dir, EMBEDDINGS_DIR_MODE)?;
+        // Created here, by root at enrolment, because the group cannot create
+        // entries in the user directory itself.
+        ensure_dir(&lockout_dir(&user_dir), LOCKOUT_DIR_MODE)?;
 
         let tmp_path = user_dir.join("embeddings.bin.tmp");
         let path = user_dir.join("embeddings.bin");
@@ -136,6 +160,7 @@ impl EmbeddingStore {
                 .truncate(true)
                 .mode(EMBEDDINGS_FILE_MODE)
                 .open(&tmp_path)?;
+            file.set_permissions(fs::Permissions::from_mode(EMBEDDINGS_FILE_MODE))?;
             let mut writer = BufWriter::new(file);
 
             writer.write_u32::<LittleEndian>(EMBEDDING_VERSION)?;
@@ -222,15 +247,10 @@ mod tests {
         store.add_embedding(sample(0.1));
         store.save("alice", &dir, TAG).unwrap();
 
-        let file_mode = fs::metadata(dir.join("alice/embeddings.bin"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(file_mode, EMBEDDINGS_FILE_MODE);
-
-        let dir_mode = fs::metadata(dir.join("alice")).unwrap().permissions().mode() & 0o777;
-        assert_eq!(dir_mode, EMBEDDINGS_DIR_MODE);
+        let mode = |p: &str| fs::metadata(dir.join(p)).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode("alice/embeddings.bin"), 0o640, "group reads, never writes");
+        assert_eq!(mode("alice"), 0o2750, "group cannot add or replace templates");
+        assert_eq!(mode("alice/lockout"), 0o2770, "lockout is the only group-writable place");
         fs::remove_dir_all(&dir).unwrap();
     }
 

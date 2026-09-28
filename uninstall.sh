@@ -84,7 +84,7 @@ rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/face-auth-gtk"
 rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/gnome-shell/extensions/authface-scan-indicator@samvivan.local"
 
 echo "Restoring PAM configs..."
-for service in sudo swaylock gdm-password polkit-1; do
+for service in sudo swaylock gdm-password polkit-1 kde-fingerprint; do
     conf="$PAM_DIR/$service"
     if [ "$service" = polkit-1 ] && [ -f "$PAM_DIR/.face-auth-polkit-1-created" ]; then
         # deploy.sh created this override from the vendor default; removing
@@ -112,6 +112,8 @@ echo ""
 if [ "$PURGE" = true ]; then
     echo "Removing user embeddings..."
     rm -rf /var/lib/face-auth/
+    # The group only exists for the store; with the store gone nothing owns it.
+    getent group face-auth >/dev/null && groupdel face-auth
     echo "Uninstall complete (including user embeddings)."
 else
     echo "Uninstall complete!"

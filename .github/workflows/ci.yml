@@ -95,9 +95,11 @@ jobs:
         run: |
           sudo ./deploy.sh
           test -x /usr/local/bin/face-auth
+          test -g /usr/local/bin/face-auth
+          test "$(stat -c %G /usr/local/bin/face-auth)" = face-auth
           test -x /usr/local/bin/face-enroll
           grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/sudo
-          test "$(stat -c %a /var/lib/face-auth)" = 700
+          test "$(stat -c %a /var/lib/face-auth)" = 2750
 
       - name: Reset install
         run: sudo ./uninstall.sh

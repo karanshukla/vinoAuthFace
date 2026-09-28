@@ -1,20 +1,23 @@
 //! Per-user backoff after repeated face-match failures.
 //!
-//! Each `face-auth` run is a fresh process, so state lives in `lockout.bin`
-//! next to the user's templates. This only throttles the *face* factor: PAM's
+//! Each `face-auth` run is a fresh process, so state lives in
+//! `<store>/<user>/lockout/state.bin`. That directory is the only part of the
+//! store the set-group-ID `face-auth` binary can write, because lock screens
+//! run it as the user and it still has to record their failures. This only throttles the *face* factor: PAM's
 //! `sufficient` line still falls through to the password, so nobody can be
 //! locked out of their machine. What it bounds is how fast a scripted loop of
 //! spoof attempts (`sudo -k; sudo true` in a loop) can retry.
 
-use crate::storage::{user_store_dir, EMBEDDINGS_DIR_MODE, EMBEDDINGS_FILE_MODE};
+use crate::storage::{ensure_dir, lockout_dir, user_store_dir, LOCKOUT_DIR_MODE, LOCKOUT_FILE_MODE};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const LOCKOUT_VERSION: u32 = 1;
+const STATE_FILE: &str = "state.bin";
 
 #[derive(Debug, Clone, Copy, Default)]
 struct LockoutState {
@@ -48,7 +51,7 @@ impl LockoutState {
         let Ok(dir) = user_store_dir(user, embeddings_dir) else {
             return Self::default();
         };
-        let Ok(file) = File::open(dir.join("lockout.bin")) else {
+        let Ok(file) = File::open(lockout_dir(&dir).join(STATE_FILE)) else {
             return Self::default();
         };
         let mut reader = BufReader::new(file);
@@ -65,16 +68,29 @@ impl LockoutState {
 
     fn save(&self, user: &str, embeddings_dir: &Path) -> anyhow::Result<()> {
         let user_dir = user_store_dir(user, embeddings_dir)?;
-        fs::DirBuilder::new().recursive(true).mode(EMBEDDINGS_DIR_MODE).create(&user_dir)?;
+        if !user_dir.is_dir() {
+            // Nobody enrolled under this name. The user directory is created
+            // only by enrolment, and the group could not create it anyway.
+            anyhow::bail!("no store for '{user}'");
+        }
+        let dir = lockout_dir(&user_dir);
+        // Stores enrolled before the lockout directory existed get it here when
+        // running as root; the group alone gets a permission error.
+        ensure_dir(&dir, LOCKOUT_DIR_MODE)?;
 
-        let tmp_path = user_dir.join("lockout.bin.tmp");
+        // Unique and never followed: the directory is group-writable, so a
+        // fixed name could be pre-created or pointed elsewhere.
+        let tmp_path = dir.join(format!("{STATE_FILE}.{}.tmp", std::process::id()));
+        let _ = fs::remove_file(&tmp_path);
         {
             let file = OpenOptions::new()
                 .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(EMBEDDINGS_FILE_MODE)
+                .create_new(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .mode(LOCKOUT_FILE_MODE)
                 .open(&tmp_path)?;
+            // The umask strips the group bits from the create mode.
+            file.set_permissions(fs::Permissions::from_mode(LOCKOUT_FILE_MODE))?;
             let mut writer = BufWriter::new(file);
             writer.write_u32::<LittleEndian>(LOCKOUT_VERSION)?;
             writer.write_u32::<LittleEndian>(self.failures)?;
@@ -82,10 +98,10 @@ impl LockoutState {
             writer.flush()?;
             writer.get_ref().sync_all()?;
         }
-        fs::rename(&tmp_path, user_dir.join("lockout.bin"))?;
+        fs::rename(&tmp_path, dir.join(STATE_FILE))?;
         // Persist the rename itself.
-        if let Ok(dir) = File::open(&user_dir) {
-            let _ = dir.sync_all();
+        if let Ok(d) = File::open(&dir) {
+            let _ = d.sync_all();
         }
         Ok(())
     }
@@ -185,13 +201,15 @@ mod tests {
     #[test]
     fn failures_persist_and_success_resets() {
         let dir = tmpdir("persist");
+        fs::create_dir_all(dir.join("alice")).unwrap();
         for _ in 0..3 {
             record_failure("alice", &dir).unwrap();
         }
         assert_eq!(LockoutState::load("alice", &dir).failures, 3);
 
-        let mode = fs::metadata(dir.join("alice/lockout.bin")).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, EMBEDDINGS_FILE_MODE);
+        let mode = |p: &str| fs::metadata(dir.join(p)).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode("alice/lockout/state.bin"), 0o660);
+        assert_eq!(mode("alice/lockout"), 0o2770);
 
         record_success("alice", &dir).unwrap();
         assert_eq!(LockoutState::load("alice", &dir).failures, 0);

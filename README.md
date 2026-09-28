@@ -181,13 +181,13 @@ sudo ./deploy.sh
 | Step | What | Details |
 |------|------|---------|
 | Build | Picks the first that applies | OpenVINO + cargo: NPU build. Prebuilt binaries in `target/`: use them (`FACE_AUTH_FORCE_BUILD=1` to rebuild). Cargo: static musl build. Otherwise: download and checksum-verify the release binaries |
-| Binaries | Installs to `/usr/local/bin` | `face-auth` + `face-enroll` |
+| Binaries | Installs to `/usr/local/bin` | `face-auth` (set-group-ID `face-auth`, so lock screens running as the user can read templates; a non-root caller can only authenticate itself) + `face-enroll` |
 | Models | Downloads and SHA-256 verifies | Recognition model (`w600k_mbf.onnx` by default) and `version-slim-320.onnx` detector, to `/usr/local/share/face-auth/`. A copy in `models/` is used first, and verified too |
 | Config | Installs default config | `/etc/face-auth.toml`, kept if it already exists |
-| PAM | Patches PAM service files | Adds `sufficient` `pam_exec.so quiet` to `sudo`, `gdm-password`, `swaylock`, `polkit-1` |
+| PAM | Patches PAM service files | Adds `sufficient` `pam_exec.so quiet` to `sudo`, `gdm-password`, `swaylock`, `polkit-1`, `kde-fingerprint` |
 | Bitwarden | Only if installed | Adds Bitwarden's polkit unlock action |
 | SELinux | Compiles and loads policy | Allows `xdm_t` to mmap camera for lock-screen auth |
-| Storage | Secures template store | `/var/lib/face-auth`, root-owned `0700`, templates `0600`. An existing store is re-secured in place |
+| Storage | Secures template store | `/var/lib/face-auth`, `root:face-auth` `2750`, templates `0640`, per-user `lockout/` `2770`. An existing store is re-secured in place |
 
 GDM lock-screen patching is **distro-aware**: after `pam_selinux_permit.so` on
 Fedora/Bluefin/Silverblue, after `#%PAM-1.0` on Ubuntu/Debian. Each PAM file is backed up with
@@ -270,8 +270,7 @@ Environment variable names follow the field names, so the capture timeout is
 
 ## Enrollment
 
-Face templates live in a root-owned directory (`/var/lib/face-auth`, mode `0700`), so
-enrolment is a privileged operation:
+Face templates are root-owned (`/var/lib/face-auth`), so enrolment is a privileged operation:
 
 ```bash
 # Replace existing templates with a new capture (30 frames)
@@ -305,6 +304,7 @@ The deploy script adds a `sufficient` `pam_exec.so quiet` line to:
 | `gdm-password` | `/etc/pam.d/gdm-password` | After `pam_selinux_permit.so` (Fedora) / after `#%PAM-1.0` (Ubuntu/Debian) |
 | `swaylock` | `/etc/pam.d/swaylock` | After `#%PAM-1.0` |
 | `polkit-1` | `/etc/pam.d/polkit-1` | After `#%PAM-1.0` |
+| `kde-fingerprint` | `/etc/pam.d/kde-fingerprint` | Above the first `auth` line. KScreenLocker runs this slot alongside the password field |
 
 `sufficient` means: if face-auth exits 0, the user is authenticated immediately. If it fails
 (no match, no camera, timeout, lockout), PAM falls through to the password prompt. `quiet`
@@ -334,7 +334,7 @@ screen locks, so there is nothing for face-auth to gate.
 ## How It Works
 
 ```
-PAM (sudo / gdm-password / swaylock / polkit-1)
+PAM (sudo / gdm-password / swaylock / polkit-1 / kde-fingerprint)
   │
   ▼
 face-auth (static binary)
@@ -542,9 +542,15 @@ A user config may only make matching *stricter*. To loosen it, lower `threshold`
 
 ### Trust model
 
-- **Face templates are root-owned.** `/var/lib/face-auth` is mode `0700`, root:root, with
-  templates at `0600`. Whatever can write a template decides whose face unlocks that account, so
-  enrolment goes through `sudo`. Lockout state lives there too, so a user cannot reset it.
+- **Face templates are root-owned.** `/var/lib/face-auth` is `root:face-auth` mode `2750`, with
+  templates at `0640`. Whatever can write a template decides whose face unlocks that account, so
+  enrolment goes through `sudo`.
+- **`face-auth` is set-group-ID `face-auth`, not set-user-ID root.** Lock screens (KScreenLocker,
+  swaylock) run PAM as the user, so the binary borrows a group that can read templates and write
+  only `<user>/lockout/` (`2770`). A bug in it exposes templates and lockout counters, never root.
+  Nothing else has the group, and the store is closed to everyone else, so a user cannot reach
+  their own lockout state to reset it. With borrowed privileges it drops the caller's environment
+  and only lets a non-root caller authenticate itself.
 - **The PAM path trusts only `/etc/face-auth.toml`.** A user's own config may make matching
   stricter, never looser, and may not redirect model or template paths, unpin the camera, or
   lift the lockout. `FACE_AUTH_*` environment variables are ignored during authentication.
@@ -605,7 +611,7 @@ vinoAuthFace/
         lib.rs               # FaceAuth: auth scan (liveness, lockout) + enrolment
         lockout.rs           # Per-user failed-match backoff
         preprocess.rs        # CLAHE, face crop, resize/normalise, motion fraction
-        storage.rs           # Template I/O (versioned, model-tagged, atomic, 0600)
+        storage.rs           # Template I/O (versioned, model-tagged, atomic, 0640)
         user.rs              # NSS lookup + username validation
         verify.rs            # Cosine similarity
       examples/              # detect-camera, frame-stats, bench

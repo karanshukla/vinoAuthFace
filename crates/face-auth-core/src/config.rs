@@ -64,19 +64,35 @@ impl Default for FaceAuthConfig {
     }
 }
 
-/// Read a file, refusing to follow a symlink at the final component.
+const USER_CONFIG_MAX_BYTES: u64 = 64 * 1024;
+
+/// Read a user-owned file, refusing to follow a symlink at the final component.
 ///
 /// Used for config files under a user's home: the authentication helper runs
 /// as root, and a symlink there would otherwise aim root's read at a file the
-/// user cannot open themselves.
-fn read_nofollow(path: &Path) -> std::io::Result<String> {
-    use std::io::Read;
-    let mut file = std::fs::OpenOptions::new()
+/// user cannot open themselves. `O_NOFOLLOW` only covers the last component,
+/// so the owner check catches a symlinked parent (`~/.config -> /root/.config`)
+/// landing on a file the user does not own. `O_NONBLOCK` keeps a FIFO from
+/// hanging PAM.
+fn read_user_file(path: &Path, owner_uid: u32) -> std::io::Result<String> {
+    use std::io::{Error, ErrorKind, Read};
+    use std::os::unix::fs::MetadataExt;
+    let file = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
+    }
+    if meta.uid() != owner_uid {
+        return Err(Error::new(ErrorKind::PermissionDenied, "not owned by the user"));
+    }
+    if meta.len() > USER_CONFIG_MAX_BYTES {
+        return Err(Error::new(ErrorKind::InvalidData, "too large"));
+    }
     let mut buf = String::new();
-    file.read_to_string(&mut buf)?;
+    file.take(USER_CONFIG_MAX_BYTES).read_to_string(&mut buf)?;
     Ok(buf)
 }
 
@@ -375,20 +391,16 @@ fn load_user_overlay(username: &str) -> Option<FaceAuthConfig> {
         .ok()?;
 
     let path = info.home.join(".config/face-auth.toml");
-    let contents = read_nofollow(&path)
-        .map_err(|e| tracing::debug!("no readable user config at {}: {e}", path.display()))
+    let contents = read_user_file(&path, info.uid)
+        .map_err(|e| tracing::debug!("no usable user config at {}: {e}", path.display()))
         .ok()?;
 
-    // Cap the size so a huge or binary file cannot become a parsing problem.
-    if contents.len() > 64 * 1024 {
-        tracing::warn!("user config {} too large, ignoring", path.display());
-        return None;
-    }
-
+    // The parse error is not logged: it quotes the offending line, and under
+    // the set-group-ID lock-screen path the caller reads our stderr.
     match toml::from_str::<FaceAuthConfig>(&contents) {
         Ok(cfg) => Some(cfg),
-        Err(e) => {
-            tracing::warn!("ignoring malformed user config {}: {e}", path.display());
+        Err(_) => {
+            tracing::warn!("ignoring malformed user config {}", path.display());
             None
         }
     }
@@ -397,6 +409,28 @@ fn load_user_overlay(username: &str) -> Option<FaceAuthConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_file_must_be_owned_by_the_user_and_not_a_symlink() {
+        let dir = std::env::temp_dir().join(format!("face-auth-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("face-auth.toml");
+        std::fs::write(&file, "threshold = 0.7\n").unwrap();
+        let link = dir.join("link.toml");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let me = unsafe { libc::getuid() };
+
+        assert!(read_user_file(&file, me).is_ok());
+        assert_eq!(
+            read_user_file(&file, me.wrapping_add(1)).unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "a file owned by someone else must not be read on the user's behalf"
+        );
+        assert!(read_user_file(&link, me).is_err(), "symlink must not be followed");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     fn system_baseline() -> FaceAuthConfig {
         FaceAuthConfig {
