@@ -530,6 +530,24 @@ pub fn name_suggests_ir(name: &str) -> bool {
         .any(|word| word == "ir" || word == "infrared")
 }
 
+/// Is this node a physical sensor streaming native greyscale?
+///
+/// Catches IR sensors whose sysfs name says nothing useful (e.g. a combined
+/// module named "Integrated_Webcam_FHD: Integrat", truncated at 32 bytes).
+/// RGB webcams do not stream GREY or Y16. Virtual nodes are excluded: an
+/// existing v4l2loopback device takes whatever format its writer sets, which
+/// any local user can do.
+fn is_physical_greyscale(path: &str) -> bool {
+    let physical = device_bus_path(path).map_or(false, |p| !p.contains("/virtual/"));
+    physical
+        && query_format(path)
+            .map_or(false, |(_, _, fourcc)| matches!(fourcc, V4L2_PIX_FMT_GREY | V4L2_PIX_FMT_Y16))
+}
+
+fn looks_like_ir(path: &str, name: &str) -> bool {
+    name_suggests_ir(name) || is_physical_greyscale(path)
+}
+
 /// Enumerate IR capture devices, best candidate first.
 ///
 /// UVC cameras commonly expose several `/dev/videoN` nodes under one name —
@@ -545,18 +563,21 @@ pub fn enumerate_ir_cameras() -> Vec<(String, String)> {
                 continue;
             };
             let name = name.trim().to_string();
-            if !name_suggests_ir(&name) {
-                continue;
-            }
             let Some(device_name) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
-            candidates.push((format!("/dev/{}", device_name), name));
+            let path = format!("/dev/{}", device_name);
+            if !looks_like_ir(&path, &name) {
+                continue;
+            }
+            candidates.push((path, name));
         }
     }
-    // Sort numerically: /dev/video9 must order before /dev/video10.
-    candidates.sort_by_key(|(path, _)| {
+    // An explicit IR name ranks ahead of a format-only match; within each,
+    // sort numerically so /dev/video9 orders before /dev/video10.
+    candidates.sort_by_key(|(path, name)| {
         (
+            !name_suggests_ir(name),
             path.trim_start_matches("/dev/video")
                 .parse::<u32>()
                 .unwrap_or(u32::MAX),
@@ -580,7 +601,8 @@ pub fn detect_ir_camera() -> Option<String> {
 ///
 /// Lets an unprivileged setting name *which* IR sensor to use without letting
 /// it name an arbitrary video source: the device must live under `/dev`, carry
-/// an IR-looking name in sysfs, and open as a supported capture node. Selecting
+/// an IR-looking name in sysfs or be a physical greyscale sensor, and open as a
+/// supported capture node. Selecting
 /// among the sensors physically present is a preference; pointing the
 /// authentication camera at some other stream is not.
 pub fn is_ir_capture_device(path: &str) -> bool {
@@ -597,7 +619,7 @@ pub fn is_ir_capture_device(path: &str) -> bool {
     let Ok(name) = std::fs::read_to_string(name_path) else {
         return false;
     };
-    if !name_suggests_ir(name.trim()) {
+    if !looks_like_ir(path, name.trim()) {
         return false;
     }
 
