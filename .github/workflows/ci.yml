@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 # Runs on every push/PR (unlike release.yml, which only fires on version tags). Exercises the
 # things a contributor or a downstream packager would actually rely on: the test suite, building
 # from source, and every branch of deploy.sh's cargo-availability fallback chain — including the
@@ -32,6 +35,9 @@ jobs:
 
       # --locked: build against exactly what's committed in Cargo.lock, erroring loudly if it's
       # out of date instead of silently re-resolving to something never actually tested locally.
+      - name: Syntax-check shell scripts
+        run: bash -n deploy.sh uninstall.sh pin-camera.sh
+
       - name: Run unit tests
         run: cargo test --workspace --locked
 
@@ -64,7 +70,8 @@ jobs:
           sudo ./deploy.sh
           test -x /usr/local/bin/face-auth
           test -x /usr/local/bin/face-enroll
-          grep -q 'pam_exec.so /usr/local/bin/face-auth' /etc/pam.d/sudo
+          grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/sudo
+          test "$(stat -c %a /var/lib/face-auth)" = 700
 
       - name: Reset install
         run: sudo ./uninstall.sh

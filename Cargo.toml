@@ -3,8 +3,8 @@ members = [
     "crates/face-auth-core",
     "crates/face-auth",
     "crates/face-enroll",
-    "crates/face-similarity-check",
     "crates/face-camera-diag",
+    "crates/face-similarity-check",
 ]
 resolver = "2"
 

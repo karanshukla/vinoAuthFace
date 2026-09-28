@@ -1,44 +1,60 @@
+use crate::error::FaceAuthError;
+use crate::user::validate_username;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::Path;
-use crate::error::FaceAuthError;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::path::{Path, PathBuf};
 
-// v1 (legacy): version, count, dim, embeddings — no model identity, produced back when
-// w600k_mbf.onnx was the only recognition model this project supported. Still readable so
-// existing installs aren't broken by this change, but carries no `model_tag` (treated as
-// "unknown model", which `model_tag_matches` always allows — there was nothing to compare
-// against before this).
+/// v1: version, count, dim, embeddings. No model identity. Still readable so
+/// existing installs keep working; loads with `model_tag: None`.
 const EMBEDDING_VERSION_LEGACY: u32 = 1;
-// v2: adds a length-prefixed model_tag string (config's `model_path` basename, e.g.
-// "w600k_mbf.onnx" or "w600k_r50.onnx") right after the header, before the embeddings.
-// Different recognition models produce numerically incompatible embedding spaces despite
-// sharing the same 512-d shape — cosine similarity between them is meaningless, not just
-// less accurate — so this exists to turn "switched model_path, forgot to re-enroll" into a
-// clear error instead of silent, unpredictable match/no-match behavior.
+/// v2: adds a length-prefixed `model_tag` (the recognition model's file name,
+/// e.g. "w600k_mbf.onnx") after the version. Different recognition models
+/// produce incompatible embedding spaces with the same 512-d shape, so
+/// comparing across them yields meaningless similarities rather than an error.
 const EMBEDDING_VERSION: u32 = 2;
 const EMBEDDING_DIM: u32 = 512;
 
-#[derive(Debug, Clone)]
+/// A tag is a file name. Bounded for the same reason as `MAX_EMBEDDINGS`.
+const MAX_MODEL_TAG_LEN: u32 = 255;
+
+/// Upper bound on stored embeddings per user.
+///
+/// `count` is read straight off disk and drives an allocation, so it is
+/// bounded before use: an unbounded `u32` here asks for ~96 GB and aborts
+/// the process. Enrolment adds 30 at a time by default, leaving room for
+/// several `--improve` passes.
+const MAX_EMBEDDINGS: u32 = 256;
+
+/// Biometric templates. Readable only by root — see `deploy.sh`.
+pub(crate) const EMBEDDINGS_FILE_MODE: u32 = 0o600;
+pub(crate) const EMBEDDINGS_DIR_MODE: u32 = 0o700;
+
+#[derive(Debug, Clone, Default)]
 pub struct EmbeddingStore {
     pub embeddings: Vec<Vec<f32>>,
-    /// Which recognition model produced these embeddings (config's `model_path` basename).
-    /// `None` for legacy v1 files or a fresh `Default::default()` store, meaning "unknown" —
-    /// callers should treat unknown as compatible (nothing to contradict), not as a mismatch.
+    /// Recognition model that produced these embeddings. `None` for a v1 file
+    /// or a store not yet saved, meaning "unknown", which is compatible with
+    /// anything: a mismatch is only raised once both sides are known.
     pub model_tag: Option<String>,
 }
 
+/// Build the per-user store path, rejecting anything that would escape
+/// `embeddings_dir`. The username reaching here originates from PAM, but it
+/// is a path component either way and is checked rather than trusted.
+pub(crate) fn user_store_dir(user: &str, embeddings_dir: &Path) -> anyhow::Result<PathBuf> {
+    validate_username(user)?;
+    Ok(embeddings_dir.join(user))
+}
+
 impl EmbeddingStore {
-    /// Whether these embeddings are safe to compare against `current_tag`. Unknown-origin
-    /// stores (legacy v1, or a store that hasn't been saved yet) always pass — a mismatch can
-    /// only be raised once both sides are actually known.
     pub fn model_tag_matches(&self, current_tag: &str) -> bool {
-        self.model_tag.as_deref().map(|t| t == current_tag).unwrap_or(true)
+        self.model_tag.as_deref().map_or(true, |t| t == current_tag)
     }
 
     pub fn load(user: &str, embeddings_dir: &Path) -> anyhow::Result<Self> {
-        let path = embeddings_dir.join(user).join("embeddings.bin");
+        let path = user_store_dir(user, embeddings_dir)?.join("embeddings.bin");
         if !path.exists() {
             return Err(FaceAuthError::NoEmbeddings.into());
         }
@@ -50,10 +66,13 @@ impl EmbeddingStore {
         let model_tag = match version {
             EMBEDDING_VERSION_LEGACY => None,
             EMBEDDING_VERSION => {
-                let tag_len = reader.read_u32::<LittleEndian>()? as usize;
-                let mut tag_bytes = vec![0u8; tag_len];
-                reader.read_exact(&mut tag_bytes)?;
-                Some(String::from_utf8(tag_bytes).map_err(|_| FaceAuthError::InvalidEmbeddingFormat)?)
+                let len = reader.read_u32::<LittleEndian>()?;
+                if len > MAX_MODEL_TAG_LEN {
+                    return Err(FaceAuthError::InvalidEmbeddingFormat.into());
+                }
+                let mut bytes = vec![0u8; len as usize];
+                reader.read_exact(&mut bytes)?;
+                Some(String::from_utf8(bytes).map_err(|_| FaceAuthError::InvalidEmbeddingFormat)?)
             }
             _ => return Err(FaceAuthError::InvalidEmbeddingFormat.into()),
         };
@@ -61,7 +80,7 @@ impl EmbeddingStore {
         let count = reader.read_u32::<LittleEndian>()?;
         let dim = reader.read_u32::<LittleEndian>()?;
 
-        if dim != EMBEDDING_DIM {
+        if dim != EMBEDDING_DIM || count > MAX_EMBEDDINGS {
             return Err(FaceAuthError::InvalidEmbeddingFormat.into());
         }
 
@@ -71,48 +90,84 @@ impl EmbeddingStore {
             for val in &mut embedding {
                 *val = reader.read_f32::<LittleEndian>()?;
             }
+            // A non-finite stored value makes every comparison NaN, which
+            // fails closed but silently. Reject it as corruption instead.
+            if !embedding.iter().all(|v| v.is_finite()) {
+                return Err(FaceAuthError::InvalidEmbeddingFormat.into());
+            }
             embeddings.push(embedding);
+        }
+
+        // Trailing bytes mean this is not the file we think it is.
+        let mut trailing = [0u8; 1];
+        if reader.read(&mut trailing)? != 0 {
+            return Err(FaceAuthError::InvalidEmbeddingFormat.into());
         }
 
         Ok(Self { embeddings, model_tag })
     }
 
     pub fn save(&self, user: &str, embeddings_dir: &Path, model_tag: &str) -> anyhow::Result<()> {
-        let user_dir = embeddings_dir.join(user);
-        fs::create_dir_all(&user_dir)?;
-        // Biometric templates: lock the per-user directory and file down explicitly rather
-        // than trusting umask, so another local user can't read them off disk regardless of
-        // what mode bits `embeddings_dir`'s parent was created with.
-        fs::set_permissions(&user_dir, fs::Permissions::from_mode(0o700))?;
+        anyhow::ensure!(
+            model_tag.len() <= MAX_MODEL_TAG_LEN as usize,
+            "model tag longer than {MAX_MODEL_TAG_LEN} bytes"
+        );
+        if self.embeddings.len() > MAX_EMBEDDINGS as usize {
+            anyhow::bail!(
+                "refusing to store {} embeddings (limit {})",
+                self.embeddings.len(),
+                MAX_EMBEDDINGS
+            );
+        }
+
+        let user_dir = user_store_dir(user, embeddings_dir)?;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(EMBEDDINGS_DIR_MODE)
+            .create(&user_dir)?;
 
         let tmp_path = user_dir.join("embeddings.bin.tmp");
         let path = user_dir.join("embeddings.bin");
 
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp_path)?;
-        let mut writer = BufWriter::new(file);
+        {
+            let file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(EMBEDDINGS_FILE_MODE)
+                .open(&tmp_path)?;
+            let mut writer = BufWriter::new(file);
 
-        writer.write_u32::<LittleEndian>(EMBEDDING_VERSION)?;
-        let tag_bytes = model_tag.as_bytes();
-        writer.write_u32::<LittleEndian>(tag_bytes.len() as u32)?;
-        writer.write_all(tag_bytes)?;
-        writer.write_u32::<LittleEndian>(self.embeddings.len() as u32)?;
-        writer.write_u32::<LittleEndian>(EMBEDDING_DIM)?;
+            writer.write_u32::<LittleEndian>(EMBEDDING_VERSION)?;
+            writer.write_u32::<LittleEndian>(model_tag.len() as u32)?;
+            writer.write_all(model_tag.as_bytes())?;
+            writer.write_u32::<LittleEndian>(self.embeddings.len() as u32)?;
+            writer.write_u32::<LittleEndian>(EMBEDDING_DIM)?;
 
-        for embedding in &self.embeddings {
-            for &val in embedding {
-                writer.write_f32::<LittleEndian>(val)?;
+            for embedding in &self.embeddings {
+                anyhow::ensure!(
+                    embedding.len() == EMBEDDING_DIM as usize,
+                    "embedding has {} dimensions, expected {}",
+                    embedding.len(),
+                    EMBEDDING_DIM
+                );
+                for &val in embedding {
+                    writer.write_f32::<LittleEndian>(val)?;
+                }
             }
+
+            writer.flush()?;
+            // Rename alone is atomic but not durable: without this a crash can
+            // leave a present-but-empty template file, locking the user out.
+            writer.get_ref().sync_all()?;
         }
 
-        writer.flush()?;
-        drop(writer);
-
         fs::rename(&tmp_path, &path)?;
+
+        // Persist the rename itself.
+        if let Ok(dir) = File::open(&user_dir) {
+            let _ = dir.sync_all();
+        }
 
         Ok(())
     }
@@ -122,65 +177,174 @@ impl EmbeddingStore {
     }
 }
 
-impl Default for EmbeddingStore {
-    fn default() -> Self {
-        Self { embeddings: Vec::new(), model_tag: None }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use byteorder::WriteBytesExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "face-auth-test-{}-{}-{:?}",
+            tag,
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    const TAG: &str = "w600k_mbf.onnx";
+
+    fn sample(seed: f32) -> Vec<f32> {
+        (0..EMBEDDING_DIM).map(|i| seed + i as f32 * 1e-3).collect()
+    }
 
     #[test]
-    fn save_then_load_round_trips_embeddings_and_tag() {
-        let dir = std::env::temp_dir().join(format!("face-auth-storage-test-{}", std::process::id()));
-        let store = EmbeddingStore { embeddings: vec![vec![0.5f32; EMBEDDING_DIM as usize]], model_tag: None };
-        store.save("alice", &dir, "w600k_r50.onnx").unwrap();
+    fn round_trips() {
+        let dir = tmpdir("roundtrip");
+        let mut store = EmbeddingStore::default();
+        store.add_embedding(sample(0.1));
+        store.add_embedding(sample(0.2));
+        store.save("alice", &dir, TAG).unwrap();
 
         let loaded = EmbeddingStore::load("alice", &dir).unwrap();
-        assert_eq!(loaded.embeddings, store.embeddings);
-        assert_eq!(loaded.model_tag.as_deref(), Some("w600k_r50.onnx"));
-
-        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(loaded.embeddings.len(), 2);
+        assert_eq!(loaded.embeddings[1], sample(0.2));
+        assert_eq!(loaded.model_tag.as_deref(), Some(TAG));
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn model_tag_matches_is_permissive_for_unknown_origin() {
-        let unknown = EmbeddingStore { embeddings: vec![], model_tag: None };
-        assert!(unknown.model_tag_matches("w600k_mbf.onnx"));
-        assert!(unknown.model_tag_matches("w600k_r50.onnx"));
+    fn stores_templates_unreadable_by_others() {
+        let dir = tmpdir("perms");
+        let mut store = EmbeddingStore::default();
+        store.add_embedding(sample(0.1));
+        store.save("alice", &dir, TAG).unwrap();
+
+        let file_mode = fs::metadata(dir.join("alice/embeddings.bin"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(file_mode, EMBEDDINGS_FILE_MODE);
+
+        let dir_mode = fs::metadata(dir.join("alice")).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, EMBEDDINGS_DIR_MODE);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn model_tag_matches_rejects_a_real_mismatch() {
-        let mbf = EmbeddingStore { embeddings: vec![], model_tag: Some("w600k_mbf.onnx".to_string()) };
-        assert!(mbf.model_tag_matches("w600k_mbf.onnx"));
-        assert!(!mbf.model_tag_matches("w600k_r50.onnx"));
+    fn rejects_path_traversal_in_username() {
+        let dir = tmpdir("traversal");
+        let mut store = EmbeddingStore::default();
+        store.add_embedding(sample(0.1));
+
+        assert!(store.save("../escaped", &dir, TAG).is_err());
+        assert!(store.save("../../etc/shadow", &dir, TAG).is_err());
+        assert!(EmbeddingStore::load("../escaped", &dir).is_err());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn legacy_v1_file_without_a_tag_still_loads() {
-        let dir = std::env::temp_dir().join(format!("face-auth-storage-test-legacy-{}", std::process::id()));
-        let user_dir = dir.join("bob");
-        fs::create_dir_all(&user_dir).unwrap();
-        let path = user_dir.join("embeddings.bin");
-        let mut writer = BufWriter::new(File::create(&path).unwrap());
-        writer.write_u32::<LittleEndian>(EMBEDDING_VERSION_LEGACY).unwrap();
-        writer.write_u32::<LittleEndian>(1).unwrap();
-        writer.write_u32::<LittleEndian>(EMBEDDING_DIM).unwrap();
+    fn rejects_absurd_embedding_count() {
+        let dir = tmpdir("count");
+        fs::create_dir_all(dir.join("alice")).unwrap();
+        let mut buf = Vec::new();
+        buf.write_u32::<LittleEndian>(EMBEDDING_VERSION_LEGACY).unwrap();
+        buf.write_u32::<LittleEndian>(u32::MAX).unwrap();
+        buf.write_u32::<LittleEndian>(EMBEDDING_DIM).unwrap();
+        fs::write(dir.join("alice/embeddings.bin"), &buf).unwrap();
+
+        // Must fail on the bound, not by attempting a 96 GB allocation.
+        assert!(EmbeddingStore::load("alice", &dir).is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_non_finite_values() {
+        let dir = tmpdir("nan");
+        fs::create_dir_all(dir.join("alice")).unwrap();
+        let mut buf = Vec::new();
+        buf.write_u32::<LittleEndian>(EMBEDDING_VERSION_LEGACY).unwrap();
+        buf.write_u32::<LittleEndian>(1).unwrap();
+        buf.write_u32::<LittleEndian>(EMBEDDING_DIM).unwrap();
         for _ in 0..EMBEDDING_DIM {
-            writer.write_f32::<LittleEndian>(0.25).unwrap();
+            buf.write_f32::<LittleEndian>(f32::NAN).unwrap();
         }
-        writer.flush().unwrap();
-        drop(writer);
+        fs::write(dir.join("alice/embeddings.bin"), &buf).unwrap();
+
+        assert!(EmbeddingStore::load("alice", &dir).is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_trailing_bytes() {
+        let dir = tmpdir("trailing");
+        let mut store = EmbeddingStore::default();
+        store.add_embedding(sample(0.1));
+        store.save("alice", &dir, TAG).unwrap();
+
+        let path = dir.join("alice/embeddings.bin");
+        let mut data = fs::read(&path).unwrap();
+        data.extend_from_slice(b"extra");
+        fs::write(&path, data).unwrap();
+
+        assert!(EmbeddingStore::load("alice", &dir).is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn missing_store_reports_no_embeddings() {
+        let dir = tmpdir("missing");
+        let err = EmbeddingStore::load("alice", &dir).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<FaceAuthError>(),
+            Some(FaceAuthError::NoEmbeddings)
+        ));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_v1_file_loads_with_unknown_tag() {
+        let dir = tmpdir("legacy");
+        fs::create_dir_all(dir.join("bob")).unwrap();
+        let mut buf = Vec::new();
+        buf.write_u32::<LittleEndian>(EMBEDDING_VERSION_LEGACY).unwrap();
+        buf.write_u32::<LittleEndian>(1).unwrap();
+        buf.write_u32::<LittleEndian>(EMBEDDING_DIM).unwrap();
+        for v in sample(0.25) {
+            buf.write_f32::<LittleEndian>(v).unwrap();
+        }
+        fs::write(dir.join("bob/embeddings.bin"), &buf).unwrap();
 
         let loaded = EmbeddingStore::load("bob", &dir).unwrap();
         assert_eq!(loaded.embeddings.len(), 1);
         assert_eq!(loaded.model_tag, None);
         assert!(loaded.model_tag_matches("w600k_r50.onnx"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
-        std::fs::remove_dir_all(&dir).ok();
+    #[test]
+    fn model_tag_mismatch_is_only_raised_when_known() {
+        let unknown = EmbeddingStore::default();
+        assert!(unknown.model_tag_matches("w600k_r50.onnx"));
+
+        let mbf = EmbeddingStore { model_tag: Some(TAG.to_string()), ..Default::default() };
+        assert!(mbf.model_tag_matches(TAG));
+        assert!(!mbf.model_tag_matches("w600k_r50.onnx"));
+    }
+
+    #[test]
+    fn rejects_oversized_model_tag() {
+        let dir = tmpdir("taglen");
+        fs::create_dir_all(dir.join("alice")).unwrap();
+        let mut buf = Vec::new();
+        buf.write_u32::<LittleEndian>(EMBEDDING_VERSION).unwrap();
+        buf.write_u32::<LittleEndian>(u32::MAX).unwrap();
+        fs::write(dir.join("alice/embeddings.bin"), &buf).unwrap();
+
+        assert!(EmbeddingStore::load("alice", &dir).is_err());
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

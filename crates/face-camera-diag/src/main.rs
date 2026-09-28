@@ -1,12 +1,10 @@
-//! Camera discovery/diagnostic tool, not deployed by deploy.sh (same category as
-//! face-similarity-check). Lists every V4L2 video node with driver/card/VID:PID/pixel-format
-//! info so someone can sanity-check their own camera setup — which node is the IR sensor, what
-//! pixel format it reports, whether it even has a resolvable VID:PID — without reading through
-//! the whole README or reverse-engineering journalctl output. `dump` additionally grabs one
-//! frame and writes it as a 16-bit PGM for visual inspection.
+//! Camera discovery and sanity check. Not installed by deploy.sh.
 //!
-//! Read-only against devices it's just listing (VIDIOC_QUERYCAP/G_FMT); `dump` takes the target
-//! device over for capture the same way live face-auth would.
+//! `list` shows every V4L2 node with driver, card, VID:PID, current format,
+//! whether its name looks like an IR sensor, and which node face-auth would
+//! pick on its own. It only queries capabilities and format, so it is safe
+//! against a camera in use. `dump` captures one illuminated frame and writes
+//! it as a 16-bit PGM for a visual check.
 
 use clap::{Parser, Subcommand};
 use face_auth_core::capture;
@@ -22,13 +20,13 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// List all V4L2 video nodes with driver, card, VID:PID, and pixel format (default).
+    /// List every V4L2 node with driver, card, VID:PID and pixel format (default).
     List,
-    /// Capture one frame from a device and write it as a 16-bit PGM for visual inspection.
+    /// Capture one frame and write it as a 16-bit PGM.
     Dump {
-        #[arg(long, help = "Video device to capture from, e.g. /dev/video3")]
+        #[arg(long, help = "Video device to capture from, e.g. /dev/video2")]
         device: String,
-        #[arg(long, default_value = "frame.pgm", help = "Output PGM file path")]
+        #[arg(long, default_value = "frame.pgm", help = "Output PGM path")]
         out: PathBuf,
         #[arg(long, default_value = "5000", help = "Capture timeout in ms")]
         timeout_ms: i32,
@@ -36,8 +34,7 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
-    match args.command.unwrap_or(Command::List) {
+    match Args::parse().command.unwrap_or(Command::List) {
         Command::List => list_devices(),
         Command::Dump { device, out, timeout_ms } => dump_frame(&device, &out, timeout_ms),
     }
@@ -46,56 +43,60 @@ fn main() -> anyhow::Result<()> {
 fn list_devices() -> anyhow::Result<()> {
     let devices = capture::list_video_devices();
     if devices.is_empty() {
-        println!("No /dev/video* nodes found under /sys/class/video4linux.");
+        println!("No /dev/video* nodes under /sys/class/video4linux.");
         return Ok(());
     }
 
+    let chosen = capture::detect_ir_camera();
     println!(
-        "{:<14} {:<10} {:<24} {:<10} {:<12} {}",
-        "DEVICE", "DRIVER", "CARD", "VID:PID", "FORMAT", "IR GUESS"
+        "{:<14} {:<10} {:<28} {:<10} {:<14} {}",
+        "DEVICE", "DRIVER", "CARD", "VID:PID", "FORMAT", "NOTES"
     );
     for device in &devices {
-        let caps = capture::query_caps(device);
-        let (driver, card) = match &caps {
-            Ok(c) => (c.driver.clone(), c.card.clone()),
-            Err(e) => ("?".to_string(), format!("<unavailable: {}>", e)),
+        let (driver, card) = match capture::query_caps(device) {
+            Ok(c) => (c.driver, c.card),
+            Err(e) => ("?".to_string(), format!("<unavailable: {e}>")),
         };
-
         let vid_pid = capture::usb_ids(device)
-            .map(|(vid, pid)| format!("{}:{}", vid, pid))
+            .map(|(vid, pid)| format!("{vid}:{pid}"))
+            .unwrap_or_else(|_| "-".to_string());
+        let format = capture::query_format(device)
+            .map(|(w, h, fourcc)| format!("{w}x{h} {}", capture::fourcc_to_string(fourcc)))
             .unwrap_or_else(|_| "-".to_string());
 
-        let format = match capture::query_format(device) {
-            Ok((w, h, fourcc)) => format!("{}x{} {}", w, h, capture::fourcc_to_string(fourcc)),
-            Err(_) => "-".to_string(),
-        };
-
-        let ir_guess = if card.to_lowercase().contains("ir") || card.to_lowercase().contains("infrared") {
-            "likely"
-        } else {
-            ""
-        };
-
+        let mut notes = Vec::new();
+        if capture::name_suggests_ir(&card) {
+            notes.push("IR name");
+        }
+        if chosen.as_deref() == Some(device.as_str()) {
+            notes.push("<- auto-detect picks this");
+        }
         println!(
-            "{:<14} {:<10} {:<24} {:<10} {:<12} {}",
-            device, driver, card, vid_pid, format, ir_guess
+            "{:<14} {:<10} {:<28} {:<10} {:<14} {}",
+            device,
+            driver,
+            card,
+            vid_pid,
+            format,
+            notes.join(", ")
         );
+    }
+    if chosen.is_none() {
+        println!("\nAuto-detect found no usable IR capture node; set `device` in /etc/face-auth.toml.");
     }
     Ok(())
 }
 
 fn dump_frame(device: &str, out: &PathBuf, timeout_ms: i32) -> anyhow::Result<()> {
     let frame = capture::capture_ir_frame(device, timeout_ms)?;
-    println!(
-        "Captured {}x{} frame from {} ({} samples)",
-        frame.width, frame.height, device, frame.data.len()
-    );
+    println!("Captured {}x{} frame from {device}", frame.width, frame.height);
 
-    let mut file = std::fs::File::create(out)?;
+    let mut file = std::io::BufWriter::new(std::fs::File::create(out)?);
     write!(file, "P5\n{} {}\n65535\n", frame.width, frame.height)?;
-    for sample in &frame.data {
+    for sample in &frame.data[..(frame.width * frame.height) as usize] {
         file.write_all(&sample.to_be_bytes())?;
     }
+    file.flush()?;
     println!("Wrote {}", out.display());
     Ok(())
 }

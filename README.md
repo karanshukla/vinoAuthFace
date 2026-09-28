@@ -1,12 +1,19 @@
-# authFace — IR Camera Face Unlock for Linux
+# authFace: IR Camera Face Unlock for Linux
 
-**Windows Hello–style biometric login for Linux.** IR camera facial authentication via PAM — works on **immutable distros** (Bazzite, Bluefin, Fedora Silverblue, Fedora Kinoite, etc.) with zero system packages, daemons, or layering.
+A fork of [Peter Falkingham's authFace](https://github.com/pfalkingham/authFace), kept in sync
+with upstream. It adds motion liveness, a failed-match lockout, camera pinning, an optional
+OpenVINO/NPU backend, a choice of recognition model, polkit-1 and Bitwarden unlock, prebuilt
+release binaries, and camera diagnostics. See [What this fork adds](#what-this-fork-adds).
 
-- **Face unlock for sudo, lock screen (GNOME/Sway), and `gdm-password`**
+**Windows Hello-style biometric login for Linux.** IR camera facial authentication via PAM.
+Works on **immutable distros** (Bazzite, Bluefin, Fedora Silverblue, Fedora Kinoite, etc.) with
+zero system packages, daemons, or layering.
+
+- **Face unlock for sudo, lock screen (GNOME/Sway), `gdm-password` and polkit prompts**
 - **~2 seconds** from camera poll to authenticated
-- **Static musl binary** — no dependencies, no runtime
+- **Static musl binary**: no dependencies, no runtime
 - **No daemon, no systemd units, no D-Bus**
-- **Immutable-first** — everything fits in `/usr/local` and `~/.local`, no `/usr` modifications needed
+- **Immutable-first**: everything fits in `/usr/local`, `/etc` and `/var/lib`
 
 **Jump to:** [Quick Start](#quick-start) · [Requirements](#requirements) ·
 [Deployment](#deployment) · [Configuration](#configuration) · [Enrollment](#enrollment) ·
@@ -14,64 +21,88 @@
 [Hardware compatibility](#hardware-compatibility) · [Troubleshooting](#troubleshooting) ·
 [Security & Limitations](#security--limitations)
 
-## Features
-
-- **Windows Hello–compatible IR camera support** — auto-detects GREY, YUYV, or Y16 pixel formats, no RGB camera needed
-- **Automatic password fallback** — if face auth fails, times out, or no camera, PAM falls through to password
-- **Static musl binary** (~20 MB, zero runtime dependencies) — copy to any Linux system
-- **No daemon, no systemd, no D-Bus** — just `pam_exec.so` triggered by PAM
-- **Configurable** via `/etc/face-auth.toml`, `~/.config/face-auth.toml`, or environment variables
-- **Built-in capture timeout** (5s default) — camera hang won't lock you out
-- **Works on immutable distros** — no `rpm-ostree layer`, no package installs, no `/usr` modification
-
 ## Quick Start
 
 ```bash
-# 1. Install core authentication (PAM, models, binaries)
+# 1. Install (PAM, models, binaries). Builds from source if it finds cargo,
+#    otherwise downloads checksum-verified release binaries.
 sudo ./deploy.sh
 
-# 2. Enroll your face
-face-enroll --user $USER
+# 2. Enrol your face (templates are root-owned, so this needs sudo)
+sudo face-enroll --user $USER
 
 # 3. Test sudo
-sudo true              # triggers IR camera → exit 0
+sudo -k && sudo true   # triggers IR camera, exit 0
+
+# 4. Recommended: pin the camera (face-enroll prints the exact command)
+sudo ./pin-camera.sh /dev/videoN
 ```
+
+## What this fork adds
+
+| Feature | Where |
+|---|---|
+| **Motion liveness**: a match only counts after real pixel motion between consecutive face frames, so a rigidly held photo fails | [Security](#security--limitations), `liveness_motion_threshold` |
+| **Lockout**: exponential backoff after repeated failed matches, without ever blocking the password fallback | [Security](#security--limitations), `lockout_*` |
+| **Camera pinning**: binds face-auth to the camera's physical USB port, closing frame injection by a spoofed device | [Pin camera](#pin-camera-recommended) |
+| **Face crop before encoding**: detector boxes are decoded and the encoder sees the face, not the whole frame | [How It Works](#how-it-works) |
+| **OpenVINO/NPU backend** (optional build) | [Building](#openvino--npu-backend) |
+| **mbf or r50 recognition model**, with templates tagged by model so a mismatch is refused | [Model](#recognition-model-mbf-default-vs-r50) |
+| **polkit-1 and Bitwarden** system-auth unlock | [PAM Integration](#pam-integration) |
+| **YUYV and Y16 sensors**, and auto-detect for IR nodes without "IR" in their name | [Hardware](#hardware-compatibility) |
+| **Prebuilt release binaries**, CI running real deploy/uninstall cycles | [Deployment](#deployment) |
+| **`face-camera-diag`** and **`face-similarity-check`** offline tools | [Diagnosing](#diagnosing-your-camera) |
+
+The GTK settings GUI and GNOME scan-indicator extension from upstream are not included: this
+fork is PAM and CLI only.
+
+## Upstream Merges & Security Pass
+
+Upstream merged improvements from [SamVivan1/authFace](https://github.com/SamVivan1/authFace)
+(multi-IR-camera detection, distro-aware PAM, `pam_exec.so quiet`, automated and pinned detector
+download), followed by a security pass over the whole tree. See [CHANGELOG.md](CHANGELOG.md) for
+the full list. The changes that affect how you use it:
+
+- **Enrolment needs root** (`sudo face-enroll`). Face templates are authentication data; when the
+  store was world-writable, any local user could enrol a face for an account that had not
+  enrolled yet, then log in as it.
+- **The login prompt trusts only `/etc/face-auth.toml`.** Your own config can make matching
+  stricter, never looser. See [Configuration](#configuration).
+- **`face-auth` requires `PAM_USER`** rather than falling back to `USER`, `LOGNAME` or
+  `id -un`, and refuses remote (`PAM_RHOST`) sessions.
+
+Upgrading re-secures an existing template store in place (including this fork's old
+world-writable one), so the store itself needs no re-enrolment. Pipeline changes might,
+though: see [Enrollment](#enrollment).
 
 ## Requirements
 
 ### Hardware
 
-- **IR camera** (Windows Hello compatible, e.g. Shinetech ASUS FHD webcam) — pixel format
-  (GREY, YUYV, or Y16) is auto-detected from the driver, not assumed
+- **IR camera** (Windows Hello compatible). Pixel format (GREY, YUYV or Y16) is read from the
+  driver, not assumed.
 - **Linux kernel** with `uvcvideo` (standard on all distros)
 
-Not sure whether your laptop's camera stack will work at all? See
-[Hardware compatibility](#hardware-compatibility) for supported/unsupported camera stacks and
-known hardware reports.
-
-Not sure which `/dev/video*` node is your IR camera, or whether it's a format face-auth
-understands? Build `face-camera-diag` and run `list` — see
+Not sure your camera stack works at all? See [Hardware compatibility](#hardware-compatibility).
+Not sure which `/dev/video*` node is the IR sensor? See
 [Diagnosing your camera](#diagnosing-your-camera).
 
-### Software (target system — where you deploy)
+### Software (target system, where you deploy)
 
 - PAM with `pam_exec.so` (standard on all distros)
-- SELinux (Fedora/Bluefin/Silverblue) — deploy script installs policy automatically
+- SELinux (Fedora/Bluefin/Silverblue): deploy script installs policy automatically
 - `policycoreutils` for SELinux policy compilation (installed by default on Fedora)
 
-### Software (build system — where you compile)
+### Software (build system)
 
-None required. `sudo ./deploy.sh` downloads prebuilt static musl binaries from this project's
-[GitHub Releases](https://github.com/karanshukla/vinoAuthFace/releases) (checksum-verified) if
-it can't find a Rust toolchain. Only build from source yourself if you want a change that isn't
-in a release yet, or the NPU/OpenVINO backend (which CI can't build — see below).
+None required. If `sudo ./deploy.sh` finds no Rust toolchain and no local build, it downloads
+the static musl binaries from this project's
+[GitHub Releases](https://github.com/karanshukla/vinoAuthFace/releases), verified against the
+release's `SHA256SUMS`. Build from source for an unreleased change or the NPU backend.
 
 ## Building from Source
 
-Skip this section if `sudo ./deploy.sh` already worked — it only builds from source when it has
-to. Build manually if you want an unreleased change, or the OpenVINO/NPU backend.
-
-### Core auth (static musl — no runtime deps)
+### Core auth (static musl, no runtime deps)
 
 ```bash
 # Install Rust if needed
@@ -81,45 +112,67 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup target add x86_64-unknown-linux-musl
 
 # Clone and build
-git clone https://github.com/pfalkingham/authFace.git
-cd authFace
-cargo build --release --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
+git clone https://github.com/karanshukla/vinoAuthFace.git
+cd vinoAuthFace
+cargo build --release --locked --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
 
 # Deploy
 sudo ./deploy.sh
 ```
 
+### OpenVINO / NPU backend
+
+The `npu` feature swaps pure-Rust `tract` inference for OpenVINO on an Intel NPU, GPU or CPU.
+It links OpenVINO's glibc libraries, so it cannot be a static musl build and CI cannot build it.
+`deploy.sh` handles it for you: if it finds OpenVINO (a system RPM/DEB, or an extracted archive
+under `~/.local/opt` or `/opt/intel`) and a Rust toolchain, it builds with `--features npu`,
+sets `backend = "openvino"` in `/etc/face-auth.toml`, and for archive installs registers the
+runtime libraries with `ldconfig` (PAM runs `face-auth` without your shell profile). Pick the
+device with `npu_device = "NPU" | "GPU" | "CPU"`.
+
+### Without installing a toolchain (container build)
+
+If `deploy.sh` finds no toolchain and the release download fails, it prints this command for
+you to run. It does not run it for you: `deploy.sh` runs under `sudo`, and rootless podman
+driven through `sudo -u` often fails on a missing `XDG_RUNTIME_DIR`.
+
+```bash
+podman run --rm -v "$PWD":/src:Z -w /src docker.io/library/rust:alpine \
+  sh -c 'apk add --no-cache musl-dev && \
+         cargo build --release --locked --target x86_64-unknown-linux-musl \
+           -p face-auth -p face-enroll'
+sudo ./deploy.sh
+```
+
+`rust:alpine` targets musl natively, so the result is the same static binary. Run the
+container as your own user (not under `sudo`) so the files in `target/` stay yours.
+
 ### On immutable distros via distrobox
 
 ```bash
-# Create a Fedora development container
-distrobox create --image docker.io/library/fedora:40 --name authface-dev
+distrobox create --image registry.fedoraproject.org/fedora:latest --name authface-dev
 distrobox enter authface-dev
 
-# Inside the container, install native build deps (once)
-sudo dnf install -y gcc gcc-c++ musl-gcc cmake
-
-# Install Rust via rustup, not Fedora's dnf-packaged rust/cargo: Fedora's rust package has no
-# musl-target std library at all (rustup's `target add` is what provides that), and can also
-# lag behind the toolchain version this project's dependencies require.
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Build deps (once). Fedora does not package a musl std for Rust, so use rustup,
+# not the distro `rust` package.
+sudo dnf install -y gcc musl-gcc cmake
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+  --target x86_64-unknown-linux-musl
 source "$HOME/.cargo/env"
-rustup target add x86_64-unknown-linux-musl
 
-# Clone and build
-cd ~/Projects
-git clone https://github.com/pfalkingham/authFace.git
-cd authFace
-cargo build --release --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
+cd ~/Projects/vinoAuthFace
+cargo build --release --locked --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
 
 # Exit container, then deploy on host
 exit
 sudo ./deploy.sh
 ```
 
-## Deployment
+> **`sudo ./deploy.sh` and `cargo`:** if you installed Rust with rustup, `cargo` lives in
+> `~/.cargo/bin`, which is not on root's `PATH`. The script looks there for the invoking user
+> and runs the build as that user, so it does not leave root-owned files in `target/`.
 
-### Core (PAM authentication)
+## Deployment
 
 ```bash
 sudo ./deploy.sh
@@ -127,131 +180,156 @@ sudo ./deploy.sh
 
 | Step | What | Details |
 |------|------|---------|
-| Build | Compiles if `cargo` is available | Else uses pre-built binaries in `target/`, else downloads a checksum-verified release from GitHub |
+| Build | Picks the first that applies | OpenVINO + cargo: NPU build. Prebuilt binaries in `target/`: use them (`FACE_AUTH_FORCE_BUILD=1` to rebuild). Cargo: static musl build. Otherwise: download and checksum-verify the release binaries |
 | Binaries | Installs to `/usr/local/bin` | `face-auth` + `face-enroll` |
-| Model | Downloads + checksum-verifies both models | `w600k_mbf.onnx` (~13 MB, InsightFace) and `version-slim-320.onnx` (~1 MB, detector) to `/usr/local/share/face-auth/` |
-| Config | Installs default config | `/etc/face-auth.toml` |
-| PAM | Patches PAM service files | Adds `sufficient` `pam_exec.so` to `sudo`, `gdm-password`, `swaylock` |
+| Models | Downloads and SHA-256 verifies | Recognition model (`w600k_mbf.onnx` by default) and `version-slim-320.onnx` detector, to `/usr/local/share/face-auth/`. A copy in `models/` is used first, and verified too |
+| Config | Installs default config | `/etc/face-auth.toml`, kept if it already exists |
+| PAM | Patches PAM service files | Adds `sufficient` `pam_exec.so quiet` to `sudo`, `gdm-password`, `swaylock`, `polkit-1` |
+| Bitwarden | Only if installed | Adds Bitwarden's polkit unlock action |
 | SELinux | Compiles and loads policy | Allows `xdm_t` to mmap camera for lock-screen auth |
-| Storage | Creates embeddings directory | `/var/lib/face-auth/<user>/` with sticky bit |
+| Storage | Secures template store | `/var/lib/face-auth`, root-owned `0700`, templates `0600`. An existing store is re-secured in place |
 
-Each PAM file is backed up with a `.face-auth.bak` suffix.
+GDM lock-screen patching is **distro-aware**: after `pam_selinux_permit.so` on
+Fedora/Bluefin/Silverblue, after `#%PAM-1.0` on Ubuntu/Debian. Each PAM file is backed up with
+a `.face-auth.bak` suffix.
 
 ### Pin camera (recommended)
 
 ```bash
-sudo ./pin-camera.sh
+sudo ./pin-camera.sh /dev/videoN
 ```
 
-Confirm the camera works first (`face-enroll` succeeds, `sudo true` unlocks) — this pins
-whatever `device` is currently configured, so run it after enrollment, not before. See
-[Security & Limitations](#security--limitations) for what this does and does not defend
-against.
+Run it after enrolment and a test unlock both work: it pins whatever device you give it, and
+`face-enroll` prints the exact command with the camera it used. It writes a udev rule for a
+stable `/dev/face-auth-ir` symlink and records the camera's physical identity in
+`/etc/face-auth.toml`. See [Security & Limitations](#security--limitations) for what this does
+and does not defend against. Re-run it if you replace the hardware on purpose.
 
 ### Uninstall
 
 ```bash
-# Remove everything (core + models + config)
+# Remove everything (binaries, models, config, PAM changes, camera pin)
 sudo ./uninstall.sh
 
-# Remove everything including face embeddings
+# ...including face templates
 sudo ./uninstall.sh --purge
 ```
 
-Restores PAM backups, removes binaries, models, config, and SELinux policy.
+Restores PAM backups, removes the `polkit-1` override if `deploy.sh` created it, and removes the
+Bitwarden action only if `deploy.sh` installed it. Also cleans up leftovers from older installs
+that had the GTK GUI.
 
 ## Configuration
 
-Priority (highest first):
+The authentication path and the unprivileged tools trust different things.
 
-1. **Environment variables**: `FACE_AUTH_DEVICE`, `FACE_AUTH_THRESHOLD`, `FACE_AUTH_MODEL_PATH`, `FACE_AUTH_EMBEDDINGS_DIR`, `FACE_AUTH_CAPTURE_TIMEOUT`
-2. **User config**: `~/.config/face-auth.toml`
-3. **System config**: `/etc/face-auth.toml`
-4. **Defaults**: auto-detected camera, threshold 0.6, 5s capture timeout
+**During PAM authentication** (`face-auth`, i.e. sudo / lock screen / login / polkit):
+
+| Source | Effect |
+|--------|--------|
+| `/etc/face-auth.toml` (root-owned) | Authoritative for everything |
+| `~/.config/face-auth.toml` | May only make authentication **stricter**, see below |
+| `FACE_AUTH_*` environment | **Ignored entirely** |
+
+**For `face-enroll` and the offline tools**, the usual layering applies: environment
+variables, then `~/.config/face-auth.toml`, then `/etc/face-auth.toml`.
+
+### What a user may override at the login prompt
+
+A user's own config is read (resolved via `getent passwd`, so it is *their* home and not whoever
+happened to invoke the PAM stack), but it is applied as a narrowing overlay:
+
+| Key | At the login prompt |
+|-----|--------------------|
+| `threshold`, `detector_threshold`, `liveness_motion_threshold` | Honoured only if **>= the system value**. A lower number is ignored. |
+| `device` | Honoured only if the path is a real IR capture device on this machine (IR-looking sysfs name, or a physical greyscale sensor, and opens in a supported format). |
+| `scan_duration_ms`, `scan_interval_ms`, `capture_timeout_ms` | Honoured within built-in bounds. |
+| `model_path`, `detector_model_path`, `embeddings_dir`, `pinned_camera_*`, `lockout_*`, `backend`, `npu_device` | **Ignored**: system policy only. |
+
+This is what stops code running as you, which does not know your password, from writing a
+permissive `~/.config/face-auth.toml` and turning your next `sudo` into a root shell. To
+*loosen* matching, edit `/etc/face-auth.toml` as root.
 
 Example `/etc/face-auth.toml`:
 ```toml
-device = "/dev/video3"
 threshold = 0.6
-model_path = "/usr/local/share/face-auth/w600k_mbf.onnx"
-embeddings_dir = "/var/lib/face-auth"
 capture_timeout_ms = 5000
+scan_duration_ms = 5000
+liveness_motion_threshold = 0.01
 ```
 
-`scan_interval_ms` (delay between scan attempts during `authenticate_scan`) is not hardcoded:
-if unset, it's queried from the camera's own reported native frame interval via V4L2
-(`VIDIOC_G_PARM`), so it adapts automatically to whatever hardware it's running on rather than
-assuming one machine's frame rate. Set `scan_interval_ms` explicitly (TOML or
-`FACE_AUTH_SCAN_INTERVAL_MS`) to override.
+Every key is documented in [`config/face-auth.toml.example`](config/face-auth.toml.example).
+Environment variable names follow the field names, so the capture timeout is
+`FACE_AUTH_CAPTURE_TIMEOUT_MS` (not `FACE_AUTH_CAPTURE_TIMEOUT`).
+
+> **Leave `device` unset unless you must pin it.** UVC cameras normally expose a metadata node
+> right beside the capture node under the same name (e.g. `/dev/video2` captures and
+> `/dev/video3` does not). Auto-detection opens each candidate and takes the first that really
+> is a capture device in a supported format, which gets this right; a hand-written path often
+> does not. `pin-camera.sh` sets `device` for you.
 
 ## Enrollment
 
-```bash
-# Replace existing embeddings with new capture (default: 30 frames)
-face-enroll --user $USER
+Face templates live in a root-owned directory (`/var/lib/face-auth`, mode `0700`), so
+enrolment is a privileged operation:
 
-# Append new embeddings to improve recognition across lighting/angles
-face-enroll --improve --user $USER
+```bash
+# Replace existing templates with a new capture (30 frames)
+sudo face-enroll --user $USER
+
+# Append templates to improve recognition across lighting/angles
+sudo face-enroll --improve --user $USER
 ```
 
-`--frames` defaults to 30: enough pose/expression variation from a single sitting for
-reliable matching against a fixed similarity threshold. Fewer frames enroll faster but
-match less reliably; run `--improve` again in different lighting/angles for the biggest
-accuracy gain beyond that.
+`--frames` defaults to 30: enough pose and expression variation from one sitting for reliable
+matching. Run `--improve` again in different lighting for the biggest gain beyond that.
 
-CLI options: `--frames`, `--interval`, `--device`, `--threshold`, `--model`, `--improve`, `-v`.
+CLI options: `--frames`, `--interval`, `--device`, `--threshold`, `--model`,
+`--embeddings-dir`, `--improve`, `-v`.
+
+**When to re-enrol:** after switching recognition model (face-auth refuses the old templates
+and says so), and after any change to the preprocessing pipeline. Templates made by older
+versions of this fork or upstream may still match, but re-enrolling is the safer bet.
+
+Why this is not user-writable: whatever can write a face template decides whose face unlocks
+that account. If your own login could rewrite it, then so could anything running as you, and a
+stolen browser session would become a root shell at the next `sudo`.
 
 ## PAM Integration
 
-The deploy script adds a `sufficient` `pam_exec.so` line to:
+The deploy script adds a `sufficient` `pam_exec.so quiet` line to:
 
 | Service | File | Insertion point |
 |---------|------|----------------|
 | `sudo` | `/etc/pam.d/sudo` | After `#%PAM-1.0` |
-| `gdm-password` | `/etc/pam.d/gdm-password` | After `pam_selinux_permit.so` |
+| `gdm-password` | `/etc/pam.d/gdm-password` | After `pam_selinux_permit.so` (Fedora) / after `#%PAM-1.0` (Ubuntu/Debian) |
 | `swaylock` | `/etc/pam.d/swaylock` | After `#%PAM-1.0` |
 | `polkit-1` | `/etc/pam.d/polkit-1` | After `#%PAM-1.0` |
 
-`sufficient` means: if face-auth exits 0, the user is authenticated immediately.
-If it fails (no match, no camera, timeout), PAM falls through to password prompt.
+`sufficient` means: if face-auth exits 0, the user is authenticated immediately. If it fails
+(no match, no camera, timeout, lockout), PAM falls through to the password prompt. `quiet`
+suppresses `pam_exec` chatter so the unlock UI stays clean.
 
-No `timeout`, `setenv`, or `env_pass` flags are needed — face-auth reads the camera
-(not stdin) and resolves `PAM_USER` via its own fallback chain.
+**`polkit-1`** covers every polkit `auth_self` prompt system-wide: `pkexec`, package-manager
+GUIs, settings changes, and apps like Bitwarden that ask polkit to re-authenticate you. Most
+distros ship only the vendor default in `/usr/lib/pam.d/polkit-1`; `deploy.sh` copies it to
+`/etc/pam.d/polkit-1` first so there is something to patch, and `uninstall.sh` deletes that copy
+again rather than "restoring" a file that never existed.
 
-**`polkit-1`** covers every polkit `auth_self` prompt system-wide, not just one app —
-`pkexec`, package-manager GUIs, desktop-settings changes, and any app (Bitwarden included,
-see below) that asks polkit to re-authenticate the active user. This is the same PAM
-service most distros already wire a fingerprint reader into via `system-auth`; face-auth
-is added as a second `sufficient` biometric method ahead of it, not a replacement. If
-`/etc/pam.d/polkit-1` doesn't already exist as an admin override (the common case — most
-distros ship only the vendor default under `/usr/lib/pam.d/polkit-1`), `deploy.sh`
-materializes one first so there's something to back up and patch; `uninstall.sh` removes
-that file outright in this case rather than trying to restore a prior state that never
-existed, falling back to the vendor default again.
-
-Known UX gap: sudo's terminal prompt and polkit's graphical dialog give no visual cue that
-a biometric method is available or being attempted (unlike Windows Hello, which shows a
-camera icon while scanning) — auth just silently succeeds within the scan window or falls
-through to the normal password prompt. Purely cosmetic; doesn't affect whether it works.
+There is no visual cue while scanning (Windows Hello shows a camera icon). Auth either succeeds
+within the scan window or falls through to the normal password prompt.
 
 ### Bitwarden biometric unlock
 
-If a Bitwarden desktop client is detected (native binary, Flatpak, or Snap), `deploy.sh`
-also installs Bitwarden's own polkit action file
-(`/usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy`) — required for Flatpak/Snap
-installs, which are sandboxed and can't write it themselves. The content is transcribed
-verbatim from Bitwarden's official source (`os-biometrics-linux.service.ts` in
-[`bitwarden/clients`](https://github.com/bitwarden/clients)), not downloaded from a URL, so
-there's no separate checksum step. Once installed, enable **File → Settings → Unlock with
-system authentication** in Bitwarden — it'll prompt through `polkit-1` like any other
-polkit action, so a face scan (or fingerprint, or password) satisfies it.
+If a Bitwarden desktop client is installed (native, Flatpak or Snap), `deploy.sh` also installs
+Bitwarden's polkit action (`/usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy`). Flatpak
+and Snap builds are sandboxed and cannot write it themselves. The content is transcribed from
+Bitwarden's own source (`os-biometrics-linux.service.ts` in
+[`bitwarden/clients`](https://github.com/bitwarden/clients)), not downloaded. Then enable
+**Settings → Unlock with system authentication** in Bitwarden.
 
-Not covered: KWallet. Its auto-unlock happens once at login (`pam_kwallet5.so` capturing
-the typed password), not at the lock screen, and most desktops leave the wallet unlocked
-across screen lock/unlock regardless of auth method — so there's nothing for face-auth to
-gate there today. Making face-auth *drive* KWallet's own unlock would need KWallet to grow
-a pluggable-auth backend, which it doesn't have yet (there's an open upstream feature
-request for FIDO2/biometric-backed KWallet storage, not implemented as of this writing).
+Not covered: KWallet. It unlocks once at login from the typed password and stays unlocked across
+screen locks, so there is nothing for face-auth to gate.
 
 ## How It Works
 
@@ -260,71 +338,63 @@ PAM (sudo / gdm-password / swaylock / polkit-1)
   │
   ▼
 face-auth (static binary)
-  ├─ V4L2 capture from IR camera (auto-detected device + pixel format: GREY/YUYV/Y16)
-  │   └─ poll() with 5s timeout — exits cleanly if camera hangs
-  ├─ Histogram equalization
-  ├─ Face detection (RetinaFace-derived ONNX model)
-  ├─ Resize to 112×112, normalize to [-1, 1]
-  ├─ tract-onnx inference (MobileFaceNet, 512-d embedding)
-  ├─ Cosine similarity vs stored embeddings (default threshold 0.6)
+  ├─ Resolve PAM_USER via getent (refuses to guess from USER/LOGNAME)
+  ├─ Refuse if PAM_RHOST names a remote host
+  ├─ Load /etc/face-auth.toml + strictly-narrowing user overlay
+  ├─ Verify the pinned camera identity (if pinned), check lockout
+  ├─ V4L2 capture (auto-detected node; GREY/YUYV/Y16), brighter of each frame pair
+  │   └─ poll() with 5s timeout; exits cleanly if the camera hangs
+  ├─ Reject dark/flat frames, CLAHE equalisation
+  ├─ Face detection (Ultra-Light-Fast-Generic-Face-Detector), anchor-decoded box
+  ├─ Crop to the face (+30% margin), resize to 112×112, normalise to [-1, 1]
+  ├─ Encode (tract or OpenVINO; MobileFaceNet or ResNet50, 512-d embedding)
+  ├─ Motion liveness across consecutive face frames
+  ├─ Cosine similarity vs stored templates (default threshold 0.6)
   └─ Exit 0 (match) or exit 1 (no match → password prompt)
 ```
 
 ## Model
 
-Uses InsightFace **`w600k_mbf.onnx`** (MobileFaceNet @ WebFace600K, ~13 MB, 512-d output)
-from the `buffalo_sc` model pack by default for recognition, plus **`version-slim-320.onnx`**
-(from [Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB),
-a different project — not InsightFace) for face detection. The detector is MIT-licensed. The
-recognition model's weights are **not** MIT: InsightFace's model zoo license is non-commercial
-research use only (see `model_zoo/README.md` and `python-package/README.md` in the InsightFace
-repo) — only InsightFace's library *code* is MIT, not the trained weights it distributes.
+Uses InsightFace **`w600k_mbf.onnx`** (MobileFaceNet @ WebFace600K, ~13 MB, 512-d output) from
+the `buffalo_sc` pack by default for recognition, plus **`version-slim-320.onnx`** from
+[Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB)
+(a different project, not InsightFace) for detection. The detector is MIT-licensed. **The
+recognition model's weights are not MIT**: InsightFace's model zoo is licensed for
+non-commercial research use only (see `model_zoo/README.md` and `python-package/README.md` in
+the InsightFace repo). Only InsightFace's library *code* is MIT.
 
-Neither model is bundled in this repository. `deploy.sh` downloads both and verifies a SHA-256
-checksum before installing: the recognition model from InsightFace's official GitHub releases,
-and the detector model from a specific pinned commit (not the mutable `master` branch) of its
-own upstream repo — upstream publishes no checksum for it, so the pin + a checksum computed
-once and hardcoded here is the only integrity check that exists for that file.
+Neither model is bundled. `deploy.sh` downloads both and verifies a pinned SHA-256 before
+installing: the recognition model from InsightFace's GitHub releases, the detector from a
+specific commit (not a moving branch) of its own repo.
 
 ### Recognition model: mbf (default) vs r50
-
-`deploy.sh` can install either recognition model from InsightFace's model zoo:
 
 | | `mbf` (default) | `r50` |
 |---|---|---|
 | Backbone | MobileFaceNet | ResNet50 |
 | Pack | `buffalo_sc` | `buffalo_l` |
 | Size | ~13 MB | ~175 MB |
-| Encode latency (this project's NPU benchmark) | ~1.2ms/frame | ~4.2ms/frame |
+| Encode latency (NPU benchmark) | ~1.2ms/frame | ~4.2ms/frame |
 | Genuine-match similarity (same benchmark) | mean 0.815, min 0.759 | mean 0.875, min 0.830 |
 
-`r50` is InsightFace's larger, more accurate recognition model — noticeably wider match
-margin in local NPU benchmarking, for a few extra milliseconds per frame that don't show up
-in practice (the scan loop is paced by the camera's own frame interval either way, not by
-encode time). The only real cost is a one-time ~1s NPU compile-cache-miss the first time it's
-ever loaded (subsequent loads are back to double-digit ms, same as `mbf`).
-
-Install it with:
+`r50` gives a wider match margin for a few milliseconds per frame, which the camera-paced scan
+loop hides. Install it with:
 
 ```bash
-FACE_AUTH_RECOGNITION_MODEL=r50 sudo -E ./deploy.sh
+sudo FACE_AUTH_RECOGNITION_MODEL=r50 ./deploy.sh
 ```
 
-**Switching models requires re-enrolling** (`face-enroll --user $USER`) — `mbf` and `r50`
-produce numerically incompatible embedding spaces despite the same 512-d shape, so cosine
-similarity between them would be meaningless, not just less accurate. To make this a loud
-failure instead of a silent one, every saved embeddings file is tagged with the recognition
-model that produced it (`storage::EmbeddingStore`'s `model_tag`, the model's filename);
-authenticating or `--improve`-enrolling against a mismatched `model_path` is refused with an
-explicit error rather than comparing embeddings across models. Existing installs are
-unaffected — files saved before this existed have no tag and are treated as compatible with
-whatever's currently configured, same as always.
+**Switching models requires re-enrolling.** The two produce incompatible embedding spaces with
+the same 512-d shape, so comparing across them is meaningless rather than just less accurate.
+Every template file records the model that produced it, and face-auth refuses to authenticate
+or `--improve` against a mismatch. Files from before this existed carry no tag and are treated
+as compatible.
 
 ## SELinux
 
-On Fedora/Bluefin/Silverblue with SELinux enforcing, the GNOME lock screen runs in the
-`xdm_t` domain. This domain cannot `mmap` video devices by default. The deploy script
-installs a minimal policy module:
+On Fedora/Bluefin/Silverblue with SELinux enforcing, the GNOME lock screen runs in the `xdm_t`
+domain, which cannot `mmap` video devices by default. The deploy script installs a minimal
+policy module:
 
 ```
 allow xdm_t v4l_device_t:chr_file map;
@@ -342,90 +412,86 @@ sudo semodule -i face_auth.pp
 
 ## Diagnosing your camera
 
-Not sure which `/dev/video*` node is the IR camera, or whether face-auth will understand its
-pixel format? `face-camera-diag` is a small offline tool for exactly that — it's not installed
-by `deploy.sh`, so grab it once, either as a prebuilt binary from
-[Releases](https://github.com/karanshukla/vinoAuthFace/releases) (no Rust toolchain needed):
+`face-camera-diag` is a small offline tool that is not installed by `deploy.sh`. Grab it from
+[Releases](https://github.com/karanshukla/vinoAuthFace/releases):
 
 ```bash
 curl -fLO https://github.com/karanshukla/vinoAuthFace/releases/latest/download/face-camera-diag-x86_64-unknown-linux-musl
 chmod +x face-camera-diag-x86_64-unknown-linux-musl
 ```
 
-or by building it from source:
+or build it with `cargo build --release -p face-camera-diag`.
 
-```bash
-cargo build --release -p face-camera-diag
+`list` shows every V4L2 node with driver, card name, USB VID:PID, current format, and which one
+auto-detect would pick:
+
+```
+$ face-camera-diag list
+DEVICE         DRIVER     CARD                         VID:PID    FORMAT         NOTES
+/dev/video0    uvcvideo   Integrated_Webcam_FHD: Integrat 2b7e:55c0  1920x1080 MJPG
+/dev/video1    uvcvideo   Integrated_Webcam_FHD: Integrat 2b7e:55c0  -
+/dev/video2    uvcvideo   Integrated_Webcam_FHD: Integrat 2b7e:55c0  360x360 GREY   <- auto-detect picks this
+/dev/video3    uvcvideo   Integrated_Webcam_FHD: Integrat 2b7e:55c0  -
 ```
 
-`list` enumerates every V4L2 node with its driver, card name, USB VID:PID, and current
-resolution/pixel format (substitute `./target/release/face-camera-diag` below for the downloaded
-binary's name if you didn't build from source):
+A `FORMAT` of `GREY`, `YUYV` or `Y16` is one face-auth can capture. `-` usually means a paired
+metadata node. Note the card name here says nothing about IR (sysfs truncates it at 32 bytes);
+auto-detect still finds the sensor because it is a physical node streaming native greyscale,
+which RGB webcams never do.
+
+`dump` captures one frame and writes it as a 16-bit PGM, to confirm you are looking at a lit IR
+image and not noise or a black frame:
 
 ```bash
-./target/release/face-camera-diag list
-
-DEVICE         DRIVER     CARD                     VID:PID    FORMAT       IR GUESS
-/dev/video0    uvcvideo   Integrated_Webcam_FHD    2b7e:55c0  1920x1080 YUYV
-/dev/video2    uvcvideo   Integrated_Webcam_FHD_IR 2b7e:55c0  360x360 GREY  likely
-/dev/video3    uvcvideo   Integrated_Webcam_FHD_IR 2b7e:55c0  -
+face-camera-diag dump --device /dev/video2 --out frame.pgm
 ```
 
-A `FORMAT` of `GREY`, `YUYV`, or `Y16` is one face-auth can capture; anything else (or `-`,
-which usually means a paired metadata node rather than an actual capture device) isn't. The
-`IR GUESS` column is a heuristic based on the card name, not authoritative — cross-check against
-what `sudo ./deploy.sh` / `config.device()` actually picks.
+From a source checkout there are also `cargo run --example detect-camera` (why each node is or
+is not treated as IR), `cargo run --example frame-stats` (per-frame brightness, for spotting a
+strobing illuminator), and `cargo run --release --example bench` (per-stage timings).
 
-`dump` captures one frame from a specific device and writes it as a 16-bit PGM you can open in
-any image viewer that supports the format (e.g. GIMP), to confirm you're actually looking at a
-face-shaped IR image and not noise or a black frame:
+`face-similarity-check` scores photos against your enrolled templates through the same pipeline,
+for gauging false-accept risk without a second person at the camera:
 
 ```bash
-./target/release/face-camera-diag dump --device /dev/video2 --out frame.pgm
+sudo face-similarity-check --user $USER photo1.jpg photo2.png
 ```
 
 ## Hardware compatibility
 
-face-auth only speaks V4L2 via `uvcvideo` — there's no libcamera integration, so a camera that
-shows up under a different kernel stack (Intel IPU6, MIPI CSI) is unreachable no matter what
-pixel format it reports. Within `uvcvideo`, it further needs an IR-oriented capture node
-(`GREY`, `YUYV`, or `Y16` — see [Diagnosing your camera](#diagnosing-your-camera)), not just any
-UVC webcam node, for the anti-spoofing properties described in
-[Security & Limitations](#security--limitations) to actually hold: a plain RGB `uvcvideo` node
-will capture and run, but without real IR behind it, the print/screen spoof resistance doesn't
-apply.
+face-auth only speaks V4L2 via `uvcvideo`. There is no libcamera integration, so a camera behind
+a different kernel stack (Intel IPU6, MIPI CSI) is unreachable whatever format it reports.
+Within `uvcvideo` it needs an IR capture node (`GREY`, `YUYV` or `Y16`) for the spoof
+resistance in [Security & Limitations](#security--limitations) to hold.
 
 | Camera stack | `face-camera-diag list` output | Support |
 |---|---|---|
-| UVC IR (`uvcvideo` + GREY/YUYV/Y16 IR node) | `DRIVER=uvcvideo`, IR-labeled node reports `GREY`/`YUYV`/`Y16` | ✅ Supported |
-| UVC RGB-only (`uvcvideo`, no IR node) | `DRIVER=uvcvideo`, only a color-format node exists | ⚠️ Captures, not secure-compatible — no real IR to resist spoofing |
-| Intel IPU6 / MIPI / libcamera | camera doesn't appear as a plain `uvcvideo` node at all | ❌ Not supported — no libcamera integration |
-| No IR camera | n/a | ❌ Not applicable |
+| UVC IR (`uvcvideo` + GREY/YUYV/Y16 IR node) | `DRIVER=uvcvideo`, a node reports `GREY`/`YUYV`/`Y16` | ✅ Supported |
+| UVC RGB-only (`uvcvideo`, no IR node) | `DRIVER=uvcvideo`, only a colour-format node exists | ⚠️ Never auto-detected, and MJPEG is refused. A YUYV node set explicitly as `device` will capture, but with no IR there is no spoof resistance |
+| Intel IPU6 / MIPI / libcamera | camera does not appear as a plain `uvcvideo` node | ❌ Not supported |
 
 ### Reports
 
 | Laptop | IR camera | Driver | Tier | Notes |
 |---|---|---|---|---|
-| ASUS laptop (exact model unconfirmed), Shinetech FHD IR webcam | Yes — `Integrated_Webcam_FHD_IR`, `2b7e:55c0` | `uvcvideo` | ✅ Supported | Reference hardware for this project — GREY-format node, enrollment and auth verified end-to-end. |
+| Unconfirmed model, FHD webcam with IR | `2b7e:55c0`, IR on `/dev/video2`, 360x360 GREY | `uvcvideo` | ✅ Supported | Reference hardware for this fork. Enrolment and auth verified end to end before the upstream resync; after it, auto-detect and capture verified. |
 
-Only one machine has been tested so far, borrowed table format from
-[Visage](https://github.com/sovren-software/visage)'s hardware-compatibility docs, which covers
-more ground across more hardware. If face-auth works — or doesn't — on yours, please
+Table format borrowed from [Visage](https://github.com/sovren-software/visage)'s hardware docs.
+If face-auth works (or doesn't) on yours, please
 [open an issue](https://github.com/karanshukla/vinoAuthFace/issues/new) with your
-`face-camera-diag list` output and which tier it fell into. This table is only as good as the
-reports in it.
+`face-camera-diag list` output.
 
 ## Troubleshooting
 
 ```bash
-# List available IR cameras
-ls /sys/class/video4linux/*/name
+# Which camera will it use?
+face-camera-diag list
 
 # Grant video group access (log out/in after)
 sudo usermod -aG video $USER
 
-# Debug output
-RUST_LOG=face_auth_core=debug sudo -k && sudo true
+# Debug output from a live sudo attempt
+sudo -k; RUST_LOG=face_auth_core=debug,face_auth=debug sudo true
 
 # Check PAM logs
 journalctl | grep -i "pam_exec\|face-auth"
@@ -433,82 +499,132 @@ journalctl | grep -i "pam_exec\|face-auth"
 # SELinux denials
 journalctl -k | grep face-auth | grep denied
 
-# Test binary directly (skips PAM)
-sudo env PAM_USER=$USER USER=$USER HOME=$HOME /usr/local/bin/face-auth
-echo $?   # 0 = success, 1 = failure
-
-# Increase capture timeout (default 5000ms)
-FACE_AUTH_CAPTURE_TIMEOUT=10000 sudo -k && sudo true
+# Test a stored face directly (skips PAM; needs root to read templates)
+sudo face-auth --verify $USER
+echo $?   # 0 = match, 1 = no match, 2 = error
 ```
+
+### "PAM_USER is not set"
+
+`face-auth` no longer guesses the account from `USER`/`LOGNAME`. If you are invoking it by hand,
+use `--verify` rather than setting `PAM_USER` yourself.
+
+### "reports pixel format ... expected GREY, YUYV or Y16"
+
+The selected device is not an IR sensor: it is an ordinary RGB webcam, or the metadata node next
+to the real capture node. Let auto-detection pick one, or check `face-camera-diag list`.
+
+### "camera identity mismatch"
+
+The camera is pinned and `device` now resolves to a different physical port or node. If you
+replaced or moved the hardware on purpose, re-run `sudo ./pin-camera.sh`.
+
+### "no face detected" every time
+
+Most Windows Hello IR modules **strobe their illuminator**, emitting a lit frame and a near-black
+one alternately. `cargo run --example frame-stats` shows what yours does. authFace captures
+frames in pairs and keeps the brighter, so strobing is handled; if *every* frame is dark, the
+illuminator is not firing and no software will help.
+
+### Face auth stopped being tried after a few failures
+
+That is the lockout. After 5 failed matches (a face was seen and rejected) face-auth skips the
+camera with a doubling cooldown, up to 5 minutes, and PAM goes straight to the password. The
+next successful face match resets it. Tune it with `lockout_*` in
+`/etc/face-auth.toml`.
+
+### My threshold change did nothing
+
+A user config may only make matching *stricter*. To loosen it, lower `threshold` in
+`/etc/face-auth.toml` as root. See [Configuration](#configuration).
 
 ## Security & Limitations
 
-- **Anti-spoofing:** Uses an active-NIR IR camera (not RGB), which resists casual photo
-  spoofing structurally rather than statistically. Two layers:
-  - **Screen-based spoofing (phone/tablet showing a photo or video of the victim) is blocked
-    by sensor physics, not software**: OLED/most LCD panels emit essentially no near-infrared
-    and barely reflect the camera's own IR illuminator, so a screen held up to the camera
-    produces no face-shaped IR signal at all — confirmed empirically (zero detections across
-    100 capture attempts against a phone screen). The attack fails at the face-detection
-    stage, before recognition or liveness ever runs.
-  - **Motion-based liveness check** requires observed pixel-level motion between consecutive
-    face-detected frames before accepting a match, defeating a rigidly-held static image.
-  - Does not perform structured-light or dot-projection depth checks (no depth-capable
-    hardware). **Printed photos remain an open risk** — paper does reflect some NIR unlike
-    OLED, and a gently-moved (not perfectly rigid) printed photo could pass the motion check.
-    High-quality IR-transparent prints or 3D masks may also bypass verification. Untested;
-    revisit if/when calibration data against real printed photos becomes available.
-- **Camera identity / frame-injection:** By default face-auth opens whatever V4L2 device
-  `device` resolves to and trusts frames from it — a USB device that claims the real camera's
-  VID/PID (which any device can do; it's just a string) could be substituted and used to feed
-  synthetic or replayed frames. Run `sudo ./pin-camera.sh` once to close this: it pins
-  face-auth to the camera's exact physical USB port path and V4L2 function index (not VID/PID),
-  read from sysfs — a property a spoofed device can't replicate without physically intercepting
-  that exact internal bus segment. It writes a udev rule (`/etc/udev/rules.d/99-face-auth-
-  camera.rules`) so `device` can point at a stable `/dev/face-auth-ir` symlink instead of a
-  `/dev/videoN` index that isn't guaranteed stable across reboots, and records the pinned
-  identity in `face-auth.toml` (`pinned_camera_path`, `pinned_camera_index`) so face-auth
-  re-verifies it directly from sysfs on every authenticate/enroll call — independent of the
-  udev rule staying correct. Opt-in and unset by default, so existing installs aren't affected
-  until you run it. This closes the *injection* vector specifically; it's unrelated to the
-  motion-liveness and IR-physics checks above, which defend against *presentation* attacks
-  (something held up to the real, legitimate camera) — you want both.
-- **SELinux policy scope:** The lock-screen policy grants `xdm_t` mmap access to all
-  V4L2 devices. This is a trade-off for drop-in compatibility; narrowing it requires
-  custom udev device types.
-- **x86_64 only:** V4L2 ioctl numbers and struct layouts are hardcoded for x86_64.
-  ARM/aarch64 requires switching to the `v4l` crate.
-- **Model integrity:** `deploy.sh` verifies SHA-256 checksum and aborts on mismatch.
+### Trust model
+
+- **Face templates are root-owned.** `/var/lib/face-auth` is mode `0700`, root:root, with
+  templates at `0600`. Whatever can write a template decides whose face unlocks that account, so
+  enrolment goes through `sudo`. Lockout state lives there too, so a user cannot reset it.
+- **The PAM path trusts only `/etc/face-auth.toml`.** A user's own config may make matching
+  stricter, never looser, and may not redirect model or template paths, unpin the camera, or
+  lift the lockout. `FACE_AUTH_*` environment variables are ignored during authentication.
+- **Identity comes from `PAM_USER` only.** `face-auth` refuses to run if PAM did not set it.
+- **Remote sessions are refused.** If `PAM_RHOST` names a non-local host, face authentication is
+  declined; the camera is at the console, so otherwise whoever sits at the desk would
+  authenticate an SSH session.
+
+### Presentation attacks (something held up to the real camera)
+
+- **Screens are blocked by sensor physics.** OLED and most LCD panels emit essentially no near-IR
+  and barely reflect the camera's illuminator, so a phone showing your photo produces no
+  face-shaped IR signal. Measured: zero detections across 100 attempts against a phone screen.
+- **Motion liveness** requires pixel-level motion between consecutive face frames before a match
+  counts, which defeats a rigidly held static image.
+- **Printed photos remain an open risk.** Paper does reflect some NIR, and a gently moved print
+  could pass the motion check. There is no structured-light or depth check. High-quality
+  IR-visible prints or 3D masks may bypass verification. Treat face unlock as a convenience over
+  a password you still have, not a stronger factor.
+
+### Frame injection (a fake camera)
+
+By default face-auth trusts frames from whatever `device` resolves to. A USB device claiming the
+real camera's VID/PID (just a string; any device can) could feed replayed frames.
+`pin-camera.sh` closes this by pinning the camera's physical USB port path and V4L2 index, read
+from sysfs, which a spoofed device cannot occupy at the same time as the real one. face-auth
+re-verifies that identity on every authentication and enrolment, independent of the udev rule.
+Opt-in. This is separate from the presentation defences above; you want both.
+
+Auto-detect only ever considers IR-named nodes or physical greyscale sensors, and never
+virtual (v4l2loopback) nodes, whose format any local user can set.
+
+### Other limitations
+
+- **Rate limiting covers the face factor only.** The lockout throttles repeated face attempts;
+  PAM's password fallback is untouched, so wire `pam_faillock` for that separately.
+- **`sufficient` bypasses the rest of the auth stack.** A successful match satisfies
+  authentication outright, so the strength of the stack becomes the strength of the face match.
+- **SELinux policy scope:** the lock-screen policy grants `xdm_t` mmap access to all V4L2
+  devices. Narrowing it requires custom udev device types.
+- **x86_64 only:** V4L2 ioctl numbers and struct layouts are hardcoded. ARM/aarch64 requires
+  the `v4l` crate.
+- **Model integrity:** both models are pinned by SHA-256 and the detector URL is pinned to a
+  commit. `deploy.sh` aborts on mismatch. Release binaries are verified against `SHA256SUMS`.
 
 ## Project Structure
 
 ```
-authFace/
+vinoAuthFace/
   crates/
     face-auth-core/          # Core library
       src/
-        capture.rs           # V4L2 capture + poll() timeout
-        config.rs            # Layered config (system → user → env)
-        detector.rs          # Face detection (RetinaFace-based ONNX model)
+        capture.rs           # V4L2 capture, formats, IR auto-detect, sysfs identity
+        config.rs            # Layered config + narrowing overlay for PAM, camera pin check
+        detector.rs          # Frame quality gates + face detection with box decode
         error.rs             # Error types
-        inference.rs         # tract-onnx model loading + encoding
-        lib.rs               # FaceAuth struct, auth + enroll + scan
-        preprocess.rs        # Histogram equalize, resize, normalize
-        storage.rs           # Binary embedding I/O (versioned, atomic)
+        inference.rs         # tract / OpenVINO encoder
+        lib.rs               # FaceAuth: auth scan (liveness, lockout) + enrolment
+        lockout.rs           # Per-user failed-match backoff
+        preprocess.rs        # CLAHE, face crop, resize/normalise, motion fraction
+        storage.rs           # Template I/O (versioned, model-tagged, atomic, 0600)
+        user.rs              # NSS lookup + username validation
         verify.rs            # Cosine similarity
-    face-auth/               # PAM binary (stdin-less, PAM_USER fallback)
-    face-enroll/             # Enrollment CLI
-    face-similarity-check/   # Offline FAR debug tool (photos vs enrolled embeddings)
-    face-camera-diag/        # Offline camera discovery/diagnostic tool (list, dump)
+      examples/              # detect-camera, frame-stats, bench
+    face-auth/               # PAM binary (PAM_USER only)
+    face-enroll/             # Enrolment CLI
+    face-camera-diag/        # Camera discovery tool (list, dump)
+    face-similarity-check/   # Offline photo FAR tool
   config/
     face-auth.toml.example   # Documented config template
   selinux/
     face-auth.te             # SELinux policy source
-  deploy.sh                  # Core auth installer
-  pin-camera.sh              # Pins device by USB bus path (frame-injection defense)
-  uninstall.sh               # Removal script (--purge flag)
+  deploy.sh                  # Installer
+  pin-camera.sh              # Pins the camera by USB bus path
+  uninstall.sh               # Removal script (--purge)
 ```
 
 ## License
 
-MIT
+MIT, for this code. A fork of [pfalkingham/authFace](https://github.com/pfalkingham/authFace)
+(MIT). The face detector `version-slim-320.onnx` is MIT. The recognition models
+(`w600k_mbf.onnx`, `w600k_r50.onnx`) are InsightFace model-zoo weights, licensed for
+non-commercial research use only; see [Model](#model).

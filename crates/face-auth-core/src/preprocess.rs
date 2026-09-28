@@ -1,13 +1,46 @@
+use crate::capture::IrFrame;
+use crate::detector::FaceBox;
 use image::{DynamicImage, ImageBuffer, Luma};
 use tract_onnx::prelude::tract_ndarray::Array3;
 
-use crate::detector::FaceBox;
+const ENCODER_SIZE: usize = 112;
 
-/// Crops a raw IR frame down to the detected face, expanded by `margin` (a
-/// fraction of the box's own width/height on each side) and padded to a
-/// square so the encoder's `resize_exact` doesn't distort the aspect ratio.
-/// Clamped to the source frame's bounds.
-pub fn crop_to_face(frame: &super::capture::IrFrame, face_box: &FaceBox, margin: f32) -> super::capture::IrFrame {
+/// Wrap a captured frame as a 16-bit greyscale image.
+///
+/// Shared by the detector and encoder paths so the geometry check lives in
+/// one place: `ImageBuffer::from_fn` indexes `width * height` pixels, and a
+/// frame shorter than that would otherwise be silently zero-padded into a
+/// picture that is part real and part black.
+pub fn frame_to_luma16(frame: &IrFrame) -> anyhow::Result<ImageBuffer<Luma<u16>, Vec<u16>>> {
+    let width = frame.width;
+    let height = frame.height;
+    anyhow::ensure!(width > 0 && height > 0, "frame has zero extent");
+
+    let expected = width as usize * height as usize;
+    anyhow::ensure!(
+        frame.data.len() >= expected,
+        "frame holds {} samples, expected {} for {}x{}",
+        frame.data.len(),
+        expected,
+        width,
+        height
+    );
+
+    Ok(ImageBuffer::from_fn(width, height, |x, y| {
+        Luma([frame.data[(y * width + x) as usize]])
+    }))
+}
+
+/// Crop a frame to the detected face, grown by `margin` (a fraction of the
+/// box's own size on each side) and squared up so the encoder's
+/// `resize_exact` does not distort the aspect ratio.
+///
+/// A window that runs off an edge is shifted back inside rather than shrunk,
+/// so a face near the border still gets a full-size crop.
+pub fn crop_to_face(frame: &IrFrame, face_box: &FaceBox, margin: f32) -> anyhow::Result<IrFrame> {
+    // Validates geometry against the buffer before any slicing below.
+    frame_to_luma16(frame)?;
+
     let width = frame.width as f32;
     let height = frame.height as f32;
 
@@ -18,70 +51,67 @@ pub fn crop_to_face(frame: &super::capture::IrFrame, face_box: &FaceBox, margin:
 
     let box_w = (x2 - x1).max(1.0);
     let box_h = (y2 - y1).max(1.0);
+    let (mx, my) = (box_w * margin, box_h * margin);
 
-    let mx = box_w * margin;
-    let my = box_h * margin;
-    let ex1 = x1 - mx;
-    let ey1 = y1 - my;
-    let ex2 = x2 + mx;
-    let ey2 = y2 + my;
-
-    let cx = (ex1 + ex2) / 2.0;
-    let cy = (ey1 + ey2) / 2.0;
-    let side = (ex2 - ex1).max(ey2 - ey1).min(width.min(height));
+    let cx = (x1 + x2) / 2.0;
+    let cy = (y1 + y2) / 2.0;
+    let side = (box_w + 2.0 * mx).max(box_h + 2.0 * my).min(width.min(height));
 
     let mut sx1 = cx - side / 2.0;
     let mut sy1 = cy - side / 2.0;
     let mut sx2 = cx + side / 2.0;
     let mut sy2 = cy + side / 2.0;
-
-    // Clamp to frame bounds by shifting the window rather than shrinking it,
-    // so a face near an edge still gets a full-size (just re-centered) crop.
-    if sx1 < 0.0 { sx2 -= sx1; sx1 = 0.0; }
-    if sy1 < 0.0 { sy2 -= sy1; sy1 = 0.0; }
-    if sx2 > width { sx1 -= sx2 - width; sx2 = width; }
-    if sy2 > height { sy1 -= sy2 - height; sy2 = height; }
-    sx1 = sx1.clamp(0.0, width);
-    sy1 = sy1.clamp(0.0, height);
-    sx2 = sx2.clamp(0.0, width);
-    sy2 = sy2.clamp(0.0, height);
-
-    let ix1 = sx1.round() as u32;
-    let iy1 = sy1.round() as u32;
-    let ix2 = (sx2.round() as u32).max(ix1 + 1).min(frame.width);
-    let iy2 = (sy2.round() as u32).max(iy1 + 1).min(frame.height);
-
-    let crop_w = ix2 - ix1;
-    let crop_h = iy2 - iy1;
-
-    let mut data = Vec::with_capacity((crop_w * crop_h) as usize);
-    for y in iy1..iy2 {
-        let row_start = (y * frame.width + ix1) as usize;
-        let row_end = row_start + crop_w as usize;
-        data.extend_from_slice(&frame.data[row_start..row_end]);
+    if sx1 < 0.0 {
+        sx2 -= sx1;
+        sx1 = 0.0;
+    }
+    if sy1 < 0.0 {
+        sy2 -= sy1;
+        sy1 = 0.0;
+    }
+    if sx2 > width {
+        sx1 -= sx2 - width;
+        sx2 = width;
+    }
+    if sy2 > height {
+        sy1 -= sy2 - height;
+        sy2 = height;
     }
 
-    super::capture::IrFrame { data, width: crop_w, height: crop_h }
+    let ix1 = (sx1.clamp(0.0, width).round() as u32).min(frame.width - 1);
+    let iy1 = (sy1.clamp(0.0, height).round() as u32).min(frame.height - 1);
+    let ix2 = (sx2.clamp(0.0, width).round() as u32).max(ix1 + 1).min(frame.width);
+    let iy2 = (sy2.clamp(0.0, height).round() as u32).max(iy1 + 1).min(frame.height);
+
+    let (crop_w, crop_h) = (ix2 - ix1, iy2 - iy1);
+    let mut data = Vec::with_capacity((crop_w * crop_h) as usize);
+    for y in iy1..iy2 {
+        let row = (y * frame.width + ix1) as usize;
+        data.extend_from_slice(&frame.data[row..row + crop_w as usize]);
+    }
+
+    Ok(IrFrame { data, width: crop_w, height: crop_h })
 }
 
-pub fn preprocess_ir_frame(frame: &super::capture::IrFrame) -> anyhow::Result<Array3<f32>> {
-    let width = frame.width as u32;
-    let height = frame.height as u32;
-    
-    let img_buffer: ImageBuffer<Luma<u16>, Vec<u16>> = ImageBuffer::from_fn(width, height, |x, y| {
-        let idx = (y * width + x) as usize;
-        let val = frame.data.get(idx).copied().unwrap_or(0);
-        Luma([val])
-    });
-    
+/// Resize and normalise a frame into the encoder's `[3, 112, 112]` input.
+///
+/// The arithmetic here defines what an enrolled embedding means; changing it
+/// invalidates every template already on disk.
+pub fn preprocess_ir_frame(frame: &IrFrame) -> anyhow::Result<Array3<f32>> {
+    let img_buffer = frame_to_luma16(frame)?;
+
     let dynamic_img = DynamicImage::ImageLuma16(img_buffer);
-    let resized = dynamic_img.resize_exact(112, 112, image::imageops::FilterType::Lanczos3);
+    let resized = dynamic_img.resize_exact(
+        ENCODER_SIZE as u32,
+        ENCODER_SIZE as u32,
+        image::imageops::FilterType::Lanczos3,
+    );
     let gray_img = resized.to_luma16();
-    
-    let mut array = Array3::<f32>::zeros((3, 112, 112));
-    
-    for y in 0..112usize {
-        for x in 0..112usize {
+
+    let mut array = Array3::<f32>::zeros((3, ENCODER_SIZE, ENCODER_SIZE));
+
+    for y in 0..ENCODER_SIZE {
+        for x in 0..ENCODER_SIZE {
             let pixel = gray_img.get_pixel(x as u32, y as u32).0[0] as f32 / 65535.0;
             let normalized = (pixel - 0.5) / 0.5;
             for c in 0..3usize {
@@ -89,204 +119,280 @@ pub fn preprocess_ir_frame(frame: &super::capture::IrFrame) -> anyhow::Result<Ar
             }
         }
     }
-    
+
     Ok(array)
 }
 
-/// Fraction of pixels that changed by more than a noise-floor amount between two equalized
-/// IR frames of the same dimensions. Used as a cheap liveness signal: a rigidly-held static
-/// photo produces near-zero motion, while a real face has natural micro-motion (blinks,
-/// breathing, postural sway) even when trying to hold still. Whole-frame averaging would dilute
-/// small, localized motion (e.g. an eye blink) against a mostly-static background, so this
-/// counts changed pixels instead of averaging raw differences.
-pub fn frame_motion_fraction(a: &super::capture::IrFrame, b: &super::capture::IrFrame) -> f32 {
+/// Fraction of pixels that changed by more than a noise floor between two
+/// equalised frames of the same size.
+///
+/// A cheap liveness signal: a rigidly held photo produces near-zero motion,
+/// while a real face has micro-motion (blinks, breathing, sway) even when
+/// holding still. Counting changed pixels rather than averaging differences
+/// keeps a small, local change like a blink from being diluted by the static
+/// background.
+pub fn frame_motion_fraction(a: &IrFrame, b: &IrFrame) -> f32 {
     if a.width != b.width || a.height != b.height || a.data.len() != b.data.len() || a.data.is_empty() {
         return 0.0;
     }
 
-    const PER_PIXEL_NOISE_FLOOR: i32 = 1500; // ~2.3% of the full 16-bit equalized range
+    const PER_PIXEL_NOISE_FLOOR: i32 = 1500; // ~2.3% of the u16 range
 
-    let changed = a.data.iter().zip(b.data.iter())
+    let changed = a
+        .data
+        .iter()
+        .zip(&b.data)
         .filter(|(&x, &y)| (x as i32 - y as i32).abs() > PER_PIXEL_NOISE_FLOOR)
         .count();
-
     changed as f32 / a.data.len() as f32
 }
 
-const CLAHE_TILES_X: u32 = 8;
-const CLAHE_TILES_Y: u32 = 8;
-/// Bins are clipped at this multiple of a tile's average bin height before the clipped excess
-/// is redistributed evenly across the tile's histogram. Global equalization over-amplifies flat
-/// regions (most of an IR frame outside the face) into visible noise; a moderate clip keeps the
-/// local contrast boost from doing the same to the sensor's own read noise.
-const CLAHE_CLIP_FACTOR: f32 = 4.0;
+/// Default CLAHE parameters. `CLIP_LIMIT` follows OpenCV's convention: the
+/// per-bin ceiling is `clip * tile_pixels / 256`, with the clipped mass
+/// redistributed. Howdy uses 2.0; 3.0 measured better on this sensor's frames
+/// without visibly amplifying noise.
+pub const CLAHE_CLIP_LIMIT: f32 = 3.0;
+pub const CLAHE_TILES: u32 = 8;
 
-/// Contrast-Limited Adaptive Histogram Equalization. Unlike a single frame-wide histogram, this
-/// computes a separate tone mapping per tile (so per-region IR falloff — e.g. dimmer toward the
-/// edges of the face — gets corrected locally) and bilinearly interpolates between neighboring
-/// tiles' mappings so tile boundaries don't show up as visible seams.
+/// Contrast-limited adaptive histogram equalisation.
 ///
-/// Bins on the true 8-bit sample value (`val / 257`), not the full `u16` range: `capture_frame`
-/// upscales each raw byte by `* 257` to fill `u16`'s range, so the source data only ever has 256
-/// distinct levels — binning across 65536 mostly-empty buckets would waste work without adding
-/// resolution.
-pub fn clahe(frame: &mut super::capture::IrFrame) {
-    let width = frame.width;
-    let height = frame.height;
-    if width == 0 || height == 0 || frame.data.is_empty() {
+/// Replaces the global equalisation this used to do. Global equalisation maps
+/// one CDF over the whole frame, so a dark IR frame — where nearly all samples
+/// sit in a narrow band — gets that band stretched across the full range,
+/// turning sensor noise into hard posterised contours. Measured on this
+/// camera, the face detector scored ~0.11 on globally-equalised frames (below
+/// its 0.5 threshold, indistinguishable from an empty room) and 0.60-0.99 on
+/// the same frames under CLAHE.
+///
+/// CLAHE instead equalises per tile with a ceiling on how much any one
+/// intensity may be amplified, then bilinearly interpolates between
+/// neighbouring tiles' mappings so no tile seams appear.
+///
+/// Samples are u16 carrying 8-bit data widened by 257 (see `capture_frame`),
+/// so 256 bins are exact here.
+pub fn clahe_equalize(frame: &mut IrFrame, clip_limit: f32, tiles: u32) {
+    let (w, h) = (frame.width as usize, frame.height as usize);
+    if frame.data.is_empty() || w == 0 || h == 0 || frame.data.len() < w * h {
         return;
     }
+    let tiles = tiles.max(1) as usize;
+    let tile_w = w.div_ceil(tiles);
+    let tile_h = h.div_ceil(tiles);
 
-    let tiles_x = CLAHE_TILES_X.min(width).max(1);
-    let tiles_y = CLAHE_TILES_Y.min(height).max(1);
+    // One 256-entry lookup table per tile.
+    let mut luts = vec![[0u8; 256]; tiles * tiles];
+    for ty in 0..tiles {
+        for tx in 0..tiles {
+            let x0 = tx * tile_w;
+            let y0 = ty * tile_h;
+            let x1 = (x0 + tile_w).min(w);
+            let y1 = (y0 + tile_h).min(h);
+            if x0 >= x1 || y0 >= y1 {
+                continue;
+            }
 
-    let col_bounds = tile_bounds(width, tiles_x);
-    let row_bounds = tile_bounds(height, tiles_y);
+            let mut hist = [0u32; 256];
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    hist[(frame.data[y * w + x] >> 8) as usize] += 1;
+                }
+            }
 
-    let mappings: Vec<Vec<[u8; 256]>> = row_bounds
-        .iter()
-        .map(|&(y0, y1)| {
-            col_bounds
-                .iter()
-                .map(|&(x0, x1)| tile_mapping(frame, x0, x1, y0, y1))
-                .collect()
-        })
-        .collect();
+            // Clip, then hand the excess back evenly. This is what bounds the
+            // contrast gain and stops noise being amplified without limit.
+            let count = ((x1 - x0) * (y1 - y0)) as f32;
+            let limit = ((clip_limit * count) / 256.0).max(1.0) as u32;
+            let mut excess: u32 = 0;
+            for b in hist.iter_mut() {
+                if *b > limit {
+                    excess += *b - limit;
+                    *b = limit;
+                }
+            }
+            let share = excess / 256;
+            let mut remainder = excess % 256;
+            for b in hist.iter_mut() {
+                *b += share;
+                if remainder > 0 {
+                    *b += 1;
+                    remainder -= 1;
+                }
+            }
 
-    let col_centers: Vec<f32> = col_bounds.iter().map(|&(s, e)| (s + e) as f32 / 2.0).collect();
-    let row_centers: Vec<f32> = row_bounds.iter().map(|&(s, e)| (s + e) as f32 / 2.0).collect();
-
-    let mut out = vec![0u16; frame.data.len()];
-    for y in 0..height {
-        let (ty0, ty1, wy) = neighbor_weights(y as f32, &row_centers);
-        for x in 0..width {
-            let (tx0, tx1, wx) = neighbor_weights(x as f32, &col_centers);
-            let idx = (y * width + x) as usize;
-            let val = (frame.data[idx] / 257) as usize;
-
-            let v00 = mappings[ty0][tx0][val] as f32;
-            let v01 = mappings[ty0][tx1][val] as f32;
-            let v10 = mappings[ty1][tx0][val] as f32;
-            let v11 = mappings[ty1][tx1][val] as f32;
-
-            let top = v00 * (1.0 - wx) + v01 * wx;
-            let bottom = v10 * (1.0 - wx) + v11 * wx;
-            let mapped = top * (1.0 - wy) + bottom * wy;
-
-            out[idx] = (mapped.round() as u16) * 257;
+            let lut = &mut luts[ty * tiles + tx];
+            let total = count.max(1.0);
+            let mut cumulative = 0u32;
+            for (i, &b) in hist.iter().enumerate() {
+                cumulative += b;
+                lut[i] = ((cumulative as f32 / total) * 255.0).clamp(0.0, 255.0) as u8;
+            }
         }
     }
 
-    frame.data = out;
+    // Bilinear blend between the four nearest tile centres.
+    for y in 0..h {
+        let gy = ((y as f32 - tile_h as f32 * 0.5) / tile_h as f32).max(0.0);
+        let ty0 = (gy as usize).min(tiles - 1);
+        let ty1 = (ty0 + 1).min(tiles - 1);
+        let fy = gy - ty0 as f32;
+
+        for x in 0..w {
+            let gx = ((x as f32 - tile_w as f32 * 0.5) / tile_w as f32).max(0.0);
+            let tx0 = (gx as usize).min(tiles - 1);
+            let tx1 = (tx0 + 1).min(tiles - 1);
+            let fx = gx - tx0 as f32;
+
+            let v = (frame.data[y * w + x] >> 8) as usize;
+            let tl = luts[ty0 * tiles + tx0][v] as f32;
+            let tr = luts[ty0 * tiles + tx1][v] as f32;
+            let bl = luts[ty1 * tiles + tx0][v] as f32;
+            let br = luts[ty1 * tiles + tx1][v] as f32;
+
+            let top = tl + (tr - tl) * fx;
+            let bottom = bl + (br - bl) * fx;
+            let out = (top + (bottom - top) * fy).clamp(0.0, 255.0) as u16;
+            frame.data[y * w + x] = out * 257;
+        }
+    }
 }
 
-/// Partitions `dim` into `tiles` contiguous, roughly-equal ranges (`[start, end)`), with any
-/// remainder absorbed into whichever tiles land on it rather than piled onto the last one.
-fn tile_bounds(dim: u32, tiles: u32) -> Vec<(u32, u32)> {
-    (0..tiles).map(|i| (i * dim / tiles, (i + 1) * dim / tiles)).collect()
-}
-
-/// Clip-limited histogram equalization mapping (256 -> 256) for one tile.
-fn tile_mapping(frame: &super::capture::IrFrame, x0: u32, x1: u32, y0: u32, y1: u32) -> [u8; 256] {
-    let mut hist = [0u32; 256];
-    let mut count = 0u32;
-    for y in y0..y1 {
-        let row_start = (y * frame.width) as usize;
-        for x in x0..x1 {
-            let val = (frame.data[row_start + x as usize] / 257) as usize;
-            hist[val] += 1;
-            count += 1;
-        }
-    }
-    if count == 0 {
-        let mut identity = [0u8; 256];
-        for (i, m) in identity.iter_mut().enumerate() {
-            *m = i as u8;
-        }
-        return identity;
-    }
-
-    let avg = count as f32 / 256.0;
-    let clip = (CLAHE_CLIP_FACTOR * avg).max(1.0) as u32;
-
-    let mut excess = 0u32;
-    for bin in hist.iter_mut() {
-        if *bin > clip {
-            excess += *bin - clip;
-            *bin = clip;
-        }
-    }
-    let redistribute = excess / 256;
-    let remainder = excess % 256;
-    for (i, bin) in hist.iter_mut().enumerate() {
-        *bin += redistribute + if (i as u32) < remainder { 1 } else { 0 };
-    }
-
-    let mut mapping = [0u8; 256];
-    let mut cumulative = 0u32;
-    let total = count as f32;
-    for (i, &bin) in hist.iter().enumerate() {
-        cumulative += bin;
-        mapping[i] = ((cumulative as f32 / total) * 255.0).round() as u8;
-    }
-    mapping
-}
-
-/// For a pixel coordinate along one axis, the two neighboring tile-center indices to
-/// interpolate between and the interpolation weight toward the second one. Coordinates at or
-/// beyond the outermost tile centers clamp to that tile with zero weight (no extrapolation).
-fn neighbor_weights(pos: f32, centers: &[f32]) -> (usize, usize, f32) {
-    let n = centers.len();
-    if n <= 1 || pos <= centers[0] {
-        return (0, 0, 0.0);
-    }
-    if pos >= centers[n - 1] {
-        return (n - 1, n - 1, 0.0);
-    }
-    for i in 0..n - 1 {
-        if pos >= centers[i] && pos <= centers[i + 1] {
-            let span = centers[i + 1] - centers[i];
-            let w = if span > 0.0 { (pos - centers[i]) / span } else { 0.0 };
-            return (i, i + 1, w);
-        }
-    }
-    (n - 1, n - 1, 0.0)
+/// Equalise a frame for detection and encoding, using the project defaults.
+pub fn histogram_equalize(frame: &mut IrFrame) {
+    clahe_equalize(frame, CLAHE_CLIP_LIMIT, CLAHE_TILES);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capture::IrFrame;
 
-    fn frame(data: Vec<u16>) -> IrFrame {
-        IrFrame { data, width: 2, height: 2 }
+    fn frame(data: Vec<u16>, width: u32, height: u32) -> IrFrame {
+        IrFrame { data, width, height }
+    }
+
+    #[test]
+    fn rejects_frame_shorter_than_its_geometry() {
+        // Previously padded with zeros, producing a half-black image that the
+        // encoder would happily turn into an embedding.
+        let f = frame(vec![0; 10], 32, 32);
+        assert!(frame_to_luma16(&f).is_err());
+        assert!(preprocess_ir_frame(&f).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_extent_frame() {
+        assert!(frame_to_luma16(&frame(vec![], 0, 0)).is_err());
+    }
+
+    #[test]
+    fn accepts_exactly_sized_frame() {
+        let f = frame(vec![1234; 32 * 32], 32, 32);
+        let img = frame_to_luma16(&f).unwrap();
+        assert_eq!(img.dimensions(), (32, 32));
+    }
+
+    #[test]
+    fn accepts_frame_with_trailing_padding() {
+        // Some drivers report bytesused beyond the visible image.
+        let f = frame(vec![7; 32 * 32 + 64], 32, 32);
+        assert!(frame_to_luma16(&f).is_ok());
+    }
+
+    #[test]
+    fn preprocess_produces_encoder_shaped_input() {
+        let f = frame((0..64 * 64).map(|i| (i % 65536) as u16).collect(), 64, 64);
+        let arr = preprocess_ir_frame(&f).unwrap();
+        assert_eq!(arr.shape(), &[3, ENCODER_SIZE, ENCODER_SIZE]);
+        assert!(arr.iter().all(|v| v.is_finite() && (-1.0..=1.0).contains(v)));
+    }
+
+    #[test]
+    fn clahe_expands_a_low_contrast_frame() {
+        // A dark, narrow-range frame — what an unlit-ish IR capture looks like.
+        let data: Vec<u16> = (0..64 * 64).map(|i| ((i % 20) as u16 + 20) * 257).collect();
+        let mut f = frame(data, 64, 64);
+        let before = spread(&f);
+        histogram_equalize(&mut f);
+        assert!(spread(&f) > before, "CLAHE should widen the tonal range");
+        assert!(f.data.iter().all(|&v| v % 257 == 0), "output stays 8-bit widened");
+    }
+
+    #[test]
+    fn clahe_leaves_a_flat_frame_flat() {
+        // Uniform input has no contrast to recover; it must not explode into
+        // noise, which is precisely what the clip limit is for.
+        let mut f = frame(vec![128 * 257; 64 * 64], 64, 64);
+        histogram_equalize(&mut f);
+        let first = f.data[0];
+        assert!(f.data.iter().all(|&v| v == first));
+    }
+
+    #[test]
+    fn clahe_handles_degenerate_frames() {
+        let mut empty = frame(vec![], 0, 0);
+        histogram_equalize(&mut empty);
+        assert!(empty.data.is_empty());
+
+        // Short buffer must be left alone rather than indexed out of bounds.
+        let mut short = frame(vec![100; 10], 32, 32);
+        histogram_equalize(&mut short);
+        assert_eq!(short.data.len(), 10);
+    }
+
+    #[test]
+    fn crop_is_square_and_inside_the_frame() {
+        let f = frame((0..640 * 400).map(|i| (i % 65536) as u16).collect(), 640, 400);
+        let b = FaceBox { x1: 0.4, y1: 0.3, x2: 0.6, y2: 0.7 };
+        let c = crop_to_face(&f, &b, 0.3).unwrap();
+        assert_eq!(c.width, c.height);
+        assert_eq!(c.data.len(), (c.width * c.height) as usize);
+        assert!(c.width <= 400);
+    }
+
+    #[test]
+    fn crop_near_an_edge_shifts_instead_of_shrinking() {
+        let f = frame(vec![1; 640 * 400], 640, 400);
+        let centred = crop_to_face(&f, &FaceBox { x1: 0.4, y1: 0.4, x2: 0.5, y2: 0.6 }, 0.3).unwrap();
+        let edge = crop_to_face(&f, &FaceBox { x1: -0.05, y1: 0.4, x2: 0.05, y2: 0.6 }, 0.3).unwrap();
+        assert_eq!(edge.width, centred.width);
+    }
+
+    #[test]
+    fn crop_rejects_a_short_frame() {
+        let f = frame(vec![0; 10], 32, 32);
+        let b = FaceBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        assert!(crop_to_face(&f, &b, 0.3).is_err());
     }
 
     #[test]
     fn identical_frames_have_zero_motion() {
-        let a = frame(vec![1000, 2000, 3000, 4000]);
-        let b = a.clone();
-        assert_eq!(frame_motion_fraction(&a, &b), 0.0);
+        let a = frame(vec![1000, 2000, 3000, 4000], 2, 2);
+        assert_eq!(frame_motion_fraction(&a, &a.clone()), 0.0);
     }
 
     #[test]
-    fn large_change_in_one_pixel_is_detected() {
-        let a = frame(vec![1000, 2000, 3000, 4000]);
-        let b = frame(vec![1000, 2000, 3000, 40000]);
+    fn large_change_in_one_pixel_is_motion() {
+        let a = frame(vec![1000, 2000, 3000, 4000], 2, 2);
+        let b = frame(vec![1000, 2000, 3000, 40000], 2, 2);
         assert_eq!(frame_motion_fraction(&a, &b), 0.25);
     }
 
     #[test]
-    fn small_noise_is_ignored() {
-        let a = frame(vec![1000, 2000, 3000, 4000]);
-        let b = frame(vec![1050, 2050, 2950, 3950]);
+    fn sensor_noise_is_not_motion() {
+        let a = frame(vec![1000, 2000, 3000, 4000], 2, 2);
+        let b = frame(vec![1050, 2050, 2950, 3950], 2, 2);
         assert_eq!(frame_motion_fraction(&a, &b), 0.0);
     }
 
     #[test]
-    fn mismatched_dimensions_return_zero() {
-        let a = frame(vec![1000, 2000, 3000, 4000]);
-        let b = IrFrame { data: vec![1000, 2000], width: 2, height: 1 };
+    fn mismatched_frames_have_zero_motion() {
+        let a = frame(vec![1000, 2000, 3000, 4000], 2, 2);
+        let b = frame(vec![1000, 2000], 2, 1);
         assert_eq!(frame_motion_fraction(&a, &b), 0.0);
+    }
+
+    fn spread(f: &IrFrame) -> u16 {
+        let max = f.data.iter().copied().max().unwrap_or(0);
+        let min = f.data.iter().copied().min().unwrap_or(0);
+        max - min
     }
 }

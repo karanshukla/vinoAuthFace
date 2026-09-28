@@ -1,27 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
-# Recognition model registry. "mbf" (MobileFaceNet, buffalo_sc pack) is the default: small
-# (~14MB) and fast, chosen for interactive PAM latency. "r50" (ResNet50, buffalo_l pack) is
-# larger (~175MB) and noticeably more accurate (wider genuine-match similarity margin observed
-# in local benchmarking) at a small, fixed extra cost per auth attempt (a few ms/frame on top of
-# mbf's ~1ms, plus a one-time NPU compile-cache-miss the first time it's ever loaded) — not a
-# scan-time regression, since the scan loop is paced by camera frame interval either way.
-# Select with: FACE_AUTH_RECOGNITION_MODEL=r50 sudo -E ./deploy.sh
-#
-# Switching models requires re-enrolling (`face-enroll --user $USER`) — different recognition
-# models produce numerically incompatible embedding spaces despite the same 512-d shape, so
-# face-auth-core refuses to compare embeddings across a model change rather than silently
-# producing meaningless similarity scores (see crates/face-auth-core/src/storage.rs model_tag).
+# Recognition model. "mbf" (MobileFaceNet, buffalo_sc) is the default: ~14MB
+# and fast. "r50" (ResNet50, buffalo_l) is ~175MB and more accurate, at a few
+# ms more per frame. Select with:
+#   sudo FACE_AUTH_RECOGNITION_MODEL=r50 ./deploy.sh
+# Switching models means re-enrolling: the two produce incompatible embedding
+# spaces, and face-auth refuses to compare across them (see storage.rs).
 RECOGNITION_MODEL="${FACE_AUTH_RECOGNITION_MODEL:-mbf}"
 case "$RECOGNITION_MODEL" in
     mbf)
         MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
+        MODEL_ZIP="buffalo_sc.zip"
         MODEL_NAME="w600k_mbf.onnx"
         MODEL_CHECKSUM="9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f"
         ;;
     r50)
         MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
+        MODEL_ZIP="buffalo_l.zip"
         MODEL_NAME="w600k_r50.onnx"
         MODEL_CHECKSUM="4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
         ;;
@@ -31,16 +27,11 @@ case "$RECOGNITION_MODEL" in
         ;;
 esac
 
-# Face detector model. Pinned to a specific commit (not the mutable `master` branch) so the
-# download can't silently change later, and checksummed like the recognition model above —
-# upstream itself publishes no checksum for this file, so this pin+checksum is the only
-# integrity check that exists for it. Verified byte-for-byte identical to `master`'s current
-# content as of pinning this, and the underlying architecture/training data is the same
-# Ultra-Light-Fast-Generic-Face-Detector family the official ONNX Model Zoo also distributes
-# (same 4420-anchor output shape detector.rs is built against) — not an obscure, unvetted file.
-DETECTOR_NAME="version-slim-320.onnx"
-DETECTOR_URL="https://raw.githubusercontent.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB/442599cebf11307bc231e2e5c3c6c869369fee48/models/onnx/version-slim-320_simplified.onnx"
-DETECTOR_CHECKSUM="0863d8fedffb8692c3fef345193c7befc9b513a66ac4ff87bdecf47452fa272f"
+# Pinned to the commit that introduced the file, not to a moving branch: a
+# `master` URL silently changes what gets installed. The checksum is the real
+# gate; the pin keeps it from breaking on an unrelated upstream commit.
+DETECTOR_URL="https://raw.githubusercontent.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB/0f9ca4a9fc80170fd505168fd1132b837141f7df/models/onnx/version-slim-320.onnx"
+DETECTOR_CHECKSUM="e9adbd0f920ddcce9368434c4d34d72520dc0c19b526fd44b4ef49bde2c3b1a8"
 
 BIN_DIR="/usr/local/bin"
 SHARE_DIR="/usr/local/share/face-auth"
@@ -50,312 +41,364 @@ VAR_DIR="/var/lib/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
 OPENVINO_INSTALL_DIR="/usr/local/lib/face-auth/openvino"
 
-ACTUAL_USER="${SUDO_USER:-$USER}"
-ACTUAL_HOME=$(getent passwd "$ACTUAL_USER" | cut -d: -f6)
+PAM_LINE="auth       sufficient  pam_exec.so quiet /usr/local/bin/face-auth"
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: this script installs into /usr/local, /etc and /var/lib — run it with sudo."
+    exit 1
+fi
+
+ACTUAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 
 # ---- Undo any previous partial setup ----
 echo "Cleaning up any previous partial setup..."
 
 for service in sudo swaylock gdm-password polkit-1; do
     if [ -f "$PAM_DIR/$service" ]; then
-        sed -i '/^auth\s\s*sufficient\s\s*pam_exec\.so.*face-auth/d' "$PAM_DIR/$service" 2>/dev/null || true
+        sed -i '/pam_exec\.so.*face-auth/d' "$PAM_DIR/$service" 2>/dev/null || true
     fi
 done
 
-# ---- Detect OpenVINO NPU toolchain ----
-# The `npu` feature dynamically links against OpenVINO's own .so files, which are built
-# for glibc — that's incompatible with the plain musl (fully static) build used otherwise,
-# so an NPU build switches target. This project never installs OpenVINO itself; Intel
-# documents two independent ways a user gets it onto their system, and each needs different
-# handling here:
+# ---- Build ----
+MUSL_TARGET="x86_64-unknown-linux-musl"
+ARTIFACT_DIR="target/$MUSL_TARGET/release"
+
+# Locate cargo. This script runs under sudo, and root's PATH normally does not
+# include the invoking user's rustup installation, so look there as well.
+find_cargo() {
+    if command -v cargo &>/dev/null; then
+        command -v cargo
+        return 0
+    fi
+    if [ -n "${SUDO_USER:-}" ]; then
+        local user_home
+        user_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+        if [ -n "$user_home" ] && [ -x "$user_home/.cargo/bin/cargo" ]; then
+            echo "$user_home/.cargo/bin/cargo"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Build as the invoking user, never as root: cargo fetches crates and runs
+# build scripts, and root-owned files left in target/ break their next build.
+as_user() {
+    if [ -n "${SUDO_USER:-}" ] && [ "$(id -u)" -eq 0 ]; then
+        sudo -u "$SUDO_USER" -H "$@"
+    else
+        "$@"
+    fi
+}
+
+build_with_cargo() {
+    local cargo="$1"
+    if ! as_user "$cargo" build --release --locked --target "$MUSL_TARGET" \
+            -p face-auth -p face-enroll; then
+        echo ""
+        echo "Build failed. If the error mentions a missing target, add it with:"
+        echo "  rustup target add $MUSL_TARGET"
+        return 1
+    fi
+}
+
+# ---- OpenVINO (NPU backend) detection ----
+# The `npu` feature links OpenVINO's glibc .so files, so an NPU build uses the
+# host (glibc) target instead of static musl. This script never installs
+# OpenVINO; it recognises the two ways Intel ships it:
 #
-#   1. System package (RPM/DEB): the package drops libopenvino_c straight into a standard lib
-#      directory. openvino-sys's own build.rs already searches these exact paths with no
-#      environment variables required, and RPM/DEB packages that ship shared libraries run
-#      ldconfig on install — so if it's here, both the build *and* face-auth's later runtime
-#      resolution are already covered for free, no copying or ld.so.conf.d needed.
-#   2. Archive (tarball extracted by the user, e.g. into ~/.local/opt or the classic
-#      /opt/intel/openvino path): ships a setupvars.sh that sets the environment variables
-#      (INTEL_OPENVINO_DIR etc.) both the build and openvino-sys's build.rs need. Since PAM
-#      invokes face-auth with no shell profile sourced, setupvars.sh being sourced here only
-#      covers the build — the runtime libraries still need copying system-wide separately
-#      (see "Install OpenVINO runtime libraries" below).
-#
-# `find`'s exit status matters here because of `set -e`/`pipefail` above: if a candidate
-# directory doesn't exist, find still exits non-zero even though the pipeline's other commands
-# succeed, which would otherwise abort this whole script — `|| true` on the substitution as a
-# whole absorbs that instead of failing deploy.sh outright over a directory that's allowed not
-# to exist.
-OPENVINO_LIB_DIRS="/usr/lib64 /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /lib"
-OPENVINO_SYSTEM_INSTALL=0
-for dir in $OPENVINO_LIB_DIRS; do
+#   system  RPM/DEB package: libopenvino_c lands in a standard lib dir and the
+#           package ran ldconfig, so build and PAM-time loading both just work.
+#   archive extracted tarball (~/.local/opt or /opt/intel) with setupvars.sh.
+#           That covers the build, but PAM runs face-auth with no shell
+#           profile, so the runtime libraries are copied system-wide below.
+ACTUAL_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
+OPENVINO_MODE=""
+for dir in /usr/lib64 /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /lib; do
     if compgen -G "$dir/libopenvino_c.so*" >/dev/null 2>&1; then
-        OPENVINO_SYSTEM_INSTALL=1
+        OPENVINO_MODE="system"
         break
     fi
 done
-
-OPENVINO_SRC=$(find "$ACTUAL_HOME/.local/opt" /opt/intel -maxdepth 1 \( -iname "openvino_toolkit_*" -o -iname "openvino" -o -iname "openvino_2022" \) -type d 2>/dev/null | sort -V | tail -1 || true)
-
-NPU_BUILD=0
-NPU_SOURCE_MODE=""
-if [ "$OPENVINO_SYSTEM_INSTALL" = "1" ]; then
-    NPU_BUILD=1
-    NPU_SOURCE_MODE="system"
-elif [ -n "$OPENVINO_SRC" ] && [ -f "$OPENVINO_SRC/setupvars.sh" ]; then
-    NPU_BUILD=1
-    NPU_SOURCE_MODE="archive"
+if [ -z "$OPENVINO_MODE" ]; then
+    # find exits non-zero on a missing search dir; that is not an error here.
+    OPENVINO_SRC="$(find "$ACTUAL_HOME/.local/opt" /opt/intel -maxdepth 1 -type d \
+        \( -iname "openvino_toolkit_*" -o -iname "openvino" -o -iname "openvino_2022" \) \
+        2>/dev/null | sort -V | tail -1 || true)"
+    if [ -n "$OPENVINO_SRC" ] && [ -f "$OPENVINO_SRC/setupvars.sh" ]; then
+        OPENVINO_MODE="archive"
+    fi
 fi
 
-# Locate cargo explicitly: under `sudo`, root's PATH does not include a rustup user
-# install (~/.cargo/bin), so `command -v cargo` silently fails as root even though the
-# actual user has it — that failure used to fall through to stale pre-built binaries
-# without anyone noticing, so it's resolved up front instead of relying on PATH.
-CARGO_BIN=$(command -v cargo || true)
-if [ -z "$CARGO_BIN" ] && [ -x "$ACTUAL_HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$ACTUAL_HOME/.cargo/bin/cargo"
-fi
-
-# ---- Build ----
-# Building as root doesn't work here even with cargo's path resolved: rustup's shim
-# needs a default toolchain configured under $HOME/.rustup, which only exists for the
-# actual user, not root. So the build itself runs as $ACTUAL_USER (via sudo -u -H, which
-# gives it that user's real $HOME); only the install steps below need root.
+NPU_FEATURES="face-auth-core/npu,face-auth/npu,face-enroll/npu"
 NPU_ACTIVE=0
-if [ -n "$CARGO_BIN" ]; then
-    if [ "$NPU_BUILD" = "1" ] && [ "$NPU_SOURCE_MODE" = "system" ]; then
-        echo "System-installed OpenVINO found (RPM/DEB) — building with NPU backend (host/glibc target)..."
-        sudo -u "$ACTUAL_USER" -H "$CARGO_BIN" build --release --locked --features face-auth-core/npu,face-auth/npu,face-enroll/npu -p face-auth -p face-enroll
-        FACE_AUTH_BIN="target/release/face-auth"
-        FACE_ENROLL_BIN="target/release/face-enroll"
-        NPU_ACTIVE=1
-    elif [ "$NPU_BUILD" = "1" ]; then
-        echo "OpenVINO archive found at $OPENVINO_SRC — building with NPU backend (host/glibc target)..."
-        sudo -u "$ACTUAL_USER" -H bash -c "
+BIN_SRC="$ARTIFACT_DIR"
+
+if [ -n "$OPENVINO_MODE" ] && CARGO_BIN="$(find_cargo)"; then
+    echo "OpenVINO found ($OPENVINO_MODE install): building with the NPU backend (glibc target)..."
+    if [ "$OPENVINO_MODE" = "system" ]; then
+        as_user "$CARGO_BIN" build --release --locked --features "$NPU_FEATURES" \
+            -p face-auth -p face-enroll || exit 1
+    else
+        as_user bash -c "
             set -eo pipefail
             source '$OPENVINO_SRC/setupvars.sh' >/dev/null
             set -u
-            '$CARGO_BIN' build --release --locked --features face-auth-core/npu,face-auth/npu,face-enroll/npu -p face-auth -p face-enroll
-        "
-        FACE_AUTH_BIN="target/release/face-auth"
-        FACE_ENROLL_BIN="target/release/face-enroll"
-        NPU_ACTIVE=1
-    else
-        echo "No OpenVINO installation found (checked system lib dirs, $ACTUAL_HOME/.local/opt, and /opt/intel) — building CPU-only (musl, static)..."
-        sudo -u "$ACTUAL_USER" -H "$CARGO_BIN" build --release --locked --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
-        FACE_AUTH_BIN="target/x86_64-unknown-linux-musl/release/face-auth"
-        FACE_ENROLL_BIN="target/x86_64-unknown-linux-musl/release/face-enroll"
+            '$CARGO_BIN' build --release --locked --features '$NPU_FEATURES' -p face-auth -p face-enroll
+        " || exit 1
     fi
-elif [ -f "target/x86_64-unknown-linux-musl/release/face-auth" ]; then
-    echo "Using pre-built musl binaries from target/ (cargo not found — note these predate NPU support if built before it existed)"
-    FACE_AUTH_BIN="target/x86_64-unknown-linux-musl/release/face-auth"
-    FACE_ENROLL_BIN="target/x86_64-unknown-linux-musl/release/face-enroll"
+    BIN_SRC="target/release"
+    NPU_ACTIVE=1
+elif [ -f "$ARTIFACT_DIR/face-auth" ] && [ -f "$ARTIFACT_DIR/face-enroll" ] \
+   && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ]; then
+    echo "Using pre-built binaries from $ARTIFACT_DIR/ (FACE_AUTH_FORCE_BUILD=1 to rebuild)"
+elif CARGO_BIN="$(find_cargo)"; then
+    echo "Building face-auth with $CARGO_BIN..."
+    build_with_cargo "$CARGO_BIN" || exit 1
 else
-    echo "cargo not found and no pre-built binaries in target/ — downloading prebuilt release binaries instead..."
+    # No toolchain and nothing built locally: fetch the release binaries CI
+    # publishes, verified against the release's SHA256SUMS.
     RELEASE_REPO="karanshukla/vinoAuthFace"
-    DL_DIR="/tmp/face-auth-release-bin"
-    rm -rf "$DL_DIR"
-    mkdir -p "$DL_DIR"
-
-    # FACE_AUTH_DEPLOY_RELEASE_BASE overrides the download source entirely — e.g. a `file://`
-    # or internal-mirror URL for air-gapped installs, or CI pointing this at binaries it just
-    # built itself to exercise this branch deterministically without depending on a real
-    # published release existing or GitHub's API being reachable.
     if [ -n "${FACE_AUTH_DEPLOY_RELEASE_BASE:-}" ]; then
+        # Override for air-gapped mirrors, and for CI exercising this path
+        # with a file:// URL.
         DOWNLOAD_BASE="$FACE_AUTH_DEPLOY_RELEASE_BASE"
+    elif GIT_TAG="$(git describe --tags --exact-match 2>/dev/null)"; then
+        # A tagged checkout installs its own release, so the binaries match
+        # the deploy logic running them.
+        DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$GIT_TAG"
     else
-        # Prefer the release matching this exact checkout (if it's a tagged clone) over
-        # whatever's currently "latest" — this script's own PAM-patching/config logic can change
-        # between tags, so the binaries it installs should match the deploy.sh version actually
-        # running it.
-        GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || true)
-        if [ -n "$GIT_TAG" ]; then
-            DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$GIT_TAG"
-        else
-            DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/latest/download"
-        fi
+        DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/latest/download"
     fi
 
-    for bin in face-auth face-enroll; do
-        asset="${bin}-x86_64-unknown-linux-musl"
-        curl -fL -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" || {
-            echo "Error: failed to download $asset from $DOWNLOAD_BASE"
-            echo "Either install a Rust toolchain (rustup target add x86_64-unknown-linux-musl)"
-            echo "and re-run, or check that a release with prebuilt binaries exists at"
-            echo "https://github.com/$RELEASE_REPO/releases"
+    echo "No Rust toolchain or local build found; downloading release binaries from"
+    echo "  $DOWNLOAD_BASE"
+    DL_DIR="$(mktemp -d)"
+    DOWNLOAD_OK=1
+    for asset in face-auth-$MUSL_TARGET face-enroll-$MUSL_TARGET SHA256SUMS; do
+        curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+            -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" || { DOWNLOAD_OK=0; break; }
+    done
+    if [ "$DOWNLOAD_OK" = 1 ]; then
+        # Both binaries must be listed, not just match: --ignore-missing alone
+        # would pass a file SHA256SUMS never mentions.
+        if ! (cd "$DL_DIR" \
+                && grep -E "[ *](face-auth|face-enroll)-$MUSL_TARGET\$" SHA256SUMS > want \
+                && [ "$(wc -l < want)" -eq 2 ] \
+                && sha256sum -c --strict --quiet want); then
+            echo "Error: checksum verification failed for the downloaded binaries."
             rm -rf "$DL_DIR"
             exit 1
-        }
-    done
-    curl -fL -o "$DL_DIR/SHA256SUMS" "$DOWNLOAD_BASE/SHA256SUMS" || {
-        echo "Error: failed to download SHA256SUMS from $DOWNLOAD_BASE"
+        fi
+        mkdir -p "$DL_DIR/bin"
+        mv "$DL_DIR/face-auth-$MUSL_TARGET" "$DL_DIR/bin/face-auth"
+        mv "$DL_DIR/face-enroll-$MUSL_TARGET" "$DL_DIR/bin/face-enroll"
+        BIN_SRC="$DL_DIR/bin"
+    else
         rm -rf "$DL_DIR"
-        exit 1
-    }
+        CONTAINER_ENGINE=""
+        for engine in podman docker; do
+            command -v "$engine" &>/dev/null && { CONTAINER_ENGINE="$engine"; break; }
+        done
 
-    echo "Verifying checksums..."
-    (cd "$DL_DIR" && sha256sum -c --ignore-missing SHA256SUMS) || {
-        echo "Error: checksum mismatch! The downloaded binaries may be corrupted or tampered."
-        rm -rf "$DL_DIR"
-        exit 1
-    }
+        echo "Error: no Rust toolchain, no pre-built binaries in $ARTIFACT_DIR/,"
+        echo "and the release download failed."
+        echo ""
 
-    chmod +x "$DL_DIR/face-auth-x86_64-unknown-linux-musl" "$DL_DIR/face-enroll-x86_64-unknown-linux-musl"
-    FACE_AUTH_BIN="$DL_DIR/face-auth-x86_64-unknown-linux-musl"
-    FACE_ENROLL_BIN="$DL_DIR/face-enroll-x86_64-unknown-linux-musl"
+        if [ -n "$CONTAINER_ENGINE" ]; then
+            # Deliberately not run from here: this script is under sudo, and
+            # rootless $CONTAINER_ENGINE driven through `sudo -u` frequently
+            # fails on a missing XDG_RUNTIME_DIR. Running it directly is
+            # reliable, and keeps the build artifacts owned by you.
+            echo "Option 1 — build in a container, no toolchain needed."
+            echo "Run this as yourself (NOT with sudo), then re-run sudo ./deploy.sh:"
+            echo ""
+            echo "  $CONTAINER_ENGINE run --rm -v \"\$PWD\":/src:Z -w /src \\"
+            echo "    docker.io/library/rust:alpine \\"
+            echo "    sh -c 'apk add --no-cache musl-dev && \\"
+            echo "           cargo build --release --locked --target $MUSL_TARGET \\"
+            echo "             -p face-auth -p face-enroll'"
+            echo ""
+            echo "Option 2 — install a Rust toolchain:"
+        else
+            echo "Install a Rust toolchain:"
+        fi
+
+        echo "  Arch/CachyOS:  sudo pacman -S --needed rust"
+        echo "  Fedora:        sudo dnf install rust cargo"
+        echo "  Or rustup:     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+        echo "  Then:          rustup target add $MUSL_TARGET"
+        echo ""
+        echo "Either way, re-run sudo ./deploy.sh afterwards."
+        exit 1
+    fi
 fi
 
-# Fail loudly rather than silently install a binary that doesn't match what we intended —
-# this is exactly the class of mismatch (config says openvino, binary is CPU-only) that
-# caused a confusing runtime error the first time this was wired up.
-if [ "$NPU_ACTIVE" = "1" ] && ! ldd "$FACE_AUTH_BIN" | grep -q libopenvino; then
-    echo "Error: NPU build was attempted but $FACE_AUTH_BIN has no OpenVINO linkage — aborting install."
+for bin in face-auth face-enroll; do
+    if [ ! -f "$BIN_SRC/$bin" ]; then
+        echo "Error: expected $BIN_SRC/$bin after the build, but it is missing."
+        exit 1
+    fi
+done
+
+# A binary that does not match the backend written to the config fails at
+# unlock time with a confusing error, so check the linkage now.
+if [ "$NPU_ACTIVE" = 1 ] && ! ldd "$BIN_SRC/face-auth" | grep -q libopenvino; then
+    echo "Error: NPU build requested but $BIN_SRC/face-auth has no OpenVINO linkage."
     exit 1
 fi
 
 # ---- Install binaries ----
 echo "Installing binaries..."
-install -Dm755 "$FACE_AUTH_BIN" "$BIN_DIR/face-auth"
-install -Dm755 "$FACE_ENROLL_BIN" "$BIN_DIR/face-enroll"
+install -Dm755 "$BIN_SRC/face-auth" "$BIN_DIR/face-auth"
+install -Dm755 "$BIN_SRC/face-enroll" "$BIN_DIR/face-enroll"
+[ -n "${DL_DIR:-}" ] && rm -rf "$DL_DIR"
 
-# ---- Install OpenVINO runtime libraries system-wide (NPU builds only) ----
-# Only the archive case needs this: its libraries live under the extracted folder, which
-# nothing else on the system knows to look in. A system-package (RPM/DEB) install already put
-# its libraries in a standard lib directory and ran ldconfig itself, so face-auth's own dynamic
-# linking already resolves them with no extra step — redoing that here would just be copying
-# system-owned files around for no benefit.
-if [ "$NPU_ACTIVE" = "1" ] && [ "$NPU_SOURCE_MODE" = "archive" ]; then
+# ---- OpenVINO runtime libraries (archive installs only) ----
+# OpenVINO finds its device plugins and ONNX frontend by scanning the
+# directory libopenvino.so lives in, so intel64/ is copied as a unit.
+if [ "$NPU_ACTIVE" = 1 ] && [ "$OPENVINO_MODE" = "archive" ]; then
     echo "Installing OpenVINO runtime libraries to $OPENVINO_INSTALL_DIR..."
-    # The whole intel64 directory is copied as a unit (not just libopenvino*.so):
-    # OpenVINO auto-discovers its CPU/NPU/GPU plugins and the ONNX frontend by scanning
-    # the directory libopenvino.so itself lives in, so they all have to stay co-located.
     mkdir -p "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb"
     cp -a "$OPENVINO_SRC/runtime/lib/intel64/." "$OPENVINO_INSTALL_DIR/intel64/"
     cp -a "$OPENVINO_SRC/runtime/3rdparty/tbb/lib/." "$OPENVINO_INSTALL_DIR/tbb/"
-    cat > /etc/ld.so.conf.d/face-auth-openvino.conf <<EOF
-$OPENVINO_INSTALL_DIR/intel64
-$OPENVINO_INSTALL_DIR/tbb
-EOF
+    printf '%s\n' "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb" \
+        > /etc/ld.so.conf.d/face-auth-openvino.conf
     ldconfig
-    echo "OpenVINO runtime libraries registered system-wide via ldconfig"
-elif [ "$NPU_ACTIVE" = "1" ]; then
-    echo "OpenVINO was installed as a system package — runtime libraries already resolve via the system linker, nothing to copy."
 fi
 
-# ---- Install recognition model (mbf or r50, selected above via RECOGNITION_MODEL) ----
+# ---- Install models ----
+# Staged in a private mktemp directory. A fixed /tmp path can be pre-created by
+# another user, who then owns it and can swap the file between the checksum
+# check and the install.
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+# GitHub release downloads redirect to a CDN that intermittently resets the
+# connection mid-handshake ("TLS connect error: unexpected eof while reading").
+# Retry rather than abandoning a half-finished install; --retry-all-errors so
+# a reset connection counts, not just a retryable HTTP status.
+# verify <file> <expected-sha256> — applied to every model, however it arrived.
+# A file staged in models/ is no more trusted than one off the network.
+verify() {
+    local file="$1" want="$2"
+    if ! echo "$want  $file" | sha256sum -c --status -; then
+        echo "Error: checksum mismatch for $file"
+        echo "  expected: $want"
+        echo "  actual:   $(sha256sum "$file" | cut -d' ' -f1)"
+        echo "Refusing to install a model that is not the one this release pins."
+        return 1
+    fi
+    echo "  checksum OK: $(basename "$file")"
+}
+
+# fetch <url> <dest> <manual-recovery-hint>
+fetch() {
+    local url="$1" dest="$2" hint="$3"
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+         --connect-timeout 20 -o "$dest" "$url" && return 0
+
+    echo ""
+    echo "Download failed after retries: $url"
+    echo ""
+    echo "This script prefers a local copy over downloading, so you can place the"
+    echo "file yourself and re-run:"
+    echo ""
+    echo "$hint"
+    return 1
+}
+
 echo "Installing recognition model ($RECOGNITION_MODEL: $MODEL_NAME)..."
 if [ -f "$SHARE_DIR/$MODEL_NAME" ]; then
     echo "Model already installed at $SHARE_DIR/$MODEL_NAME"
 elif [ -f "models/$MODEL_NAME" ]; then
+    verify "models/$MODEL_NAME" "$MODEL_CHECKSUM" || exit 1
     install -Dm644 "models/$MODEL_NAME" "$SHARE_DIR/$MODEL_NAME"
     echo "Installed model from models/$MODEL_NAME"
 else
     echo "Downloading model from InsightFace..."
-    mkdir -p /tmp/face-auth-model
-    curl -L -o /tmp/face-auth-model/model.zip "$MODEL_URL"
-    unzip -o /tmp/face-auth-model/model.zip -d /tmp/face-auth-model/
-    echo "Verifying checksum..."
-    echo "$MODEL_CHECKSUM  /tmp/face-auth-model/$MODEL_NAME" | sha256sum -c - || {
-        echo "Error: Checksum mismatch! The model may be corrupted or tampered."
-        rm -rf /tmp/face-auth-model
-        exit 1
-    }
-    install -Dm644 "/tmp/face-auth-model/$MODEL_NAME" "$SHARE_DIR/$MODEL_NAME"
-    rm -rf /tmp/face-auth-model
+    fetch "$MODEL_URL" "$WORK_DIR/$MODEL_ZIP" \
+        "  mkdir -p models
+  curl -fL -o /tmp/$MODEL_ZIP '$MODEL_URL'
+  unzip -j /tmp/$MODEL_ZIP $MODEL_NAME -d models/" || exit 1
+    unzip -oq "$WORK_DIR/$MODEL_ZIP" -d "$WORK_DIR/"
+    verify "$WORK_DIR/$MODEL_NAME" "$MODEL_CHECKSUM" || exit 1
+    install -Dm644 "$WORK_DIR/$MODEL_NAME" "$SHARE_DIR/$MODEL_NAME"
     echo "Model downloaded and installed"
 fi
 
-# ---- Install face detector model ----
 echo "Installing face detector model..."
+DETECTOR_NAME="version-slim-320.onnx"
 if [ -f "$SHARE_DIR/$DETECTOR_NAME" ]; then
     echo "Detector model already installed at $SHARE_DIR/$DETECTOR_NAME"
 elif [ -f "models/$DETECTOR_NAME" ]; then
+    verify "models/$DETECTOR_NAME" "$DETECTOR_CHECKSUM" || exit 1
     install -Dm644 "models/$DETECTOR_NAME" "$SHARE_DIR/$DETECTOR_NAME"
     echo "Installed detector model from models/$DETECTOR_NAME"
 else
-    echo "Downloading detector model..."
-    mkdir -p /tmp/face-auth-detector
-    curl -fL -o "/tmp/face-auth-detector/$DETECTOR_NAME" "$DETECTOR_URL"
-    echo "Verifying checksum..."
-    echo "$DETECTOR_CHECKSUM  /tmp/face-auth-detector/$DETECTOR_NAME" | sha256sum -c - || {
-        echo "Error: Checksum mismatch! The detector model may be corrupted or tampered."
-        rm -rf /tmp/face-auth-detector
-        exit 1
-    }
-    install -Dm644 "/tmp/face-auth-detector/$DETECTOR_NAME" "$SHARE_DIR/$DETECTOR_NAME"
-    rm -rf /tmp/face-auth-detector
+    echo "Downloading face detector model..."
+    fetch "$DETECTOR_URL" "$WORK_DIR/$DETECTOR_NAME" \
+        "  mkdir -p models
+  curl -fL -o models/$DETECTOR_NAME '$DETECTOR_URL'" || exit 1
+    verify "$WORK_DIR/$DETECTOR_NAME" "$DETECTOR_CHECKSUM" || exit 1
+    install -Dm644 "$WORK_DIR/$DETECTOR_NAME" "$SHARE_DIR/$DETECTOR_NAME"
     echo "Detector model downloaded and installed"
+    echo "Note: if face-auth reports that this model will not load, simplify it:"
+    echo "  python3 -m onnxsim $SHARE_DIR/$DETECTOR_NAME $SHARE_DIR/$DETECTOR_NAME"
 fi
 
 echo "Installing config..."
 if [ -f "$CONFIG_DIR/face-auth.toml" ]; then
-    echo "Config already exists at $CONFIG_DIR/face-auth.toml — leaving your settings (device, threshold, etc.) as-is."
+    echo "Keeping existing $CONFIG_DIR/face-auth.toml"
 else
     install -Dm644 config/face-auth.toml.example "$CONFIG_DIR/face-auth.toml"
 fi
 
-# The backend line is always kept in sync with what was actually built, regardless of
-# whether the config is fresh or pre-existing — a mismatch here (config says openvino,
-# binary doesn't have it, or vice versa) is exactly the bug that bit us the first time
-# this was wired up, so it's not left to chance either way.
-if [ "$NPU_ACTIVE" = "1" ]; then
-    if grep -q '^backend' "$CONFIG_DIR/face-auth.toml"; then
-        sed -i 's/^backend.*/backend = "openvino"/' "$CONFIG_DIR/face-auth.toml"
-    elif grep -q '^# backend' "$CONFIG_DIR/face-auth.toml"; then
-        sed -i 's/^# backend = "tract"/backend = "openvino"/' "$CONFIG_DIR/face-auth.toml"
+# Point model_path at the model installed this run. Only touched for a
+# non-default model, so a plain deploy never rewrites an existing config.
+if [ "$RECOGNITION_MODEL" != "mbf" ]; then
+    CONF="$CONFIG_DIR/face-auth.toml"
+    if grep -q '^model_path' "$CONF"; then
+        sed -i "s@^model_path.*@model_path = \"$SHARE_DIR/$MODEL_NAME\"@" "$CONF"
+    elif grep -q '^# model_path = ' "$CONF"; then
+        # @ delimiter: the pattern itself contains a '#'.
+        sed -i "s@^# model_path = .*@model_path = \"$SHARE_DIR/$MODEL_NAME\"@" "$CONF"
     else
-        # A `#`-prefixed line makes TOML treat everything after it — including whatever `>>`
-        # concatenates onto it if the file doesn't already end in a newline — as part of that
-        # same comment, silently dropping the line being appended instead of erroring.
-        [ -s "$CONFIG_DIR/face-auth.toml" ] && [ "$(tail -c1 "$CONFIG_DIR/face-auth.toml" | wc -l)" -eq 0 ] && echo >> "$CONFIG_DIR/face-auth.toml"
-        echo 'backend = "openvino"' >> "$CONFIG_DIR/face-auth.toml"
+        # Without a trailing newline the appended key would land inside a comment.
+        [ -s "$CONF" ] && [ "$(tail -c1 "$CONF" | wc -l)" -eq 0 ] && echo >> "$CONF"
+        echo "model_path = \"$SHARE_DIR/$MODEL_NAME\"" >> "$CONF"
     fi
-    echo "Set backend = \"openvino\" in $CONFIG_DIR/face-auth.toml (binary was built with NPU support)"
-elif grep -q '^backend\s*=\s*"openvino"' "$CONFIG_DIR/face-auth.toml" 2>/dev/null; then
-    sed -i 's/^backend.*/backend = "tract"/' "$CONFIG_DIR/face-auth.toml"
-    echo "Warning: NPU build not active this run — reverted backend to \"tract\" in $CONFIG_DIR/face-auth.toml"
+    echo "Set model_path = \"$SHARE_DIR/$MODEL_NAME\" in $CONF"
+    echo "NOTE: switching recognition models requires re-enrolling."
 fi
 
-# Keep model_path in face-auth.toml pointed at whatever RECOGNITION_MODEL was actually
-# installed this run — only touched when a non-default model is explicitly requested, so a
-# plain (default) `sudo ./deploy.sh` never rewrites a user's existing config, matching how
-# the rest of this script treats an already-present /etc/face-auth.toml as hands-off.
-if [ "$RECOGNITION_MODEL" != "mbf" ]; then
-    if grep -q '^model_path' "$CONFIG_DIR/face-auth.toml"; then
-        sed -i "s@^model_path.*@model_path = \"$SHARE_DIR/$MODEL_NAME\"@" "$CONFIG_DIR/face-auth.toml"
-    elif grep -q '^# model_path' "$CONFIG_DIR/face-auth.toml"; then
-        # Delimiter is @, not # — the pattern itself contains a literal '#' (matching the
-        # commented-out example line), which would otherwise terminate the sed pattern early
-        # and get misparsed as trailing flags ("unknown option to `s'").
-        sed -i "s@^# model_path = .*@model_path = \"$SHARE_DIR/$MODEL_NAME\"@" "$CONFIG_DIR/face-auth.toml"
+# Keep the backend line in sync with what was actually built. A mismatch
+# (config says openvino, binary lacks it) fails at unlock time.
+CONF="$CONFIG_DIR/face-auth.toml"
+if [ "$NPU_ACTIVE" = 1 ]; then
+    if grep -q '^backend' "$CONF"; then
+        sed -i 's/^backend.*/backend = "openvino"/' "$CONF"
+    elif grep -q '^# backend = ' "$CONF"; then
+        sed -i 's/^# backend = .*/backend = "openvino"/' "$CONF"
     else
-        [ -s "$CONFIG_DIR/face-auth.toml" ] && [ "$(tail -c1 "$CONFIG_DIR/face-auth.toml" | wc -l)" -eq 0 ] && echo >> "$CONFIG_DIR/face-auth.toml"
-        echo "model_path = \"$SHARE_DIR/$MODEL_NAME\"" >> "$CONFIG_DIR/face-auth.toml"
+        [ -s "$CONF" ] && [ "$(tail -c1 "$CONF" | wc -l)" -eq 0 ] && echo >> "$CONF"
+        echo 'backend = "openvino"' >> "$CONF"
     fi
-    echo "Set model_path = \"$SHARE_DIR/$MODEL_NAME\" in $CONFIG_DIR/face-auth.toml"
-    echo "NOTE: switching recognition models requires re-enrolling: face-enroll --user $ACTUAL_USER"
+    echo "Set backend = \"openvino\" in $CONF (binary built with NPU support)"
+elif grep -q '^backend\s*=\s*"openvino"' "$CONF"; then
+    sed -i 's/^backend.*/backend = "tract"/' "$CONF"
+    echo "Warning: no NPU build this run; reverted backend to \"tract\" in $CONF"
 fi
 
 # ---- PAM setup ----
 echo "Installing PAM configs..."
 
-# polkit-1 usually has no /etc/pam.d override out of the box — it falls back to the vendor
-# default (/usr/lib/pam.d/polkit-1, typically just `include system-auth`). Materialize that
-# default as a real file first, so the loop below has something to back up and patch, and so
-# uninstall.sh can tell "we created this from scratch" apart from "we edited an existing admin
-# override" (the former gets deleted outright on uninstall, the latter gets restored).
-if [ ! -f "$PAM_DIR/polkit-1" ]; then
-    if [ -f "/usr/lib/pam.d/polkit-1" ]; then
-        cp "/usr/lib/pam.d/polkit-1" "$PAM_DIR/polkit-1"
-    else
-        cat > "$PAM_DIR/polkit-1" <<'EOF'
-#%PAM-1.0
-auth       include      system-auth
-account    include      system-auth
-password   include      system-auth
-session    include      system-auth
-EOF
-    fi
+# polkit-1 (pkexec, GUI admin prompts, Bitwarden's system unlock) usually has
+# no /etc/pam.d override: it falls back to the vendor file in /usr/lib/pam.d.
+# Materialise that as an override so there is something to patch, and mark it
+# so uninstall.sh deletes it rather than "restoring" a file that never was.
+if [ ! -f "$PAM_DIR/polkit-1" ] && [ -f /usr/lib/pam.d/polkit-1 ]; then
+    cp /usr/lib/pam.d/polkit-1 "$PAM_DIR/polkit-1"
     touch "$PAM_DIR/.face-auth-polkit-1-created"
 fi
 
@@ -366,43 +409,44 @@ for service in sudo swaylock gdm-password polkit-1; do
         continue
     fi
     cp "$conf" "$conf.face-auth.bak"
-    sed -i '/pam_exec\.so.*face-auth/d' "$conf"
 
-    if [ "$service" = "gdm-password" ]; then
-        # Insert after pam_selinux_permit.so line (lock screen)
-        sed -i '/^auth.*pam_selinux_permit\.so$/a auth       sufficient  pam_exec.so /usr/local/bin/face-auth' "$conf"
+    if [ "$service" = "gdm-password" ] && grep -q "pam_selinux_permit\.so" "$conf"; then
+        # Insert after pam_selinux_permit.so (Fedora lock screen)
+        sed -i "/^auth.*pam_selinux_permit\.so\$/a $PAM_LINE" "$conf"
     else
-        # Insert after #%PAM-1.0 (must remain first line)
-        sed -i '/^#%PAM-1\.0/a auth       sufficient  pam_exec.so /usr/local/bin/face-auth' "$conf"
+        # Insert after #%PAM-1.0, which must remain the first line
+        sed -i "/^#%PAM-1\.0/a $PAM_LINE" "$conf"
     fi
-    echo "Updated $conf (backup at $conf.face-auth.bak)"
+
+    # sed silently does nothing when the anchor is absent, which would leave
+    # the service unconfigured while the script still reported success.
+    if grep -q "pam_exec\.so.*face-auth" "$conf"; then
+        echo "Updated $conf (backup at $conf.face-auth.bak)"
+    else
+        echo "Warning: could not find an insertion point in $conf."
+        echo "         Add this line manually, after the first line:"
+        echo "           $PAM_LINE"
+    fi
 done
 
-# ---- Bitwarden polkit policy (only if Bitwarden is actually installed) ----
-# Bitwarden's Linux biometric unlock is a polkit action (com.bitwarden.Bitwarden.unlock,
-# allow_active=auth_self) that re-authenticates the active user through the polkit-1 PAM
-# service wired above. The action definition itself normally needs installing manually for
-# Flatpak/Snap builds (sandboxed, can't self-install) — see
-# https://bitwarden.com/help/biometrics/#tab-linux. Content below is transcribed verbatim
-# from Bitwarden's own official source (the same string their native, non-sandboxed builds
-# write via pkexec at runtime), not downloaded from a URL, so there's no separate integrity
-# check needed: apps/desktop/src/key-management/biometrics/native-v2/os-biometrics-linux.service.ts
-# in https://github.com/bitwarden/clients.
-BITWARDEN_DETECTED=false
-if command -v bitwarden &>/dev/null || command -v bitwarden-desktop &>/dev/null; then
-    BITWARDEN_DETECTED=true
-elif flatpak info com.bitwarden.desktop &>/dev/null 2>&1; then
-    BITWARDEN_DETECTED=true
-elif snap list bitwarden-desktop &>/dev/null 2>&1; then
-    BITWARDEN_DETECTED=true
-fi
-
-if [ "$BITWARDEN_DETECTED" = true ]; then
+# ---- Bitwarden polkit action (only if Bitwarden is installed) ----
+# Bitwarden's "Unlock with system authentication" is a polkit action that
+# re-authenticates through the polkit-1 stack patched above. Flatpak and Snap
+# builds cannot install the action themselves (see
+# https://bitwarden.com/help/biometrics/#tab-linux). The policy below is
+# transcribed from Bitwarden's own source, the string its native builds write
+# via pkexec: apps/desktop/src/key-management/biometrics/native-v2/
+# os-biometrics-linux.service.ts in github.com/bitwarden/clients.
+if command -v bitwarden &>/dev/null || command -v bitwarden-desktop &>/dev/null \
+   || flatpak info com.bitwarden.desktop &>/dev/null \
+   || snap list bitwarden-desktop &>/dev/null; then
     BW_POLICY="/usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy"
     if [ -f "$BW_POLICY" ]; then
-        echo "Bitwarden polkit policy already installed at $BW_POLICY"
+        echo "Bitwarden polkit action already present at $BW_POLICY"
+    elif ! touch "$BW_POLICY" 2>/dev/null; then
+        # Read-only /usr on image-based distros.
+        echo "Warning: cannot write $BW_POLICY (read-only /usr?); Bitwarden system unlock not wired."
     else
-        echo "Installing Bitwarden polkit action (enables Bitwarden's 'Unlock with system authentication', including via face-auth)..."
         cat > "$BW_POLICY" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE policyconfig PUBLIC
@@ -423,12 +467,10 @@ if [ "$BITWARDEN_DETECTED" = true ]; then
 EOF
         chown root:root "$BW_POLICY"
         chmod 644 "$BW_POLICY"
-        command -v restorecon &>/dev/null && restorecon "$BW_POLICY" 2>/dev/null
-        echo "Installed $BW_POLICY — polkitd picks up new actions automatically, no restart needed."
-        echo "In Bitwarden: File > Settings > check 'Unlock with system authentication'."
+        touch "$SHARE_DIR/.bitwarden-policy-installed"
+        command -v restorecon &>/dev/null && restorecon "$BW_POLICY" 2>/dev/null || true
+        echo "Installed $BW_POLICY. In Bitwarden: Settings > 'Unlock with system authentication'."
     fi
-else
-    echo "Bitwarden not detected, skipping its polkit policy (polkit-1 PAM hook above still covers pkexec/other polkit prompts)."
 fi
 
 # ---- SELinux policy (for lock screen) ----
@@ -447,30 +489,56 @@ else
 fi
 
 # ---- Embeddings directory ----
-# $VAR_DIR itself stays 1777 (sticky, like /tmp) so any user can create their own
-# subdirectory on first enroll without re-running this script as root. Each user's own
-# subdirectory holds raw biometric embeddings and is locked to 0700/owner-only — face-auth
-# also enforces this on every save (crates/face-auth-core/src/storage.rs), this is just
-# belt-and-suspenders for the one this script creates directly.
-echo "Creating embeddings directory..."
-mkdir -p "$VAR_DIR/$ACTUAL_USER"
-chmod 1777 "$VAR_DIR"
-chown -R "$ACTUAL_USER:$ACTUAL_USER" "$VAR_DIR/$ACTUAL_USER"
-chmod 700 "$VAR_DIR/$ACTUAL_USER"
+#
+# Face templates are authentication data. Anything that can write them can
+# choose whose face unlocks an account, so the store is root-owned and 0700 and
+# enrolment goes through sudo/pkexec. Earlier versions made this 1777 with
+# user-owned subdirectories, which let any local user create a template
+# directory for an account that had not enrolled yet.
+echo "Securing embeddings directory..."
+install -d -o root -g root -m 0700 "$VAR_DIR"
+
+if [ -n "$(find "$VAR_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+    # Existing templates are kept; only their ownership and modes change, so
+    # nobody has to enrol again after upgrading.
+    #
+    # This directory may have been world-writable before this release, so treat
+    # what is in it as untrusted. Anything that is not a regular file or a
+    # directory (symlinks especially) is removed first: `chown -R` dereferences
+    # symlinks, so a planted link could otherwise redirect it at a file
+    # elsewhere on the system.
+    echo "Re-securing existing templates (no re-enrolment needed)..."
+
+    STRAY="$(find "$VAR_DIR" -mindepth 1 ! -type d ! -type f -print 2>/dev/null || true)"
+    if [ -n "$STRAY" ]; then
+        echo "Removing unexpected entries from $VAR_DIR:"
+        echo "$STRAY" | sed 's/^/  /'
+        find "$VAR_DIR" -mindepth 1 ! -type d ! -type f -delete 2>/dev/null || true
+    fi
+
+    # -h so the chown applies to entries themselves, never through a link.
+    find "$VAR_DIR" -mindepth 1 \( -type d -o -type f \) -exec chown -h root:root {} +
+    find "$VAR_DIR" -mindepth 1 -type d -exec chmod 0700 {} +
+    find "$VAR_DIR" -mindepth 1 -type f -exec chmod 0600 {} +
+
+    echo "If this system had the old world-writable store and you want to be"
+    echo "certain no one planted a template, purge and re-enrol:"
+    echo "  sudo rm -rf $VAR_DIR && sudo ./deploy.sh"
+fi
 
 echo ""
 echo "=== Install complete! ==="
 echo ""
-echo "Run this command to enroll your face:"
+echo "Enrol your face (enrolment writes a root-owned store, so it needs sudo):"
 echo ""
-echo "  face-enroll --user $ACTUAL_USER"
+echo "  sudo face-enroll --user $ACTUAL_USER"
 echo ""
 echo "Then test:"
-echo "  sudo true           # should authenticate via face"
+echo "  sudo -k && sudo true    # should authenticate via face"
 echo "  (lock screen: Super+L, then press a key to unlock)"
 echo ""
-echo "Once enrollment and a test unlock both work, run 'sudo ./pin-camera.sh' to lock"
-echo "face-auth to this exact camera — without it, a spoofed USB device claiming the"
-echo "same VID/PID could be used to inject frames. See README.md's Security & Limitations."
+echo "Once enrolment and a test unlock both work, pin the camera so a spoofed"
+echo "USB device claiming the same VID/PID cannot inject frames:"
+echo "  sudo ./pin-camera.sh /dev/videoN   (face-enroll prints the exact command)"
 echo ""
 echo "To uninstall: sudo ./uninstall.sh"

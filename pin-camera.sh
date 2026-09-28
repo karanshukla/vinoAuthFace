@@ -30,8 +30,8 @@ if [ -z "$DEVICE" ] && [ -f "$CONFIG_FILE" ]; then
 fi
 if [ -z "$DEVICE" ]; then
     echo "Usage: sudo ./pin-camera.sh /dev/videoN"
-    echo "(no device given, and none configured in $CONFIG_FILE — enroll first with an"
-    echo " explicit --device, or pass the device path here)"
+    echo "(no device given and none set in $CONFIG_FILE. face-enroll prints the"
+    echo " exact command with the camera it used; face-camera-diag list shows them all.)"
     exit 1
 fi
 

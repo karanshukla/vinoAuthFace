@@ -1,73 +1,95 @@
 # Face Authentication Configuration
-# Copy to /etc/face-auth.toml (system) or ~/.config/face-auth.toml (user)
-# Environment variables FACE_AUTH_* take precedence
+#
+# This file is the SYSTEM configuration: /etc/face-auth.toml
+# It must stay root-owned. It is the only source the PAM authentication path
+# trusts for the camera, the models, and the template directory.
+#
+# Users may also keep ~/.config/face-auth.toml. At the login and sudo prompt
+# that file may only ever make authentication STRICTER:
+#
+#   threshold, detector_threshold,
+#   liveness_motion_threshold       honoured only if >= the value set here
+#   device                          honoured only if it is a real IR capture
+#                                   device present on this machine
+#   scan_duration_ms, scan_interval_ms, capture_timeout_ms
+#                                   honoured within built-in bounds
+#   model_path, detector_model_path, embeddings_dir,
+#   pinned_camera_*, lockout_*, backend, npu_device
+#                                   ignored — system policy only
+#
+# FACE_AUTH_* environment variables affect face-enroll and the settings GUI.
+# They are ignored entirely during PAM authentication.
 
-# IR camera device path (auto-detected if not set)
-# device = "/dev/video3"
+# IR camera device path.
+#
+# Leave this unset unless you have a reason not to: auto-detection opens each
+# IR-named node and picks the first that is really a GREY capture device. UVC
+# cameras usually expose a metadata node right next to the capture node (e.g.
+# /dev/video2 captures, /dev/video3 does not), and guessing wrong here is the
+# most common setup mistake. Run `cargo run --example detect-camera` to see
+# what your hardware exposes.
+# device = "/dev/video2"
 
-# Cosine similarity threshold (0.0 - 1.0, lower = more permissive)
+# Cosine similarity threshold (0.3 - 1.0, HIGHER = stricter match).
+# This is the floor: a user cannot go below it, only above.
 threshold = 0.6
 
-# ONNX recognition model path (default: /usr/local/share/face-auth/w600k_mbf.onnx, fast
-# MobileFaceNet). deploy.sh can also install w600k_r50.onnx (ResNet50, larger/more accurate —
-# see README's "Recognition model" section) via FACE_AUTH_RECOGNITION_MODEL=r50, and will set
-# this line for you when it does. Changing this by hand requires re-enrolling
-# (`face-enroll --user $USER`) — face-auth refuses to compare embeddings enrolled under a
-# different model instead of silently producing meaningless similarity scores.
+# Recognition model path (default: /usr/local/share/face-auth/w600k_mbf.onnx).
+# deploy.sh sets this when installed with FACE_AUTH_RECOGNITION_MODEL=r50.
+# Changing models requires re-enrolling; face-auth refuses templates made
+# with a different model.
 # model_path = "/usr/local/share/face-auth/w600k_mbf.onnx"
 
-# Embeddings storage directory
+# Template storage directory. Must be root-owned and 0700 — anything that can
+# write here can choose whose face unlocks an account.
 # embeddings_dir = "/var/lib/face-auth"
 
-# Camera capture timeout in milliseconds (default: 5000)
-# Set to 0 for infinite wait (not recommended)
+# Camera capture timeout in milliseconds (100 - 30000, default 5000)
 capture_timeout_ms = 5000
 
 # Face detection ONNX model path (default: /usr/local/share/face-auth/version-slim-320.onnx)
 # detector_model_path = "/usr/local/share/face-auth/version-slim-320.onnx"
 
-# Face detection confidence threshold (0.0 - 1.0, higher = stricter)
+# Face detection confidence threshold (0.05 - 1.0, higher = stricter)
 detector_threshold = 0.5
 
-# How long the face scan window lasts, in milliseconds (default: 5000)
-# The scanner keeps capturing and checking frames until this elapses
-# or a match is found. Like Windows Hello behaviour.
+# How long the face scan window lasts, in milliseconds (500 - 30000, default 5000).
+# The scanner keeps capturing and checking frames until this elapses or a match
+# is found, like Windows Hello.
 scan_duration_ms = 5000
 
-# Delay between capture attempts within a scan window, in milliseconds.
-# If unset, this is queried from the camera's own reported native frame interval via V4L2 —
-# there's no point sleeping longer than the driver's own frame rate, and different hardware
-# reports very different native rates. Uncomment to force a fixed value instead.
-# scan_interval_ms = 200
+# Extra delay between capture attempts within a scan window, in milliseconds
+# (0 - 5000, default 0).
+#
+# Zero is right for almost everyone: the scan loop is already paced by the
+# camera and by inference, so it cannot spin. Raise it only to trade unlock
+# speed for CPU.
+scan_interval_ms = 0
 
-# Inference backend: "tract" (portable CPU, default) or "openvino" (Intel NPU/GPU/CPU
-# via OpenVINO). "openvino" only works if the binary was built with the `npu` Cargo
-# feature and OpenVINO's runtime libraries are installed system-wide — deploy.sh sets
-# this automatically when it detects both at build time, so you normally shouldn't need
-# to touch this by hand.
-# backend = "tract"
+# Backoff after repeated failed face matches (a face was seen and rejected).
+# Only throttles the face check: PAM still falls through to the password
+# prompt, and a locked-out attempt sleeps at most 3s before doing so.
+# System policy only; ignored in a user's own config.
+# lockout_threshold = 5          # failures allowed before any cooldown
+# lockout_base_delay_ms = 2000   # first cooldown, doubles per further failure
+# lockout_max_delay_ms = 300000  # cooldown ceiling
 
-# OpenVINO device to run on when backend = "openvino": "NPU", "GPU", or "CPU".
-# npu_device = "NPU"
+# Motion liveness (0.0 - 1.0, default 0.01). During a scan, a match is only
+# accepted once at least this fraction of pixels has changed between two
+# consecutive face frames. Defeats a rigidly held photo; a real face always
+# has some micro-motion. 0 disables it. A user's own config may only raise it.
+# liveness_motion_threshold = 0.01
 
-# Pins face-auth to one specific physical camera by its USB bus path and V4L2 function index,
-# so a spoofed USB device claiming the real camera's VID/PID (VID/PID alone is just a string
-# any device can claim) doesn't get accepted as a frame source. Set by pin-camera.sh — don't
-# hand-edit these; run `sudo ./pin-camera.sh` instead, which also derives `device` above from
-# the same pinned hardware. Leaving both unset disables the check entirely (default).
+# Camera pin, written by pin-camera.sh. When set, face-auth refuses frames
+# unless `device` resolves to this exact USB port and V4L2 index. Do not
+# hand-edit; re-run pin-camera.sh after intentionally changing hardware.
+# System policy only.
 # pinned_camera_path = "/sys/devices/pci0000:00/0000:00:14.0/usb3/3-7/3-7:1.2"
 # pinned_camera_index = 0
 
-# Lockout backoff: after this many consecutive failed face-match attempts for a user
-# (tracked on disk, so it persists across separate PAM invocations), face-auth stops
-# scanning and falls straight through to the password prompt, with an increasing delay
-# before it will try scanning again. This only throttles the face factor — it can never
-# lock you out of your machine, since PAM's password fallback is untouched.
-# lockout_threshold = 5
-
-# Initial cooldown (ms) applied on the first failure past the threshold; doubles with
-# each subsequent failure up to lockout_max_delay_ms.
-# lockout_base_delay_ms = 2000
-
-# Ceiling on the computed cooldown window (ms).
-# lockout_max_delay_ms = 300000
+# Inference backend: "tract" (default, pure-Rust CPU, works in the static musl
+# build) or "openvino" (needs a build with the `npu` feature, which deploy.sh
+# does automatically when it finds an OpenVINO install, and keeps in sync).
+# backend = "tract"
+# OpenVINO device when backend = "openvino": "NPU", "GPU" or "CPU".
+# npu_device = "NPU"
