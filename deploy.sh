@@ -248,6 +248,10 @@ if [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(fin
         # itself pulls in, and set-group-ID face-auth runs in glibc's secure
         # mode, where their own $ORIGIN rpaths are ignored.
         step "$NPU_STEP"
+        # The staging directory is new every run, and openvino-sys bakes the
+        # library path it found into its cached build output. Reused from an
+        # earlier build, that is a -L to a directory that no longer exists.
+        as_user "$CARGO_BIN" clean --quiet --release -p openvino-sys >/dev/null 2>&1 || true
         as_user env LD_LIBRARY_PATH="$OV_LIB_DIR" \
             RUSTFLAGS="-C link-arg=-Wl,--disable-new-dtags,-rpath,$OPENVINO_INSTALL_DIR" \
             "$CARGO_BIN" build --quiet --release --locked --features "$NPU_FEATURES" \
