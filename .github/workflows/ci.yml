@@ -202,7 +202,7 @@ jobs:
       - name: Deploy through ovfetch
         run: |
           sudo ./deploy.sh | tee "$RUNNER_TEMP/deploy.log"
-          grep -q 'OpenVINO found (ovfetch install)' "$RUNNER_TEMP/deploy.log"
+          grep -q 'via ovfetch' "$RUNNER_TEMP/deploy.log"
           grep -q '^backend = "openvino"' /etc/face-auth.toml
           ovfetch verify --prefix /usr/local/lib/face-auth/openvino
           # ovfetch#15: TBB dlopens its allocator by SONAME.
@@ -214,7 +214,7 @@ jobs:
       - name: Redeploy reuses the verified prefix
         run: |
           sudo ./deploy.sh | tee "$RUNNER_TEMP/redeploy.log"
-          grep -q 'is current and verified' "$RUNNER_TEMP/redeploy.log"
+          grep -q 'via ovfetch (installed, hashes verified)' "$RUNNER_TEMP/redeploy.log"
 
       - name: Compile the models on the CPU plugin
         run: |
