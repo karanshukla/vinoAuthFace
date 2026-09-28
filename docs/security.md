@@ -27,6 +27,10 @@ report a vulnerability, see [SECURITY.md](../SECURITY.md).
   process ancestry and skips the scan if an `sshd` is found (`abort_if_ssh`, on by default). A
   `tmux` or `screen` session started over SSH and reattached later isn't caught: its server's
   parent is init, not `sshd`.
+- **The tray acts only through a fixed root helper.** The optional tray runs as the user. For
+  enrol, retrain and uninstall it runs `face-auth-helper` through pkexec. The helper takes one verb,
+  no flags, and acts only for `PKEXEC_UID`. A face match can approve those polkit prompts, the same
+  as `sudo`. See [tray.md](tray.md#privileges).
 - **Only the user at the seat.** face-auth reads logind's state in `/run/systemd` and declines
   unless the target account owns the active seat0 session, or seat0 is showing a login greeter.
   With fast user switching, a `sudo` in B's background session won't match A's face while A is at

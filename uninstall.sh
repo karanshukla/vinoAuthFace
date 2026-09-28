@@ -44,6 +44,17 @@ fi
 echo "Removing binaries..."
 rm -f "$BIN_DIR/face-auth"
 rm -f "$BIN_DIR/face-enroll"
+
+# The tray (deploy.sh --with-tray). A running tray exits on its own when its
+# uninstall entry finishes; one started some other way keeps running until
+# logout, with nothing left for it to call.
+rm -f "$BIN_DIR/face-auth-tray" /usr/local/libexec/face-auth-helper
+rm -f /usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
+rm -f /usr/local/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
+rm -f /etc/xdg/autostart/vinoauthface-tray.desktop
+rm -f /usr/local/share/applications/vinoauthface-tray.desktop
+rm -f /usr/local/share/applications/vinoauthface-enrol.desktop
+rm -f /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
 rm -rf "$NPU_CACHE_DIR"
 
 # Only remove the Bitwarden action if deploy.sh wrote it, not one Bitwarden

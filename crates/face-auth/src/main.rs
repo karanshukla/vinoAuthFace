@@ -6,6 +6,8 @@
 //! `pam_exec` sets from the PAM handle itself.
 
 use face_auth_core::environment::{self, SkipReason};
+use face_auth_core::error::FaceAuthError;
+use face_auth_core::storage::EmbeddingStore;
 use face_auth_core::{capture, seat, user, FaceAuth, FaceAuthConfig};
 use std::env;
 use std::path::Path;
@@ -229,6 +231,43 @@ fn run_warm_cache() -> ! {
     std::process::exit(0);
 }
 
+/// Does the caller have templates? Exit 0 yes, 1 no, 2 error. For the tray's
+/// status line, which runs as the user and cannot open the store. Answers
+/// only for the real user ID, so it says nothing about any other account, and
+/// reads the store path from the system config alone.
+fn run_enrolled() -> ! {
+    let info = match user::current() {
+        Ok(info) => info,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
+    let config = match FaceAuthConfig::load_system() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("config error: {e}");
+            std::process::exit(2);
+        }
+    };
+    // EmbeddingStore::load reads a missing file as "not enrolled", and a
+    // store it cannot see into looks missing. That is an error here, not a no.
+    let dir = config.embeddings_dir();
+    if let Err(e) = std::fs::read_dir(&dir) {
+        eprintln!("cannot read {}: {e}", dir.display());
+        std::process::exit(2);
+    }
+    match EmbeddingStore::load(&info.name, &dir) {
+        Ok(store) if !store.embeddings.is_empty() => std::process::exit(0),
+        Ok(_) => std::process::exit(1),
+        Err(e) if matches!(e.downcast_ref(), Some(FaceAuthError::NoEmbeddings)) => std::process::exit(1),
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn main() {
     scrub_caller_environment();
     pin_process_context();
@@ -250,10 +289,12 @@ fn main() {
         match argv.as_slice() {
             [flag, name] if flag == "--verify" => run_verify(name),
             [flag] if flag == "--warm-cache" => run_warm_cache(),
+            [flag] if flag == "--enrolled" => run_enrolled(),
             _ => {
                 eprintln!("usage: face-auth            (PAM mode, reads PAM_USER)");
                 eprintln!("       face-auth --verify USER  (test a stored face, requires root)");
                 eprintln!("       face-auth --warm-cache   (compile the models into the NPU cache, requires root)");
+                eprintln!("       face-auth --enrolled     (exit 0 if you have enrolled a face)");
                 std::process::exit(2);
             }
         }

@@ -36,12 +36,12 @@ jobs:
       - name: Build release binaries (static musl, CPU/tract backend)
         run: |
           cargo build --release --locked --target x86_64-unknown-linux-musl \
-            -p face-auth -p face-enroll -p face-camera-diag -p face-similarity-check
+            -p face-auth -p face-enroll -p face-camera-diag -p face-similarity-check -p face-auth-tray
 
       - name: Stage artifacts and checksums
         run: |
           mkdir -p dist
-          for bin in face-auth face-enroll face-camera-diag face-similarity-check; do
+          for bin in face-auth face-enroll face-camera-diag face-similarity-check face-auth-tray face-auth-helper; do
             cp "target/x86_64-unknown-linux-musl/release/$bin" "dist/$bin-x86_64-unknown-linux-musl"
           done
           (cd dist && sha256sum -- * > SHA256SUMS)

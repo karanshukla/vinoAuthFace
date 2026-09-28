@@ -28,6 +28,18 @@ fail() {
     for line in "$@"; do printf '  %s\n' "$line" >&2; done
 }
 
+# ---- Options ----
+# --with-tray (or FACE_AUTH_TRAY=1): also install the tray icon, its root
+# helper and polkit actions (docs/tray.md). Off by default: it adds a
+# user-session app and a pkexec entry point.
+WITH_TRAY="${FACE_AUTH_TRAY:-0}"
+for arg in "$@"; do
+    case "$arg" in
+        --with-tray) WITH_TRAY=1 ;;
+        *) fail "Unknown option '$arg'" "Usage: sudo ./deploy.sh [--with-tray]"; exit 1 ;;
+    esac
+done
+
 # Recognition model. "mbf" (MobileFaceNet, buffalo_sc) is the default: ~14MB
 # and fast. "r50" (ResNet50, buffalo_l) is ~175MB and more accurate, at a few
 # ms more per frame. Select with:
@@ -121,10 +133,11 @@ as_user() {
 }
 
 build_with_cargo() {
-    local cargo="$1"
+    local cargo="$1" tray=()
+    [ "$WITH_TRAY" = 1 ] && tray=(-p face-auth-tray)
     step "building (a first build takes a few minutes)"
     if ! as_user "$cargo" build --quiet --release --locked --target "$MUSL_TARGET" \
-            -p face-auth -p face-enroll; then
+            -p face-auth -p face-enroll "${tray[@]}"; then
         fail "Build failed" "If the error mentions a missing target, add it with:" "  rustup target add $MUSL_TARGET"
         return 1
     fi
@@ -318,6 +331,21 @@ else
         mv "$DL_DIR/face-enroll-$MUSL_TARGET" "$DL_DIR/bin/face-enroll"
         BIN_SRC="$DL_DIR/bin"
         ok Download "release binaries, checksums verified"
+        # Separately, so a release without the tray still installs the rest.
+        if [ "$WITH_TRAY" = 1 ]; then
+            TRAY_DL_OK=1
+            for asset in face-auth-tray-$MUSL_TARGET face-auth-helper-$MUSL_TARGET; do
+                curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+                    -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" || { TRAY_DL_OK=0; break; }
+            done
+            if [ "$TRAY_DL_OK" = 1 ] && (cd "$DL_DIR" \
+                    && grep -E "[ *](face-auth-tray|face-auth-helper)-$MUSL_TARGET\$" SHA256SUMS > want-tray \
+                    && [ "$(wc -l < want-tray)" -eq 2 ] \
+                    && sha256sum -c --strict --quiet want-tray); then
+                mv "$DL_DIR/face-auth-tray-$MUSL_TARGET" "$DL_DIR/bin/face-auth-tray"
+                mv "$DL_DIR/face-auth-helper-$MUSL_TARGET" "$DL_DIR/bin/face-auth-helper"
+            fi
+        fi
     else
         rm -rf "$DL_DIR"
         CONTAINER_ENGINE=""
@@ -364,6 +392,22 @@ for bin in face-auth face-enroll; do
     fi
 done
 
+# The tray is always static musl: it never runs inference, so an NPU build
+# does not change it.
+TRAY_SRC=""
+if [ "$WITH_TRAY" = 1 ]; then
+    if [ -n "${DL_DIR:-}" ]; then
+        [ -f "$DL_DIR/bin/face-auth-tray" ] && TRAY_SRC="$DL_DIR/bin"
+    elif [ "$BIN_SRC" = "$ARTIFACT_DIR" ] && [ -f "$ARTIFACT_DIR/face-auth-tray" ] \
+         && [ -f "$ARTIFACT_DIR/face-auth-helper" ]; then
+        TRAY_SRC="$ARTIFACT_DIR"
+    elif CARGO_BIN="$(find_cargo)"; then
+        step "building the tray"
+        as_user "$CARGO_BIN" build --quiet --release --locked --target "$MUSL_TARGET" \
+            -p face-auth-tray && TRAY_SRC="$ARTIFACT_DIR"
+    fi
+fi
+
 # A binary that does not match the backend written to the config fails at
 # unlock time with a confusing error, so check the linkage now.
 if [ "$NPU_ACTIVE" = 1 ] && ! ldd "$BIN_SRC/face-auth" | grep -q libopenvino; then
@@ -385,8 +429,41 @@ if findmnt -no OPTIONS --target "$BIN_DIR" 2>/dev/null | tr ',' '\n' | grep -qx 
         "sudo, polkit and GDM still work; KDE's lock screen and swaylock fall back to the password."
 fi
 install -Dm755 "$BIN_SRC/face-enroll" "$BIN_DIR/face-enroll"
-[ -n "${DL_DIR:-}" ] && rm -rf "$DL_DIR"
 ok Binaries "face-auth, face-enroll in $BIN_DIR"
+# The tray's uninstall entry runs this copy; the repo may be long gone.
+install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"
+
+# ---- Tray (--with-tray) ----
+# The helper is what polkit authorises: root-owned, fixed path, one verb, no
+# flags (crates/face-auth-tray/src/helper.rs). The policy goes in /usr/share
+# where that is writable, since every polkit reads it; image-based distros
+# get /usr/local/share, which polkit 124 and later also read.
+TRAY_DATA="crates/face-auth-tray/data"
+if [ -d /usr/share/polkit-1/actions ] && [ -w /usr/share/polkit-1/actions ] \
+   && touch /usr/share/polkit-1/actions/.face-auth-write-test 2>/dev/null; then
+    rm -f /usr/share/polkit-1/actions/.face-auth-write-test
+    POLKIT_ACTIONS_DIR="/usr/share/polkit-1/actions"
+else
+    POLKIT_ACTIONS_DIR="/usr/local/share/polkit-1/actions"
+fi
+if [ -n "$TRAY_SRC" ]; then
+    install -Dm755 "$TRAY_SRC/face-auth-tray" "$BIN_DIR/face-auth-tray"
+    install -D -o root -g root -m 0755 "$TRAY_SRC/face-auth-helper" /usr/local/libexec/face-auth-helper
+    install -Dm644 "$TRAY_DATA/io.github.karanshukla.vinoauthface.policy" \
+        "$POLKIT_ACTIONS_DIR/io.github.karanshukla.vinoauthface.policy"
+    install -Dm644 "$TRAY_DATA/vinoauthface-tray.desktop" /etc/xdg/autostart/vinoauthface-tray.desktop
+    install -Dm644 "$TRAY_DATA/vinoauthface-tray.desktop" /usr/local/share/applications/vinoauthface-tray.desktop
+    install -Dm644 "$TRAY_DATA/vinoauthface-enrol.desktop" /usr/local/share/applications/vinoauthface-enrol.desktop
+    install -Dm644 "$TRAY_DATA/vinoauthface.svg" /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
+    if command -v restorecon &>/dev/null; then
+        restorecon "$BIN_DIR/face-auth-tray" /usr/local/libexec/face-auth-helper \
+            "$POLKIT_ACTIONS_DIR/io.github.karanshukla.vinoauthface.policy" 2>/dev/null || true
+    fi
+    ok Tray "starts at your next login, or run face-auth-tray now"
+elif [ "$WITH_TRAY" = 1 ]; then
+    warn Tray "No tray binaries to install (no Rust toolchain, and the release has none)."
+fi
+[ -n "${DL_DIR:-}" ] && rm -rf "$DL_DIR"
 
 # ---- OpenVINO runtime libraries (ovfetch and archive installs) ----
 if [ -n "$OV_STAGE" ]; then
