@@ -167,11 +167,6 @@ jobs:
       run:
         # Explicit so steps get pipefail: `deploy.sh | tee` must fail with deploy.sh.
         shell: bash
-    env:
-      OVFETCH_VERSION: v0.2.1
-      # Taken from a release download whose provenance passed
-      # `gh attestation verify --repo karanshukla/ovfetch`.
-      OVFETCH_SHA256: 7dcda76b9ba5d551ad9ff3f4df2d59d64cd67615f48d346c95f149597b1af9f9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -183,12 +178,19 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      # The latest release, not a pinned one: deploy.sh users get new ovfetch
+      # releases as soon as they update, so CI should too. What pins it is the
+      # signed provenance: the binary must have been built by ovfetch's own
+      # release workflow.
       - name: Install ovfetch
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL --retry 5 -o "$RUNNER_TEMP/ovfetch" \
-            "https://github.com/karanshukla/ovfetch/releases/download/$OVFETCH_VERSION/ovfetch-x86_64-linux"
-          echo "$OVFETCH_SHA256  $RUNNER_TEMP/ovfetch" | sha256sum -c --strict
-          sudo install -m 0755 "$RUNNER_TEMP/ovfetch" /usr/local/bin/ovfetch
+          gh release download --repo karanshukla/ovfetch --pattern ovfetch-x86_64-linux -D "$RUNNER_TEMP"
+          gh attestation verify "$RUNNER_TEMP/ovfetch-x86_64-linux" --repo karanshukla/ovfetch \
+            --signer-workflow karanshukla/ovfetch/.github/workflows/release.yml
+          sudo install -m 0755 "$RUNNER_TEMP/ovfetch-x86_64-linux" /usr/local/bin/ovfetch
+          ovfetch --version
 
       - name: Clippy and tests with the npu feature
         run: |
@@ -203,6 +205,8 @@ jobs:
           grep -q 'OpenVINO found (ovfetch install)' "$RUNNER_TEMP/deploy.log"
           grep -q '^backend = "openvino"' /etc/face-auth.toml
           ovfetch verify --prefix /usr/local/lib/face-auth/openvino
+          # ovfetch#15: TBB dlopens its allocator by SONAME.
+          test -e /usr/local/lib/face-auth/openvino/libtbbmalloc.so.2
           test ! -e /etc/ld.so.conf.d/face-auth-openvino.conf
           readelf -d /usr/local/bin/face-auth | grep -q 'RPATH.*/usr/local/lib/face-auth/openvino'
           ldd /usr/local/bin/face-auth | grep -q 'libopenvino_c.*/usr/local/lib/face-auth/openvino/'
