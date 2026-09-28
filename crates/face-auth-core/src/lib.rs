@@ -39,6 +39,7 @@ pub enum EnrollProgress {
     Capturing { captured: usize, wanted: usize, attempt: usize },
     NoContent,
     NoFace,
+    FaceTooSmall,
     Captured { captured: usize, wanted: usize },
 }
 
@@ -113,6 +114,10 @@ impl FaceAuth {
         let Some(face_box) = self.detector.detect(&frame)? else {
             return Err(FaceAuthError::NoFaceDetected.into());
         };
+        if face_box.is_smaller_than(self.config.min_face_size_ratio()) {
+            tracing::debug!(ratio = face_box.size_ratio(), "face too small");
+            return Err(FaceAuthError::NoFaceDetected.into());
+        }
 
         let face = crate::preprocess::crop_to_face(&frame, &face_box, FACE_CROP_MARGIN)?;
         let input = crate::preprocess::preprocess_ir_frame(&face)?;
@@ -216,6 +221,11 @@ impl FaceAuth {
                 nap(deadline);
                 continue;
             };
+            if face_box.is_smaller_than(self.config.min_face_size_ratio()) {
+                tracing::trace!(frame = frame_num, ratio = face_box.size_ratio(), "face too small");
+                nap(deadline);
+                continue;
+            }
             face_seen = true;
 
             // The first face frame has nothing to diff against, so it can never
@@ -284,6 +294,11 @@ impl FaceAuth {
                 std::thread::sleep(Duration::from_millis(interval_ms));
                 continue;
             };
+            if face_box.is_smaller_than(self.config.min_face_size_ratio()) {
+                progress(EnrollProgress::FaceTooSmall);
+                std::thread::sleep(Duration::from_millis(interval_ms));
+                continue;
+            }
 
             let face = crate::preprocess::crop_to_face(&frame, &face_box, FACE_CROP_MARGIN)?;
             let input = crate::preprocess::preprocess_ir_frame(&face)?;

@@ -18,6 +18,7 @@ const CAPTURE_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 100..=30_000;
 const SCAN_DURATION_RANGE: std::ops::RangeInclusive<u64> = 500..=30_000;
 const SCAN_INTERVAL_RANGE: std::ops::RangeInclusive<u64> = 0..=5_000;
 const LIVENESS_MOTION_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
+const MIN_FACE_SIZE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.75;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct FaceAuthConfig {
@@ -33,6 +34,7 @@ pub struct FaceAuthConfig {
     pub backend: Option<String>,
     pub npu_device: Option<String>,
     pub liveness_motion_threshold: Option<f32>,
+    pub min_face_size_ratio: Option<f32>,
     pub pinned_camera_path: Option<String>,
     pub pinned_camera_index: Option<u32>,
     pub lockout_threshold: Option<u32>,
@@ -58,6 +60,7 @@ impl Default for FaceAuthConfig {
             backend: None,
             npu_device: None,
             liveness_motion_threshold: None,
+            min_face_size_ratio: None,
             pinned_camera_path: None,
             pinned_camera_index: None,
             lockout_threshold: None,
@@ -192,6 +195,15 @@ impl FaceAuthConfig {
             }
         }
 
+        if let Some(t) = overlay.min_face_size_ratio {
+            if t.is_finite()
+                && t >= self.min_face_size_ratio()
+                && MIN_FACE_SIZE_RANGE.contains(&t)
+            {
+                self.min_face_size_ratio = Some(t);
+            }
+        }
+
         // Timing preferences cannot weaken a match decision, only how long the
         // user is willing to wait, so they are honoured within bounds.
         if let Some(v) = overlay.capture_timeout_ms {
@@ -248,6 +260,10 @@ impl FaceAuthConfig {
         let m = self.liveness_motion_threshold();
         if !m.is_finite() || !LIVENESS_MOTION_RANGE.contains(&m) {
             bail!("liveness_motion_threshold {} outside 0.0..=1.0", m);
+        }
+        let r = self.min_face_size_ratio();
+        if !r.is_finite() || !MIN_FACE_SIZE_RANGE.contains(&r) {
+            bail!("min_face_size_ratio {} outside 0.0..=0.75", r);
         }
         if !self.embeddings_dir().is_absolute() {
             bail!("embeddings_dir must be an absolute path");
@@ -345,6 +361,12 @@ impl FaceAuthConfig {
     /// `preprocess::frame_motion_fraction`. Zero disables the check.
     pub fn liveness_motion_threshold(&self) -> f32 {
         self.liveness_motion_threshold.unwrap_or(0.01)
+    }
+
+    /// Smallest accepted face, as the larger side of its box over the same
+    /// side of the frame. Zero disables the check.
+    pub fn min_face_size_ratio(&self) -> f32 {
+        self.min_face_size_ratio.unwrap_or(0.0)
     }
 
     /// If `pin-camera.sh` has pinned a camera, check that `device()` still
@@ -496,6 +518,23 @@ mod tests {
             ..FaceAuthConfig::default()
         });
         assert_eq!(cfg.liveness_motion_threshold(), 0.05);
+    }
+
+    #[test]
+    fn user_overlay_may_only_raise_min_face_size() {
+        let mut cfg = system_baseline();
+        cfg.min_face_size_ratio = Some(0.2);
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            min_face_size_ratio: Some(0.1),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.min_face_size_ratio(), 0.2);
+
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            min_face_size_ratio: Some(0.3),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.min_face_size_ratio(), 0.3);
     }
 
     #[test]

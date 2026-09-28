@@ -105,6 +105,7 @@ fn main() -> anyhow::Result<()> {
         }
         EnrollProgress::NoContent => println!("  nothing in frame, retrying..."),
         EnrollProgress::NoFace => println!("  no face detected, retrying..."),
+        EnrollProgress::FaceTooSmall => println!("  face too small, move closer..."),
         EnrollProgress::Captured { captured, wanted } => {
             println!("  captured {captured}/{wanted}");
         }

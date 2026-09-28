@@ -36,7 +36,7 @@ file they own, and is applied as a narrowing overlay:
 
 | Key | At the login prompt |
 |-----|--------------------|
-| `threshold`, `detector_threshold`, `liveness_motion_threshold` | Honoured only if **>= the system value**. A lower number is ignored |
+| `threshold`, `detector_threshold`, `liveness_motion_threshold`, `min_face_size_ratio` | Honoured only if **>= the system value**. A lower number is ignored |
 | `device` | Honoured only if the path is a real IR capture device on this machine (IR-looking sysfs name, or a physical greyscale sensor, and opens in a supported format) |
 | `scan_duration_ms`, `scan_interval_ms`, `capture_timeout_ms` | Honoured within built-in bounds |
 | `model_path`, `detector_model_path`, `embeddings_dir`, `pinned_camera_*`, `lockout_*`, `backend`, `npu_device`, `seat_check`, `abort_if_*` | **Ignored**: system policy only |

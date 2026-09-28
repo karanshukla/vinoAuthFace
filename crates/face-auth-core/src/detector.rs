@@ -63,6 +63,19 @@ pub struct FaceBox {
     pub y2: f32,
 }
 
+impl FaceBox {
+    /// The larger of the box's width and height, as a fraction of the frame.
+    /// Using the max keeps a turned head, with its narrower box, from being
+    /// mistaken for a distant one.
+    pub fn size_ratio(&self) -> f32 {
+        (self.x2 - self.x1).max(self.y2 - self.y1)
+    }
+
+    pub fn is_smaller_than(&self, min_ratio: f32) -> bool {
+        self.size_ratio() < min_ratio
+    }
+}
+
 /// One SSD-style anchor, normalised to the detector's 320x240 input.
 #[derive(Clone, Copy)]
 struct Prior {
@@ -383,6 +396,24 @@ mod tests {
             32,
             32
         )));
+    }
+
+    #[test]
+    fn face_size_gate_uses_the_larger_side() {
+        let tall = FaceBox { x1: 0.4, y1: 0.2, x2: 0.5, y2: 0.7 };
+        assert!((tall.size_ratio() - 0.5).abs() < 1e-6);
+        assert!(!tall.is_smaller_than(0.5));
+        assert!(tall.is_smaller_than(0.51));
+
+        let wide = FaceBox { x1: 0.1, y1: 0.4, x2: 0.4, y2: 0.5 };
+        assert!(wide.is_smaller_than(0.4));
+        assert!(!wide.is_smaller_than(0.25));
+    }
+
+    #[test]
+    fn zero_min_face_size_disables_the_gate() {
+        let dot = FaceBox { x1: 0.5, y1: 0.5, x2: 0.5, y2: 0.5 };
+        assert!(!dot.is_smaller_than(0.0));
     }
 
     #[test]

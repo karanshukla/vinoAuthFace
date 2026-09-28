@@ -8,7 +8,8 @@
 # that file may only ever make authentication STRICTER:
 #
 #   threshold, detector_threshold,
-#   liveness_motion_threshold       honoured only if >= the value set here
+#   liveness_motion_threshold,
+#   min_face_size_ratio             honoured only if >= the value set here
 #   device                          honoured only if it is a real IR capture
 #                                   device present on this machine
 #   scan_duration_ms, scan_interval_ms, capture_timeout_ms
@@ -94,6 +95,12 @@ scan_interval_ms = 0
 # consecutive face frames. Defeats a rigidly held photo; a real face always
 # has some micro-motion. 0 disables it. A user's own config may only raise it.
 # liveness_motion_threshold = 0.01
+
+# Minimum face size (0.0 - 0.75, default 0 = off). The larger side of the
+# detected face box, as a fraction of the same side of the frame. Smaller faces
+# are ignored at login and rejected at enrolment ("face too small, move
+# closer"). A user's own config may only raise it.
+# min_face_size_ratio = 0.0
 
 # Camera pin, written by pin-camera.sh. When set, face-auth refuses frames
 # unless `device` resolves to this exact USB port and V4L2 index. Do not
