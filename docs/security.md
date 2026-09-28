@@ -24,6 +24,11 @@ report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - **Remote sessions are refused.** If `PAM_RHOST` names a non-local host, face authentication is
   declined: the camera is at the console, so otherwise whoever sits at the desk would authenticate
   an SSH session.
+- **Only the user at the seat.** face-auth reads logind's state in `/run/systemd` and declines
+  unless the target account owns the active seat0 session, or seat0 is showing a login greeter.
+  With fast user switching, a `sudo` in B's background session won't match A's face while A is at
+  the desk. No active session, or state it can't read, declines too. Without `/run/systemd/seats`
+  (no logind) the check is skipped. `seat_check = false` turns it off.
 
 ## Presentation attacks (something held up to the real camera)
 

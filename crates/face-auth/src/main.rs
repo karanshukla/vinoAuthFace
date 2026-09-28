@@ -5,8 +5,9 @@
 //! reads from its environment is attacker-influenced except `PAM_USER`, which
 //! `pam_exec` sets from the PAM handle itself.
 
-use face_auth_core::{user, FaceAuth, FaceAuthConfig};
+use face_auth_core::{seat, user, FaceAuth, FaceAuthConfig};
 use std::env;
+use std::path::Path;
 use std::time::Instant;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -209,6 +210,12 @@ fn main() {
         Ok(c) => c,
         Err(e) => fail_setup(&format!("config error: {e}")),
     };
+
+    if config.seat_check() {
+        if let Err(reason) = seat::check(Path::new("/run/systemd"), info.uid) {
+            fail_auth(&format!("refusing face authentication for '{}': {reason}", info.name));
+        }
+    }
 
     let scan_duration = config.scan_duration_ms();
     let scan_interval = config.scan_interval_ms();
