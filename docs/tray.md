@@ -36,6 +36,9 @@ It starts at the next login, or run `face-auth-tray` now. `uninstall.sh` removes
 Enrolment progress ("Capturing frame 3/30", "Face too small: move closer") shows in the tooltip
 and a notification. The tray reads it from `face-enroll`'s normal output.
 
+The icon is a monochrome viewfinder that follows your Plasma theme, with a green face when ready.
+Left click opens the menu, which doubles as the status panel.
+
 The icon turns amber while any face scan is running: `sudo`, a polkit prompt, or a test scan. It
 checks for a running `face-auth` process in `/proc` every 200 ms. It can't show on the KDE lock
 screen, which has no tray. With `/proc` mounted `hidepid=1` or `2`, root's scans are invisible and

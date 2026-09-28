@@ -131,6 +131,7 @@ jobs:
           test -f /etc/xdg/autostart/vinoauthface-tray.desktop
           test -f /usr/local/share/applications/vinoauthface-enrol.desktop
           test -f /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
+          test -f /usr/local/share/icons/hicolor/symbolic/apps/vinoauthface-symbolic.svg
           # `! cmd` is exempt from set -e, so spell the failure out.
           refuses() { if "$@"; then echo "helper accepted: $*"; exit 1; fi; }
           refuses sudo /usr/local/libexec/face-auth-helper enrol

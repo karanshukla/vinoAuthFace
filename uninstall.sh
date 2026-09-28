@@ -55,6 +55,7 @@ rm -f /etc/xdg/autostart/vinoauthface-tray.desktop
 rm -f /usr/local/share/applications/vinoauthface-tray.desktop
 rm -f /usr/local/share/applications/vinoauthface-enrol.desktop
 rm -f /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
+rm -f /usr/local/share/icons/hicolor/symbolic/apps/vinoauthface{,-scanning,-attention}-symbolic.svg
 rm -rf "$NPU_CACHE_DIR"
 
 # Only remove the Bitwarden action if deploy.sh wrote it, not one Bitwarden

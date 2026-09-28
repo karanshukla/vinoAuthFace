@@ -32,6 +32,11 @@ impl Shape {
         }
     }
 
+    fn svg_path(self) -> String {
+        let Shape { x, y, w, h, .. } = self;
+        format!("M{x} {y}h{w}v{h}h-{w}z")
+    }
+
     fn svg_rect(self, paint: &str) -> String {
         let Shape { x, y, w, h, r } = self;
         format!(r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{r}" {paint}/>"#)
@@ -153,6 +158,54 @@ pub fn app_svg() -> String {
     svg
 }
 
+impl State {
+    pub const ALL: [State; 3] = [State::Ready, State::Scanning, State::Attention];
+
+    /// The themed icon name the tray asks for, as vinoWhisper's tray does:
+    /// Plasma recolours a `-symbolic` icon to the panel's text colour, and the
+    /// pixmaps below are only the fallback when the theme has none.
+    pub fn icon_name(self) -> &'static str {
+        match self {
+            State::Ready => "vinoauthface-symbolic",
+            State::Scanning => "vinoauthface-scanning-symbolic",
+            State::Attention => "vinoauthface-attention-symbolic",
+        }
+    }
+}
+
+/// A monochrome tray icon for one state, in the KDE symbolic format: the
+/// `ColorScheme-Text` class is what Plasma recolours. The viewfinder follows
+/// the theme; the accent (green face, amber scan) stays fixed.
+pub fn symbolic_svg(state: State) -> String {
+    let (mut text, mut accent, mut dim) = (String::new(), String::new(), String::new());
+    for &(shape, part) in SMALL.marks {
+        let bucket = match (state, part) {
+            (State::Ready, Part::Feature) | (State::Scanning, Part::Bracket | Part::ScanLine) => &mut accent,
+            (State::Attention, _) => &mut dim,
+            (_, Part::ScanLine) => continue,
+            _ => &mut text,
+        };
+        bucket.push_str(&shape.svg_path());
+    }
+    let accent_fill = hex(if state == State::Ready { GREEN } else { AMBER });
+    let mut svg = String::from(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\">\n  \
+         <style id=\"current-color-scheme\" type=\"text/css\">.ColorScheme-Text { color: #232629; }</style>\n",
+    );
+    for (path, style) in [
+        (text, "fill:currentColor".to_string()),
+        (dim, "fill:currentColor;fill-opacity:0.5".to_string()),
+        (accent, format!("fill:{accent_fill}")),
+    ] {
+        if !path.is_empty() {
+            let class = if style.contains("currentColor") { r#" class="ColorScheme-Text""# } else { "" };
+            svg.push_str(&format!("  <path{class} style=\"{style}\" d=\"{path}\"/>\n"));
+        }
+    }
+    svg.push_str("</svg>\n");
+    svg
+}
+
 /// Every size a tray might ask for, for one state.
 pub fn tray_icons(state: State) -> Vec<ksni::Icon> {
     [16, 22, 24, 32, 48, 64].into_iter().map(|size| tray_icon(state, size)).collect()
@@ -187,7 +240,7 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    const STATES: [State; 3] = [State::Ready, State::Scanning, State::Attention];
+    const STATES: [State; 3] = State::ALL;
 
     #[test]
     fn every_size_is_a_complete_argb_image() {
@@ -256,17 +309,22 @@ mod tests {
     }
 
     #[test]
-    fn the_checked_in_icon_is_the_one_drawn_here() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/vinoauthface.svg");
-        let svg = app_svg();
-        if std::env::var_os("FACE_AUTH_BLESS_ICONS").is_some() {
-            std::fs::write(&path, &svg).unwrap();
+    fn the_checked_in_icons_are_the_ones_drawn_here() {
+        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("data");
+        let bless = std::env::var_os("FACE_AUTH_BLESS_ICONS").is_some();
+        let mut icons = vec![("vinoauthface.svg".to_string(), app_svg())];
+        icons.extend(STATES.map(|s| (format!("{}.svg", s.icon_name()), symbolic_svg(s))));
+        for (name, svg) in icons {
+            let path = data.join(name);
+            if bless {
+                std::fs::write(&path, &svg).unwrap();
+            }
+            let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(
+                on_disk == svg,
+                "{} is stale; regenerate it with FACE_AUTH_BLESS_ICONS=1 cargo test -p face-auth-tray",
+                path.display()
+            );
         }
-        let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
-        assert!(
-            on_disk == svg,
-            "{} is stale; regenerate it with FACE_AUTH_BLESS_ICONS=1 cargo test -p face-auth-tray",
-            path.display()
-        );
     }
 }
