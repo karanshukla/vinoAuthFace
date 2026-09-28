@@ -24,6 +24,16 @@ the caller's environment, `RUST_LOG` included.
 `face-auth` doesn't guess the account from `USER`/`LOGNAME`. To run it by hand, use `--verify`
 rather than setting `PAM_USER` yourself.
 
+## Lock-screen unlock is slow on the NPU backend
+
+The NPU compile cache in `/var/cache/face-auth` is empty, so every unlock compiles both models on
+the CPU first. The lock screen runs as you and can only read that cache; only root writes it.
+`deploy.sh` refills it after emptying it, but a driver update invalidates it too. Refill it with:
+
+```bash
+sudo face-auth --warm-cache
+```
+
 ## "reports pixel format ... expected GREY, YUYV or Y16"
 
 The selected device isn't an IR sensor: it's an ordinary RGB webcam, or the metadata node next to

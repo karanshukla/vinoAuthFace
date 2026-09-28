@@ -154,3 +154,82 @@ jobs:
           [ -d "$HOME/.cargo/bin.hidden" ] && mv "$HOME/.cargo/bin.hidden" "$HOME/.cargo/bin" || true
           sudo ./uninstall.sh || true
           sudo rm -f /etc/pam.d/swaylock /etc/pam.d/gdm-password /etc/pam.d/face-auth-ci-stack
+
+  # The OpenVINO backend, provisioned the way deploy.sh does it on a real
+  # machine: ovfetch on PATH, sudo ./deploy.sh. The runner has no NPU, so
+  # ovfetch picks the newest build, and the models are compiled for OpenVINO's
+  # CPU plugin instead. That still proves the libraries load with no
+  # plugins.xml, through the rpath, from a set-group-ID binary.
+  npu:
+    runs-on: ubuntu-latest
+    needs: test
+    defaults:
+      run:
+        # Explicit so steps get pipefail: `deploy.sh | tee` must fail with deploy.sh.
+        shell: bash
+    env:
+      OVFETCH_VERSION: v0.2.1
+      # Taken from a release download whose provenance passed
+      # `gh attestation verify --repo karanshukla/ovfetch`.
+      OVFETCH_SHA256: 7dcda76b9ba5d551ad9ff3f4df2d59d64cd67615f48d346c95f149597b1af9f9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install ovfetch
+        run: |
+          curl -fsSL --retry 5 -o "$RUNNER_TEMP/ovfetch" \
+            "https://github.com/karanshukla/ovfetch/releases/download/$OVFETCH_VERSION/ovfetch-x86_64-linux"
+          echo "$OVFETCH_SHA256  $RUNNER_TEMP/ovfetch" | sha256sum -c --strict
+          sudo install -m 0755 "$RUNNER_TEMP/ovfetch" /usr/local/bin/ovfetch
+
+      - name: Clippy and tests with the npu feature
+        run: |
+          ovfetch install --prefix "$RUNNER_TEMP/ov"
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/ov"
+          cargo clippy --locked --workspace --all-targets --features face-auth-core/npu -- -D warnings
+          cargo test --locked --workspace --features face-auth-core/npu
+
+      - name: Deploy through ovfetch
+        run: |
+          sudo ./deploy.sh | tee "$RUNNER_TEMP/deploy.log"
+          grep -q 'OpenVINO found (ovfetch install)' "$RUNNER_TEMP/deploy.log"
+          grep -q '^backend = "openvino"' /etc/face-auth.toml
+          ovfetch verify --prefix /usr/local/lib/face-auth/openvino
+          test ! -e /etc/ld.so.conf.d/face-auth-openvino.conf
+          readelf -d /usr/local/bin/face-auth | grep -q 'RPATH.*/usr/local/lib/face-auth/openvino'
+          ldd /usr/local/bin/face-auth | grep -q 'libopenvino_c.*/usr/local/lib/face-auth/openvino/'
+
+      - name: Redeploy reuses the verified prefix
+        run: |
+          sudo ./deploy.sh | tee "$RUNNER_TEMP/redeploy.log"
+          grep -q 'is current and verified' "$RUNNER_TEMP/redeploy.log"
+
+      - name: Compile the models on the CPU plugin
+        run: |
+          echo 'npu_device = "CPU"' | sudo tee -a /etc/face-auth.toml
+          sudo face-auth --warm-cache
+
+      # Not root, so the set-group-ID bit puts glibc in secure mode. With no
+      # PAM_USER it exits 1 after loading; a loader failure would exit 127.
+      - name: Libraries load in secure mode
+        run: |
+          set +e
+          env -i /usr/local/bin/face-auth 2> "$RUNNER_TEMP/err"
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/err"
+          test "$rc" = 1
+          ! grep -q 'error while loading shared libraries' "$RUNNER_TEMP/err"
+
+      - name: Uninstall removes the prefix
+        run: |
+          sudo ./uninstall.sh
+          test ! -e /usr/local/lib/face-auth

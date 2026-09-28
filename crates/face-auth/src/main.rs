@@ -170,6 +170,38 @@ fn run_verify(name: &str) -> ! {
     }
 }
 
+/// Compile both models once as root so the NPU cache is populated before the
+/// first unlock. The lock screen runs as the user and cannot write the cache,
+/// so without this every lock-screen unlock after a deploy recompiles both
+/// models on the CPU until something root (sudo, polkit) authenticates.
+/// Models, backend and device are system-only settings, so the system config
+/// compiles exactly what the PAM path will look up.
+fn run_warm_cache() -> ! {
+    if unsafe { libc::getuid() } != 0 {
+        eprintln!("--warm-cache writes the root-owned NPU cache; re-run with sudo");
+        std::process::exit(2);
+    }
+    let config = match FaceAuthConfig::load_system() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("config error: {e}");
+            std::process::exit(2);
+        }
+    };
+    if config.backend() != "openvino" {
+        println!("backend is {}: nothing to cache", config.backend());
+        std::process::exit(0);
+    }
+    let device = config.npu_device();
+    let t = Instant::now();
+    if let Err(e) = FaceAuth::new(config) {
+        eprintln!("cannot compile the models for {device}: {e}");
+        std::process::exit(1);
+    }
+    println!("compiled both models for {device} in {:.1?}", t.elapsed());
+    std::process::exit(0);
+}
+
 fn main() {
     scrub_caller_environment();
     pin_process_context();
@@ -190,9 +222,11 @@ fn main() {
     if !argv.is_empty() {
         match argv.as_slice() {
             [flag, name] if flag == "--verify" => run_verify(name),
+            [flag] if flag == "--warm-cache" => run_warm_cache(),
             _ => {
                 eprintln!("usage: face-auth            (PAM mode, reads PAM_USER)");
                 eprintln!("       face-auth --verify USER  (test a stored face, requires root)");
+                eprintln!("       face-auth --warm-cache   (compile the models into the NPU cache, requires root)");
                 std::process::exit(2);
             }
         }
