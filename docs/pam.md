@@ -46,7 +46,23 @@ Bitwarden's own source (`os-biometrics-linux.service.ts` in
 
 ## Keyrings
 
-KWallet unlocks once at login from the typed password and stays unlocked across screen locks, so
-there's nothing for face-auth to gate at the lock screen. See
-[#36](https://github.com/karanshukla/vinoAuthFace/issues/36) for what a face *login* does to
-KWallet, oo7 and GNOME Keyring.
+A face match means PAM never sees a password. Any module that unlocks a secret store from the
+login password has nothing to unlock it with, so after a face *login*:
+
+| Store | Module | After face login |
+|---|---|---|
+| KWallet | `pam_kwallet5` | Locked |
+| oo7 (Fedora 45's default Secret Service) | `pam_oo7` | Locked |
+| GNOME Keyring | `pam_gnome_keyring` | Locked |
+
+The first app that needs a secret asks for the password once, then the store stays open for the
+session.
+
+- **Lock screen unlock is fine.** The store was opened at login and stays open across screen
+  locks, so there's nothing for face-auth to gate there.
+- **Plasma Login Manager quirk.** If you typed a password and your face matched first, PLM still
+  hands the typed text to `pam_kwallet5`, so the wallet unlocks. A mistyped password gives a face
+  login with a locked wallet.
+- **No TPM-sealed password.** Some projects seal a copy of the login password to the TPM and feed
+  it back as `PAM_AUTHTOK` after a face match. `pam_exec` can't set `PAM_AUTHTOK`, so that needs a
+  real PAM `.so` module, which this project doesn't ship. Not planned.
