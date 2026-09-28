@@ -105,9 +105,12 @@ build_with_cargo() {
 
 # ---- OpenVINO (NPU backend) detection ----
 # The `npu` feature links OpenVINO's glibc .so files, so an NPU build uses the
-# host (glibc) target instead of static musl. This script never installs
-# OpenVINO; it recognises the two ways Intel ships it:
+# host (glibc) target instead of static musl. Three ways to get OpenVINO, in
+# order of preference:
 #
+#   ovfetch https://github.com/karanshukla/ovfetch picks the OpenVINO build the
+#           NPU and its installed driver need, and hash-verifies it. Installed
+#           into $OPENVINO_INSTALL_DIR; face-auth finds it through an rpath.
 #   system  RPM/DEB package: libopenvino_c lands in a standard lib dir and the
 #           package ran ldconfig, so build and PAM-time loading both just work.
 #   archive extracted tarball (~/.local/opt or /opt/intel) with setupvars.sh.
@@ -115,12 +118,52 @@ build_with_cargo() {
 #           profile, so the runtime libraries are copied system-wide below.
 ACTUAL_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
 OPENVINO_MODE=""
-for dir in /usr/lib64 /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /lib; do
-    if compgen -G "$dir/libopenvino_c.so*" >/dev/null 2>&1; then
-        OPENVINO_MODE="system"
-        break
+OVFETCH_MIN="0.2.0"
+
+# secure_path drops ~/.cargo/bin under sudo, the same as for cargo.
+find_ovfetch() {
+    local bin
+    for bin in "$(command -v ovfetch 2>/dev/null)" "$ACTUAL_HOME/.cargo/bin/ovfetch"; do
+        [ -n "$bin" ] && [ -x "$bin" ] || continue
+        local have
+        have="$("$bin" --version 2>/dev/null | awk '{print $2}')"
+        if [ -n "$have" ] && [ "$(printf '%s\n' "$OVFETCH_MIN" "$have" | sort -V | head -1)" = "$OVFETCH_MIN" ]; then
+            echo "$bin"
+            return 0
+        fi
+        echo "Warning: $bin is ovfetch ${have:-of unknown version}; $OVFETCH_MIN or newer is needed, ignoring it." >&2
+    done
+    return 1
+}
+
+# No config yet on a first install: sed fails, and pipefail must not end the script.
+CONF_NPU_DEVICE="$(sed -n 's/^npu_device *= *"\(.*\)"/\1/p' "$CONFIG_DIR/face-auth.toml" 2>/dev/null | head -1 || true)"
+if OVFETCH_BIN="$(find_ovfetch)"; then
+    # Run as the user: resolving and downloading need no privileges. The plan
+    # is reused below to install exactly what was checked here.
+    if OVFETCH_PLAN="$(as_user "$OVFETCH_BIN" resolve --json)"; then
+        if [ "${CONF_NPU_DEVICE:-NPU}" = "NPU" ] && grep -q '"compiler_present": false' <<<"$OVFETCH_PLAN"; then
+            # Every compile_model would fail with ZE_RESULT_ERROR_UNSUPPORTED_FEATURE,
+            # and every unlock would silently fall through to the password.
+            echo "Warning: the installed NPU driver has no compiler library, so OpenVINO"
+            echo "         cannot compile models for the NPU (see \`ovfetch detect\`)."
+            echo "         Building the CPU (tract) backend instead."
+            OPENVINO_MODE="none"
+        else
+            OPENVINO_MODE="ovfetch"
+        fi
+    else
+        echo "Warning: ovfetch found no OpenVINO build for this machine (output above)."
     fi
-done
+fi
+if [ -z "$OPENVINO_MODE" ]; then
+    for dir in /usr/lib64 /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /lib; do
+        if compgen -G "$dir/libopenvino_c.so*" >/dev/null 2>&1; then
+            OPENVINO_MODE="system"
+            break
+        fi
+    done
+fi
 if [ -z "$OPENVINO_MODE" ]; then
     # find exits non-zero on a missing search dir; that is not an error here.
     OPENVINO_SRC="$(find "$ACTUAL_HOME/.local/opt" /opt/intel -maxdepth 1 -type d \
@@ -135,9 +178,42 @@ NPU_FEATURES="face-auth-core/npu,face-auth/npu,face-enroll/npu"
 NPU_ACTIVE=0
 BIN_SRC="$ARTIFACT_DIR"
 
-if [ -n "$OPENVINO_MODE" ] && CARGO_BIN="$(find_cargo)"; then
+# ovfetch's prefix. Downloaded only when the resolved build differs from the
+# one already installed, or those files no longer match their SHA256SUMS.
+# Otherwise ovfetch runs as the user into a staging directory: the build links
+# against that, and the system prefix is only replaced once the new binaries
+# are installed, so a failed build leaves the working install alone.
+OV_STAGE=""
+stage_ovfetch() {
+    local want have
+    want="$(grep -o '"sha256": "[0-9a-f]*"' <<<"$OVFETCH_PLAN" | head -1 || true)"
+    have="$(grep -o '"sha256": "[0-9a-f]*"' "$OPENVINO_INSTALL_DIR/ovfetch.lock.json" 2>/dev/null | head -1 || true)"
+    if [ -n "$want" ] && [ "$want" = "$have" ] \
+       && (cd "$OPENVINO_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS) 2>/dev/null; then
+        echo "OpenVINO in $OPENVINO_INSTALL_DIR is current and verified."
+        OV_LIB_DIR="$OPENVINO_INSTALL_DIR"
+        return 0
+    fi
+    OV_STAGE="$(as_user mktemp -d)"
+    as_user "$OVFETCH_BIN" install --prefix "$OV_STAGE/ov" || return 1
+    OV_LIB_DIR="$OV_STAGE/ov"
+}
+
+if [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(find_cargo)"; then
     echo "OpenVINO found ($OPENVINO_MODE install): building with the NPU backend (glibc target)..."
-    if [ "$OPENVINO_MODE" = "system" ]; then
+    if [ "$OPENVINO_MODE" = "ovfetch" ]; then
+        stage_ovfetch || { [ -n "$OV_STAGE" ] && rm -rf "$OV_STAGE"; exit 1; }
+        # LD_LIBRARY_PATH is where openvino-sys's build script looks for a flat
+        # prefix. The rpath is how face-auth finds it at unlock time: pam_exec
+        # gives it no environment. DT_RPATH (--disable-new-dtags) rather than
+        # RUNPATH, because only DT_RPATH also covers the libraries OpenVINO
+        # itself pulls in, and set-group-ID face-auth runs in glibc's secure
+        # mode, where their own $ORIGIN rpaths are ignored.
+        as_user env LD_LIBRARY_PATH="$OV_LIB_DIR" \
+            RUSTFLAGS="-C link-arg=-Wl,--disable-new-dtags,-rpath,$OPENVINO_INSTALL_DIR" \
+            "$CARGO_BIN" build --release --locked --features "$NPU_FEATURES" \
+            -p face-auth -p face-enroll || { [ -n "$OV_STAGE" ] && rm -rf "$OV_STAGE"; exit 1; }
+    elif [ "$OPENVINO_MODE" = "system" ]; then
         as_user "$CARGO_BIN" build --release --locked --features "$NPU_FEATURES" \
             -p face-auth -p face-enroll || exit 1
     else
@@ -266,11 +342,32 @@ fi
 install -Dm755 "$BIN_SRC/face-enroll" "$BIN_DIR/face-enroll"
 [ -n "${DL_DIR:-}" ] && rm -rf "$DL_DIR"
 
-# ---- OpenVINO runtime libraries (archive installs only) ----
+# ---- OpenVINO runtime libraries (ovfetch and archive installs) ----
+if [ -n "$OV_STAGE" ]; then
+    echo "Installing OpenVINO runtime libraries to $OPENVINO_INSTALL_DIR..."
+    # Also clears a tarball copy an older deploy left here.
+    rm -rf "$OPENVINO_INSTALL_DIR"
+    install -d -o root -g root -m 0755 "$OPENVINO_INSTALL_DIR"
+    cp -a "$OV_STAGE/ov/." "$OPENVINO_INSTALL_DIR/"
+    rm -rf "$OV_STAGE"
+    chown -hR root:root "$OPENVINO_INSTALL_DIR"
+    chmod -R go-w "$OPENVINO_INSTALL_DIR"
+    if ! (cd "$OPENVINO_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS); then
+        echo "Error: $OPENVINO_INSTALL_DIR does not match its SHA256SUMS after copying."
+        exit 1
+    fi
+fi
+# The archive install's library path entry would shadow the rpath, and
+# expose its TBB to everything else on the system.
+if [ "$OPENVINO_MODE" = "ovfetch" ] && [ -f /etc/ld.so.conf.d/face-auth-openvino.conf ]; then
+    rm -f /etc/ld.so.conf.d/face-auth-openvino.conf
+    ldconfig
+fi
 # OpenVINO finds its device plugins and ONNX frontend by scanning the
 # directory libopenvino.so lives in, so intel64/ is copied as a unit.
 if [ "$NPU_ACTIVE" = 1 ] && [ "$OPENVINO_MODE" = "archive" ]; then
     echo "Installing OpenVINO runtime libraries to $OPENVINO_INSTALL_DIR..."
+    rm -rf "$OPENVINO_INSTALL_DIR"
     mkdir -p "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb"
     cp -a "$OPENVINO_SRC/runtime/lib/intel64/." "$OPENVINO_INSTALL_DIR/intel64/"
     cp -a "$OPENVINO_SRC/runtime/3rdparty/tbb/lib/." "$OPENVINO_INSTALL_DIR/tbb/"
@@ -543,6 +640,16 @@ fi
 # new models or a new driver leave stale entries.
 rm -rf "$NPU_CACHE_DIR"
 install -d -o root -g root -m 0755 "$NPU_CACHE_DIR"
+# Refill it now, as root. Left empty, every lock-screen unlock would compile
+# both models on the CPU until the next sudo or polkit prompt.
+if [ "$NPU_ACTIVE" = 1 ]; then
+    echo "Compiling the models into the NPU cache..."
+    if ! "$BIN_DIR/face-auth" --warm-cache; then
+        echo "Warning: face-auth could not compile the models, so face unlock will"
+        echo "         fall through to the password. Check the NPU driver and"
+        echo "         npu_device in $CONF."
+    fi
+fi
 
 echo "Securing embeddings directory..."
 install -d -o root -g face-auth -m 2750 "$VAR_DIR"

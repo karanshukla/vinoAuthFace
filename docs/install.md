@@ -26,6 +26,7 @@ the release's `SHA256SUMS`. Build from source for an unreleased change or the NP
 | PAM | Patches PAM service files | See [pam.md](pam.md). Each file is backed up with a `.face-auth.bak` suffix |
 | Bitwarden | Only if installed | Adds Bitwarden's polkit unlock action |
 | SELinux | Compiles and loads policy | Allows `xdm_t` to mmap the camera for lock-screen auth |
+| NPU cache | Empties and refills it | `/var/cache/face-auth`, root-owned. Emptied because a new model or driver leaves stale entries, then refilled with `face-auth --warm-cache` (NPU builds only) |
 | Storage | Secures the template store | `/var/lib/face-auth`, `root:face-auth` `2750`, templates `0640`, per-user `lockout/` `2770`. An existing store is re-secured in place |
 
 ## Building from source
@@ -49,13 +50,27 @@ not leave root-owned files in `target/`.
 ### OpenVINO / NPU backend
 
 The `npu` feature swaps pure-Rust `tract` inference for OpenVINO on an Intel NPU, GPU or CPU. It
-links OpenVINO's glibc libraries, so it can't be a static musl build and CI can't build it.
+links OpenVINO's glibc libraries, so it can't be a static musl build.
 
-`deploy.sh` handles it. If it finds OpenVINO (a system RPM/DEB, or an extracted archive under
-`~/.local/opt` or `/opt/intel`) and a Rust toolchain, it builds with `--features npu`, sets
-`backend = "openvino"` in `/etc/face-auth.toml`, and for archive installs registers the runtime
-libraries with `ldconfig`, since PAM runs `face-auth` without your shell profile. Pick the device
-with `npu_device = "NPU" | "GPU" | "CPU"`.
+`deploy.sh` handles it. If it finds OpenVINO and a Rust toolchain, it builds with `--features
+npu` and sets `backend = "openvino"` in `/etc/face-auth.toml`. Pick the device with
+`npu_device = "NPU" | "GPU" | "CPU"`. It looks for OpenVINO in this order:
+
+| Source | How it's found | Runtime lookup |
+|--------|----------------|----------------|
+| [ovfetch](https://github.com/karanshukla/ovfetch) 0.2.0+ | On `PATH` or in `~/.cargo/bin` | rpath baked into `face-auth` |
+| System package | `libopenvino_c.so*` in a standard lib dir | The package's own `ldconfig` entry |
+| Extracted archive | `~/.local/opt` or `/opt/intel`, with `setupvars.sh` | Copied, then registered with `ldconfig` |
+
+ovfetch is the recommended one. It picks the OpenVINO build your NPU and its installed driver
+need, and refuses anything whose hash independent sources don't agree on. It installs to
+`/usr/local/lib/face-auth/openvino`, and later deploys only download again when a different build
+resolves. Install it with `cargo install ovfetch --locked`, or grab the attested binary from its
+releases.
+
+If the NPU driver has no compiler library (Fedora's 1.32.0 rpm ships none), OpenVINO can't compile
+anything for the NPU. `deploy.sh` then builds the `tract` backend instead of shipping a build that
+would silently fall through to the password on every unlock. Run `ovfetch detect` to check.
 
 ### Container build (no toolchain installed)
 

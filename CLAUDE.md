@@ -21,7 +21,7 @@ rustup target add x86_64-unknown-linux-musl
 cargo build --release --locked --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
 
 # OpenVINO/NPU backend. Host (glibc) target, never musl: it links OpenVINO's
-# .so files. Needs the OpenVINO runtime installed; deploy.sh does this for you.
+# .so files. Needs the OpenVINO runtime; deploy.sh provisions it with ovfetch.
 cargo build --release --locked -p face-auth -p face-enroll \
   --features face-auth-core/npu,face-auth/npu,face-enroll/npu
 
@@ -44,8 +44,9 @@ cargo deny check
   `./uninstall.sh` cycle through every build path, including the checksum-verified download via
   a `file://` override (`FACE_AUTH_DEPLOY_RELEASE_BASE`, deploy.sh-only, not a config option).
 - `release.yml` publishes static musl binaries as a GitHub pre-release on `v*` tags.
-- Neither builds the `npu` feature: CI has no OpenVINO runtime, so that backend stays a local,
-  deploy.sh-driven build.
+- `ci.yml`'s `npu` job builds, lints and tests the `npu` feature against an OpenVINO that
+  ovfetch provisions, then runs the ovfetch deploy path (compiling on OpenVINO's CPU plugin,
+  since runners have no NPU). It isn't a required check. `release.yml` still ships musl only.
 - `guard.yml` fails any non-owner PR touching security-relevant paths (see SECURITY.md). It runs
   from main's copy via `pull_request_target`, so changes to it only take effect once merged.
 - The `main` ruleset requires a PR plus `test`, `clippy`, `deny`, `deploy-script` and `guard`.

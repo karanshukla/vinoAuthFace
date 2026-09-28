@@ -148,18 +148,24 @@ impl FaceAuthConfig {
     /// permissive threshold, or repoint `embeddings_dir` at a directory it
     /// controls, and turn their next `sudo` into root.
     pub fn load_for_auth(username: &str) -> Result<Self> {
+        let mut config = Self::load_system()?;
+        if let Some(overlay) = load_user_overlay(username) {
+            config.apply_user_overlay(&overlay);
+        }
+
+        Ok(config)
+    }
+
+    /// `/etc/face-auth.toml` alone: no user file, no environment. What
+    /// [`FaceAuthConfig::load_for_auth`] starts from before the user overlay.
+    pub fn load_system() -> Result<Self> {
         let mut builder = Config::builder();
         let system_config = PathBuf::from(SYSTEM_CONFIG_PATH);
         if system_config.exists() {
             builder = builder.add_source(File::from(system_config));
         }
-        let mut config: FaceAuthConfig = builder.build()?.try_deserialize()?;
+        let config: FaceAuthConfig = builder.build()?.try_deserialize()?;
         config.validate().context("invalid system config")?;
-
-        if let Some(overlay) = load_user_overlay(username) {
-            config.apply_user_overlay(&overlay);
-        }
-
         Ok(config)
     }
 

@@ -53,11 +53,15 @@ if [ -f "$SHARE_DIR/.bitwarden-policy-installed" ]; then
     rm -f /usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy
 fi
 
-if [ -f /etc/ld.so.conf.d/face-auth-openvino.conf ]; then
+# ovfetch installs leave no ld.so.conf entry (face-auth carries an rpath),
+# so check the directory itself.
+if [ -d /usr/local/lib/face-auth ] || [ -f /etc/ld.so.conf.d/face-auth-openvino.conf ]; then
     echo "Removing bundled OpenVINO runtime..."
-    rm -f /etc/ld.so.conf.d/face-auth-openvino.conf
     rm -rf /usr/local/lib/face-auth
-    ldconfig 2>/dev/null || true
+    if [ -f /etc/ld.so.conf.d/face-auth-openvino.conf ]; then
+        rm -f /etc/ld.so.conf.d/face-auth-openvino.conf
+        ldconfig 2>/dev/null || true
+    fi
 fi
 
 echo "Removing model and SELinux policy..."
