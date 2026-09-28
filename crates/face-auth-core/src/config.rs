@@ -29,6 +29,9 @@ pub struct FaceAuthConfig {
     pub detector_threshold: Option<f32>,
     pub scan_duration_ms: Option<u64>,
     pub scan_interval_ms: Option<u64>,
+    pub lockout_threshold: Option<u32>,
+    pub lockout_base_delay_ms: Option<u64>,
+    pub lockout_max_delay_ms: Option<u64>,
 }
 
 impl Default for FaceAuthConfig {
@@ -43,6 +46,9 @@ impl Default for FaceAuthConfig {
             detector_threshold: Some(0.5),
             scan_duration_ms: Some(5000),
             scan_interval_ms: Some(0),
+            lockout_threshold: None,
+            lockout_base_delay_ms: None,
+            lockout_max_delay_ms: None,
         }
     }
 }
@@ -175,7 +181,8 @@ impl FaceAuthConfig {
         }
 
         // model_path, detector_model_path and embeddings_dir stay system
-        // policy: each decides what gets compared against what.
+        // policy: each decides what gets compared against what. The lockout
+        // policy does too: a user must not be able to lift their own throttle.
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -269,6 +276,20 @@ impl FaceAuthConfig {
     }
 }
 
+impl FaceAuthConfig {
+    /// Backoff after repeated face-match failures. See `lockout::check`: it
+    /// never blocks the password fallback, only how fast face attempts retry.
+    pub fn lockout_policy(&self) -> crate::lockout::LockoutPolicy {
+        let d = crate::lockout::LockoutPolicy::default();
+        crate::lockout::LockoutPolicy {
+            threshold: self.lockout_threshold.unwrap_or(d.threshold).max(1),
+            base_delay_ms: self.lockout_base_delay_ms.unwrap_or(d.base_delay_ms),
+            max_delay_ms: self.lockout_max_delay_ms.unwrap_or(d.max_delay_ms),
+            max_tarpit_ms: d.max_tarpit_ms,
+        }
+    }
+}
+
 /// Read `~/.config/face-auth.toml` for the account being authenticated.
 ///
 /// Resolved through NSS rather than `$HOME`, which under `pam_exec` belongs to
@@ -347,12 +368,14 @@ mod tests {
             embeddings_dir: Some("/home/mallory/faces".to_string()),
             model_path: Some("/home/mallory/evil.onnx".to_string()),
             detector_model_path: Some("/home/mallory/evil2.onnx".to_string()),
+            lockout_threshold: Some(u32::MAX),
             ..FaceAuthConfig::default()
         };
         cfg.apply_user_overlay(&overlay);
         assert_eq!(cfg.embeddings_dir(), PathBuf::from(DEFAULT_EMBEDDINGS_DIR));
         assert!(cfg.model_path().starts_with("/usr/local/share"));
         assert!(cfg.detector_model_path().starts_with("/usr/local/share"));
+        assert_eq!(cfg.lockout_policy().threshold, 5);
     }
 
     #[test]

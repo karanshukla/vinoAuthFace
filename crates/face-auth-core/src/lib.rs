@@ -3,6 +3,7 @@ pub mod config;
 pub mod detector;
 pub mod error;
 pub mod inference;
+pub mod lockout;
 pub mod preprocess;
 pub mod storage;
 pub mod user;
@@ -74,6 +75,11 @@ impl FaceAuth {
     /// Single-shot verification. The PAM path uses
     /// [`FaceAuth::authenticate_scan`].
     pub fn authenticate_once(&mut self, user: &str) -> Result<bool> {
+        let embeddings_dir = self.config.embeddings_dir();
+        if lockout::check(user, &embeddings_dir, &self.config.lockout_policy()).is_some() {
+            return Ok(false);
+        }
+
         let t0 = Instant::now();
         let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
         self.check_model_tag(&store)?;
@@ -104,7 +110,9 @@ impl FaceAuth {
         let embedding = self.encoder.encode(input.view())?;
         tracing::debug!(elapsed = ?t0.elapsed(), "authenticate_once complete");
 
-        verify_embedding(&embedding, &store, self.config.threshold())
+        let matched = verify_embedding(&embedding, &store, self.config.threshold())?;
+        record_attempt(user, &embeddings_dir, matched);
+        Ok(matched)
     }
 
     /// Keep capturing until a frame matches or the scan window closes.
@@ -114,6 +122,11 @@ impl FaceAuth {
         duration_ms: u64,
         interval_ms: u64,
     ) -> Result<bool> {
+        let embeddings_dir = self.config.embeddings_dir();
+        if lockout::check(user, &embeddings_dir, &self.config.lockout_policy()).is_some() {
+            return Ok(false);
+        }
+
         let t0 = Instant::now();
         let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
         self.check_model_tag(&store)?;
@@ -126,6 +139,9 @@ impl FaceAuth {
         let mut frame_num: usize = 0;
         let mut consecutive_errors = 0u32;
         let mut last_reject: Option<FrameQuality> = None;
+        // Only a scan that saw a face counts toward lockout: an unattended
+        // `sudo` with nobody at the camera is not a failed attempt.
+        let mut face_seen = false;
 
         // Wait out the remainder of the interval without overrunning the window.
         let nap = |deadline: Instant| {
@@ -146,6 +162,9 @@ impl FaceAuth {
                         "scan window elapsed; no frame passed quality checks — last: {q}"
                     ),
                     None => tracing::debug!(frames = frame_num, "scan window elapsed without a match"),
+                }
+                if face_seen {
+                    record_attempt(user, &embeddings_dir, false);
                 }
                 return Ok(false);
             }
@@ -182,6 +201,7 @@ impl FaceAuth {
                 nap(deadline);
                 continue;
             };
+            face_seen = true;
 
             let face = crate::preprocess::crop_to_face(&frame, &face_box, FACE_CROP_MARGIN)?;
             let input = crate::preprocess::preprocess_ir_frame(&face)?;
@@ -189,6 +209,7 @@ impl FaceAuth {
 
             if verify_embedding(&embedding, &store, self.config.threshold())? {
                 tracing::debug!(frame = frame_num, elapsed = ?t0.elapsed(), "match");
+                record_attempt(user, &embeddings_dir, true);
                 return Ok(true);
             }
 
@@ -315,6 +336,19 @@ impl FaceAuth {
         let total = store.embeddings.len();
         store.save(user, &self.config.embeddings_dir(), &self.config.model_tag())?;
         Ok((total - existing, total))
+    }
+}
+
+/// Lockout bookkeeping must never turn a result into an error: a write that
+/// fails just means the backoff does not advance this time.
+fn record_attempt(user: &str, embeddings_dir: &std::path::Path, matched: bool) {
+    let result = if matched {
+        lockout::record_success(user, embeddings_dir)
+    } else {
+        lockout::record_failure(user, embeddings_dir)
+    };
+    if let Err(e) = result {
+        tracing::warn!("could not update lockout state: {e}");
     }
 }
 

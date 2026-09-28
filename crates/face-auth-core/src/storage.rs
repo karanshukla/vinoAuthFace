@@ -27,8 +27,8 @@ const MAX_MODEL_TAG_LEN: u32 = 255;
 const MAX_EMBEDDINGS: u32 = 256;
 
 /// Biometric templates. Readable only by root — see `deploy.sh`.
-const EMBEDDINGS_FILE_MODE: u32 = 0o600;
-const EMBEDDINGS_DIR_MODE: u32 = 0o700;
+pub(crate) const EMBEDDINGS_FILE_MODE: u32 = 0o600;
+pub(crate) const EMBEDDINGS_DIR_MODE: u32 = 0o700;
 
 #[derive(Debug, Clone, Default)]
 pub struct EmbeddingStore {
@@ -42,7 +42,7 @@ pub struct EmbeddingStore {
 /// Build the per-user store path, rejecting anything that would escape
 /// `embeddings_dir`. The username reaching here originates from PAM, but it
 /// is a path component either way and is checked rather than trusted.
-fn user_store_dir(user: &str, embeddings_dir: &Path) -> anyhow::Result<PathBuf> {
+pub(crate) fn user_store_dir(user: &str, embeddings_dir: &Path) -> anyhow::Result<PathBuf> {
     validate_username(user)?;
     Ok(embeddings_dir.join(user))
 }
