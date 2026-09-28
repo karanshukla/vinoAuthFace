@@ -1,8 +1,31 @@
 #!/bin/bash
 set -euo pipefail
 
-MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
-MODEL_CHECKSUM="9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f"
+# Recognition model. "mbf" (MobileFaceNet, buffalo_sc) is the default: ~14MB
+# and fast. "r50" (ResNet50, buffalo_l) is ~175MB and more accurate, at a few
+# ms more per frame. Select with:
+#   sudo FACE_AUTH_RECOGNITION_MODEL=r50 ./deploy.sh
+# Switching models means re-enrolling: the two produce incompatible embedding
+# spaces, and face-auth refuses to compare across them (see storage.rs).
+RECOGNITION_MODEL="${FACE_AUTH_RECOGNITION_MODEL:-mbf}"
+case "$RECOGNITION_MODEL" in
+    mbf)
+        MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
+        MODEL_ZIP="buffalo_sc.zip"
+        MODEL_NAME="w600k_mbf.onnx"
+        MODEL_CHECKSUM="9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f"
+        ;;
+    r50)
+        MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
+        MODEL_ZIP="buffalo_l.zip"
+        MODEL_NAME="w600k_r50.onnx"
+        MODEL_CHECKSUM="4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
+        ;;
+    *)
+        echo "Error: unknown FACE_AUTH_RECOGNITION_MODEL '$RECOGNITION_MODEL' (expected 'mbf' or 'r50')"
+        exit 1
+        ;;
+esac
 
 # Pinned to the commit that introduced the file, not to a moving branch: a
 # `master` URL silently changes what gets installed. The checksum is the real
@@ -174,8 +197,7 @@ fetch() {
     return 1
 }
 
-echo "Installing model..."
-MODEL_NAME="w600k_mbf.onnx"
+echo "Installing recognition model ($RECOGNITION_MODEL: $MODEL_NAME)..."
 if [ -f "$SHARE_DIR/$MODEL_NAME" ]; then
     echo "Model already installed at $SHARE_DIR/$MODEL_NAME"
 elif [ -f "models/$MODEL_NAME" ]; then
@@ -184,11 +206,11 @@ elif [ -f "models/$MODEL_NAME" ]; then
     echo "Installed model from models/$MODEL_NAME"
 else
     echo "Downloading model from InsightFace..."
-    fetch "$MODEL_URL" "$WORK_DIR/buffalo_sc.zip" \
+    fetch "$MODEL_URL" "$WORK_DIR/$MODEL_ZIP" \
         "  mkdir -p models
-  curl -fL -o /tmp/buffalo_sc.zip '$MODEL_URL'
-  unzip -j /tmp/buffalo_sc.zip $MODEL_NAME -d models/" || exit 1
-    unzip -oq "$WORK_DIR/buffalo_sc.zip" -d "$WORK_DIR/"
+  curl -fL -o /tmp/$MODEL_ZIP '$MODEL_URL'
+  unzip -j /tmp/$MODEL_ZIP $MODEL_NAME -d models/" || exit 1
+    unzip -oq "$WORK_DIR/$MODEL_ZIP" -d "$WORK_DIR/"
     verify "$WORK_DIR/$MODEL_NAME" "$MODEL_CHECKSUM" || exit 1
     install -Dm644 "$WORK_DIR/$MODEL_NAME" "$SHARE_DIR/$MODEL_NAME"
     echo "Model downloaded and installed"
@@ -219,6 +241,24 @@ if [ -f "$CONFIG_DIR/face-auth.toml" ]; then
     echo "Keeping existing $CONFIG_DIR/face-auth.toml"
 else
     install -Dm644 config/face-auth.toml.example "$CONFIG_DIR/face-auth.toml"
+fi
+
+# Point model_path at the model installed this run. Only touched for a
+# non-default model, so a plain deploy never rewrites an existing config.
+if [ "$RECOGNITION_MODEL" != "mbf" ]; then
+    CONF="$CONFIG_DIR/face-auth.toml"
+    if grep -q '^model_path' "$CONF"; then
+        sed -i "s@^model_path.*@model_path = \"$SHARE_DIR/$MODEL_NAME\"@" "$CONF"
+    elif grep -q '^# model_path = ' "$CONF"; then
+        # @ delimiter: the pattern itself contains a '#'.
+        sed -i "s@^# model_path = .*@model_path = \"$SHARE_DIR/$MODEL_NAME\"@" "$CONF"
+    else
+        # Without a trailing newline the appended key would land inside a comment.
+        [ -s "$CONF" ] && [ "$(tail -c1 "$CONF" | wc -l)" -eq 0 ] && echo >> "$CONF"
+        echo "model_path = \"$SHARE_DIR/$MODEL_NAME\"" >> "$CONF"
+    fi
+    echo "Set model_path = \"$SHARE_DIR/$MODEL_NAME\" in $CONF"
+    echo "NOTE: switching recognition models requires re-enrolling."
 fi
 
 # ---- PAM setup ----

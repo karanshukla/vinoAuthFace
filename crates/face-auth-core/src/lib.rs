@@ -57,11 +57,26 @@ impl FaceAuth {
         &self.config
     }
 
+    /// Refuse a store enrolled under a different recognition model than the
+    /// configured one. Unknown-origin (v1) stores always pass.
+    fn check_model_tag(&self, store: &EmbeddingStore) -> Result<()> {
+        let current = self.config.model_tag();
+        if !store.model_tag_matches(&current) {
+            anyhow::bail!(
+                "templates were enrolled with a different recognition model ({}) than the one \
+                 configured ({current}); re-run face-enroll for this model",
+                store.model_tag.as_deref().unwrap_or("unknown")
+            );
+        }
+        Ok(())
+    }
+
     /// Single-shot verification. The PAM path uses
     /// [`FaceAuth::authenticate_scan`].
     pub fn authenticate_once(&mut self, user: &str) -> Result<bool> {
         let t0 = Instant::now();
         let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
+        self.check_model_tag(&store)?;
         tracing::debug!(elapsed = ?t0.elapsed(), "store loaded");
 
         let t1 = Instant::now();
@@ -101,6 +116,7 @@ impl FaceAuth {
     ) -> Result<bool> {
         let t0 = Instant::now();
         let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
+        self.check_model_tag(&store)?;
         tracing::debug!(elapsed = ?t0.elapsed(), "store loaded");
 
         let mut cam = Camera::open(&self.config.device())?;
@@ -264,7 +280,7 @@ impl FaceAuth {
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms, progress)?;
 
         let saved = store.embeddings.len();
-        store.save(user, &self.config.embeddings_dir())?;
+        store.save(user, &self.config.embeddings_dir(), &self.config.model_tag())?;
         Ok(saved)
     }
 
@@ -288,12 +304,16 @@ impl FaceAuth {
             Err(e) => return Err(e.context("refusing to append: existing embeddings unreadable")),
         };
 
+        // Appending under a different model would mix incompatible vectors
+        // into the gallery. Switching models is a fresh enrolment.
+        self.check_model_tag(&store)?;
+
         let existing = store.embeddings.len();
         let mut cam = Camera::open(&self.config.device())?;
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms, progress)?;
 
         let total = store.embeddings.len();
-        store.save(user, &self.config.embeddings_dir())?;
+        store.save(user, &self.config.embeddings_dir(), &self.config.model_tag())?;
         Ok((total - existing, total))
     }
 }

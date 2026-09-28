@@ -215,6 +215,18 @@ impl FaceAuthConfig {
             .unwrap_or_else(|| "/usr/local/share/face-auth/w600k_mbf.onnx".to_string())
     }
 
+    /// Identity stored with saved embeddings, so changing `model_path` without
+    /// re-enrolling is a clear error instead of comparisons across two
+    /// incompatible embedding spaces. The file name only: the same model at a
+    /// different path is the same model.
+    pub fn model_tag(&self) -> String {
+        let path = self.model_path();
+        Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or(path)
+    }
+
     pub fn capture_timeout_ms(&self) -> i32 {
         self.capture_timeout_ms
             .unwrap_or(5000)
@@ -411,6 +423,16 @@ mod tests {
         assert!(cfg.validate().is_ok());
         assert_eq!(cfg.threshold(), 0.6);
         assert_eq!(cfg.embeddings_dir(), PathBuf::from(DEFAULT_EMBEDDINGS_DIR));
+    }
+
+    #[test]
+    fn model_tag_is_the_file_name() {
+        let cfg = FaceAuthConfig {
+            model_path: Some("/opt/models/w600k_r50.onnx".to_string()),
+            ..FaceAuthConfig::default()
+        };
+        assert_eq!(cfg.model_tag(), "w600k_r50.onnx");
+        assert_eq!(FaceAuthConfig::default().model_tag(), "w600k_mbf.onnx");
     }
 
     #[test]

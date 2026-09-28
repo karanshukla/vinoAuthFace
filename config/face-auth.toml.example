@@ -32,7 +32,10 @@
 # This is the floor: a user cannot go below it, only above.
 threshold = 0.6
 
-# ONNX model path (default: /usr/local/share/face-auth/w600k_mbf.onnx)
+# Recognition model path (default: /usr/local/share/face-auth/w600k_mbf.onnx).
+# deploy.sh sets this when installed with FACE_AUTH_RECOGNITION_MODEL=r50.
+# Changing models requires re-enrolling; face-auth refuses templates made
+# with a different model.
 # model_path = "/usr/local/share/face-auth/w600k_mbf.onnx"
 
 # Template storage directory. Must be root-owned and 0700 — anything that can

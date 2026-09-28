@@ -68,7 +68,7 @@ mod tests {
     use super::*;
 
     fn store_of(vecs: Vec<Vec<f32>>) -> EmbeddingStore {
-        EmbeddingStore { embeddings: vecs }
+        EmbeddingStore { embeddings: vecs, model_tag: None }
     }
 
     #[test]
