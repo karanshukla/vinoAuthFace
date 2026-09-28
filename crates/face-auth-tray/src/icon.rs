@@ -129,6 +129,29 @@ const SMALL: Grid = Grid {
     size: 16.0,
 };
 
+/// 16-unit design for the symbolic tray icon, which has no tile: the
+/// viewfinder fills the icon like vinoWhisper's outline does, instead of
+/// sitting in the middle of it with a wide margin.
+const SYMBOLIC: Grid = Grid {
+    tile: Shape::new(0.0, 0.0, 16.0, 16.0, 0.0),
+    edge: 0.0,
+    marks: &[
+        (Shape::new(1.0, 1.0, 4.0, 1.0, 0.0), Part::Bracket),
+        (Shape::new(1.0, 1.0, 1.0, 4.0, 0.0), Part::Bracket),
+        (Shape::new(11.0, 1.0, 4.0, 1.0, 0.0), Part::Bracket),
+        (Shape::new(14.0, 1.0, 1.0, 4.0, 0.0), Part::Bracket),
+        (Shape::new(1.0, 14.0, 4.0, 1.0, 0.0), Part::Bracket),
+        (Shape::new(1.0, 11.0, 1.0, 4.0, 0.0), Part::Bracket),
+        (Shape::new(11.0, 14.0, 4.0, 1.0, 0.0), Part::Bracket),
+        (Shape::new(14.0, 11.0, 1.0, 4.0, 0.0), Part::Bracket),
+        (Shape::new(5.0, 4.0, 2.0, 3.0, 0.0), Part::Feature),
+        (Shape::new(9.0, 4.0, 2.0, 3.0, 0.0), Part::Feature),
+        (Shape::new(5.0, 11.0, 6.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(3.0, 8.0, 10.0, 1.0, 0.0), Part::ScanLine),
+    ],
+    size: 16.0,
+};
+
 fn hex(Rgba(r, g, b, _): Rgba) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
 }
@@ -178,7 +201,7 @@ impl State {
 /// the theme; the accent (green face, amber scan) stays fixed.
 pub fn symbolic_svg(state: State) -> String {
     let (mut text, mut accent, mut dim) = (String::new(), String::new(), String::new());
-    for &(shape, part) in SMALL.marks {
+    for &(shape, part) in SYMBOLIC.marks {
         let bucket = match (state, part) {
             (State::Ready, Part::Feature) | (State::Scanning, Part::Bracket | Part::ScanLine) => &mut accent,
             (State::Attention, _) => &mut dim,
@@ -268,7 +291,7 @@ mod tests {
 
     #[test]
     fn the_marks_sit_inside_the_tile() {
-        for grid in [&LARGE, &SMALL] {
+        for grid in [&LARGE, &SMALL, &SYMBOLIC] {
             let inner = grid.tile.inset(grid.edge);
             for (m, _) in grid.marks {
                 assert!(
@@ -285,7 +308,7 @@ mod tests {
 
     #[test]
     fn the_face_and_scan_line_do_not_touch_the_brackets_or_each_other() {
-        for grid in [&LARGE, &SMALL] {
+        for grid in [&LARGE, &SMALL, &SYMBOLIC] {
             for (i, (a, part)) in grid.marks.iter().enumerate() {
                 if *part == Part::Bracket {
                     continue;
@@ -300,7 +323,7 @@ mod tests {
 
     #[test]
     fn the_small_icon_lands_on_whole_pixels() {
-        let shapes = std::iter::once(SMALL.tile).chain(SMALL.marks.iter().map(|(s, _)| *s));
+        let shapes = std::iter::once(SMALL.tile).chain(SMALL.marks.iter().chain(SYMBOLIC.marks).map(|(s, _)| *s));
         for s in shapes {
             for edge in [s.x, s.y, s.w, s.h, SMALL.edge] {
                 assert_eq!(edge.fract(), 0.0, "{s:?} is off the pixel grid");
