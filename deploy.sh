@@ -60,15 +60,21 @@ cargo_build() {
         "$@" --quiet
         return
     fi
-    local seen=0 line rc=0
+    # Cargo's output goes to a file that is polled while it runs, not down a
+    # pipe: a pipe only ends when every holder of it exits, so anything cargo
+    # left running (a compiler server, say) would hang the build here.
+    local seen out pid rc=0
+    out="$(mktemp)"
     bar 0 "$total" "$label"
-    "$@" --quiet --message-format=json-render-diagnostics | {
-        while IFS= read -r line; do
-            case "$line" in
-                *'"reason":"compiler-artifact"'*) seen=$((seen + 1)); bar "$seen" "$total" "$label" ;;
-            esac
-        done
-    } || rc=$?
+    "$@" --quiet --message-format=json-render-diagnostics >"$out" &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        seen="$(grep -c '"reason":"compiler-artifact"' "$out" || true)"
+        bar "$seen" "$total" "$label"
+        sleep 0.2
+    done
+    wait "$pid" || rc=$?
+    rm -f "$out"
     printf '\r\e[K'
     return "$rc"
 }
