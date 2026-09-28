@@ -5,6 +5,7 @@ members = [
     "crates/face-enroll",
     "crates/face-camera-diag",
     "crates/face-similarity-check",
+    "crates/face-auth-tray",
 ]
 resolver = "2"
 

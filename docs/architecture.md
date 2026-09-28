@@ -57,9 +57,10 @@ with upstream. On top of upstream it adds:
 | YUYV and Y16 sensors, auto-detect for IR nodes not named "IR" | [hardware.md](hardware.md) |
 | Prebuilt release binaries; CI running real deploy/uninstall cycles | [install.md](install.md) |
 | `face-camera-diag` and `face-similarity-check` | [hardware.md](hardware.md#face-camera-diag) |
+| Tray icon: status, enrol, retrain, test scan, uninstall | [tray.md](tray.md) |
 
-Upstream's GTK settings GUI and GNOME scan-indicator extension aren't included: this fork is PAM
-and CLI only. The full history, including the upstream security pass, is in
+Upstream's GTK settings GUI and GNOME scan-indicator extension aren't included. The optional
+tray icon ([tray.md](tray.md)) replaces both, without a root-to-user status channel. The full history, including the upstream security pass, is in
 [CHANGELOG.md](../CHANGELOG.md).
 
 ## Project structure
@@ -84,6 +85,7 @@ crates/
   face-enroll/             # Enrolment CLI
   face-camera-diag/        # Camera discovery tool (list, dump)
   face-similarity-check/   # Offline photo FAR tool
+  face-auth-tray/          # Tray icon + face-auth-helper (pkexec), polkit policy, desktop files
 config/face-auth.toml.example   # Documented config template
 selinux/face-auth.te            # SELinux policy source
 deploy.sh / uninstall.sh        # Install and removal

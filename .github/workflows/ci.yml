@@ -68,7 +68,7 @@ jobs:
       - name: Build from source (static musl, all crates)
         run: |
           cargo build --release --locked --target x86_64-unknown-linux-musl \
-            -p face-auth -p face-enroll -p face-camera-diag -p face-similarity-check
+            -p face-auth -p face-enroll -p face-camera-diag -p face-similarity-check -p face-auth-tray
 
   # deploy.sh's real integration test: everything it does system-wide (PAM patching, SELinux
   # detection, embeddings dir) on a throwaway VM instead of a contributor's or a reviewer's own
@@ -106,7 +106,7 @@ jobs:
 
       - name: "Branch 1: cargo present -> build from source"
         run: |
-          sudo ./deploy.sh
+          sudo ./deploy.sh --with-tray
           test "$(grep -nE 'pam_faillock|face-auth|include' /etc/pam.d/swaylock | cut -d: -f1 | tr '\n' ' ')" = "3 4 5 "
           grep -A1 'pam_exec\.so.*face-auth' /etc/pam.d/sudo | grep -q '@include common-auth'
           cmp /etc/pam.d/gdm-password /tmp/gdm-password.orig
@@ -117,11 +117,38 @@ jobs:
           grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/sudo
           test "$(stat -c %a /var/lib/face-auth)" = 2750
           test "$(stat -c %U:%a /var/cache/face-auth)" = root:755
+          test "$(stat -c %U:%a /usr/local/share/face-auth/uninstall.sh)" = root:755
+
+      # The helper is the tray's only root entry point: it must refuse
+      # anything that did not come through pkexec, and any named target.
+      - name: Tray files and helper checks
+        run: |
+          test -x /usr/local/bin/face-auth-tray
+          test "$(stat -c %U:%a /usr/local/libexec/face-auth-helper)" = root:755
+          policy=/usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
+          test "$(grep -c 'exec.argv1' "$policy")" = 3
+          test "$(grep -c '<allow_active>auth_admin</allow_active>' "$policy")" = 3
+          test -f /etc/xdg/autostart/vinoauthface-tray.desktop
+          test -f /usr/local/share/applications/vinoauthface-enrol.desktop
+          test -f /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
+          # `! cmd` is exempt from set -e, so spell the failure out.
+          refuses() { if "$@"; then echo "helper accepted: $*"; exit 1; fi; }
+          refuses sudo /usr/local/libexec/face-auth-helper enrol
+          refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/face-auth-helper enrol --user root
+          refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/face-auth-helper enroll
+          refuses /usr/local/libexec/face-auth-helper enrol
+          # Not enrolled: --enrolled answers 1 (no), not 2 (error).
+          set +e; /usr/local/bin/face-auth --enrolled; rc=$?; set -e
+          test "$rc" = 1
 
       - name: Reset install
         run: |
           sudo ./uninstall.sh
           test ! -e /var/cache/face-auth
+          test ! -e /usr/local/bin/face-auth-tray
+          test ! -e /usr/local/libexec/face-auth-helper
+          test ! -e /usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
+          test ! -e /etc/xdg/autostart/vinoauthface-tray.desktop
 
       - name: "Branch 2: no cargo -> reuse local target/ binaries"
         run: |
@@ -138,15 +165,19 @@ jobs:
           mkdir -p /tmp/fake-release
           cp target/x86_64-unknown-linux-musl/release/face-auth /tmp/fake-release/face-auth-x86_64-unknown-linux-musl
           cp target/x86_64-unknown-linux-musl/release/face-enroll /tmp/fake-release/face-enroll-x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/face-auth-tray /tmp/fake-release/face-auth-tray-x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/face-auth-helper /tmp/fake-release/face-auth-helper-x86_64-unknown-linux-musl
           (cd /tmp/fake-release && sha256sum -- * > SHA256SUMS)
           # Remove the local prebuilt binaries so deploy.sh can't fall back to branch 2 instead.
           rm -f target/x86_64-unknown-linux-musl/release/face-auth target/x86_64-unknown-linux-musl/release/face-enroll
+          rm -f target/x86_64-unknown-linux-musl/release/face-auth-tray target/x86_64-unknown-linux-musl/release/face-auth-helper
 
       - name: "Branch 3: no cargo, no local binaries -> checksum-verified download"
         run: |
-          sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" FACE_AUTH_DEPLOY_RELEASE_BASE="file:///tmp/fake-release" ./deploy.sh
+          sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" FACE_AUTH_DEPLOY_RELEASE_BASE="file:///tmp/fake-release" ./deploy.sh --with-tray
           test -x /usr/local/bin/face-auth
           cmp /usr/local/bin/face-auth /tmp/fake-release/face-auth-x86_64-unknown-linux-musl
+          cmp /usr/local/libexec/face-auth-helper /tmp/fake-release/face-auth-helper-x86_64-unknown-linux-musl
 
       - name: Cleanup
         if: always()

@@ -94,7 +94,9 @@ pub fn current() -> Result<UserInfo> {
     by_uid(unsafe { libc::getuid() })
 }
 
-fn by_uid(uid: u32) -> Result<UserInfo> {
+/// Resolve an account by user ID, for callers handed a UID by something
+/// trusted (the kernel, pkexec) rather than a name.
+pub fn by_uid(uid: u32) -> Result<UserInfo> {
     let output = Command::new("getent")
         .arg("passwd")
         .arg(uid.to_string())

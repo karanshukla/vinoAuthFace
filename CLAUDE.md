@@ -39,7 +39,7 @@ cargo deny check
 ### CI and repo rules
 
 - `ci.yml` (every PR, and pushes to main): `test` (unit tests + a from-source musl build of all
-  four binaries), `clippy` (`-D warnings`), `deny` (`deny.toml`: crates.io only, license
+  six binaries), `clippy` (`-D warnings`), `deny` (`deny.toml`: crates.io only, license
   allow-list, advisories), and `deploy-script`, which runs a real `sudo ./deploy.sh` /
   `./uninstall.sh` cycle through every build path, including the checksum-verified download via
   a `file://` override (`FACE_AUTH_DEPLOY_RELEASE_BASE`, deploy.sh-only, not a config option).
@@ -70,7 +70,7 @@ camera.
 
 ### Workspace layout
 
-Five crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/debug shims:
+Six crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/debug/tray shims:
 
 - **`crates/face-auth-core`**: The library. Camera I/O, detection, inference, preprocessing,
   storage, verification, config, lockout. Everything below refers to files here unless noted.
@@ -78,7 +78,8 @@ Five crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/
   (resolved and validated through `user::lookup`, never `USER`/`LOGNAME`/`id -un`), refuses
   remote `PAM_RHOST` sessions, loads config via `FaceAuthConfig::load_for_auth`, then calls
   `authenticate_scan`. Exit 0 = matched, exit 1 = anything else (PAM's `sufficient` line falls
-  through to password). `face-auth --verify USER` (root only) runs the same scan outside PAM.
+  through to password). `face-auth --verify USER` (root only) runs the same scan outside PAM;
+  `face-auth --enrolled` (tray status) answers for the caller's own user ID only.
 - **`crates/face-enroll`** (`src/main.rs`): The enrollment CLI (`clap`-based).
 - **`crates/face-similarity-check`** (`src/main.rs`): Offline debug tool, not deployed by
   `deploy.sh`. Runs the same CLAHE → detect → crop → encode → cosine-similarity pipeline as a
@@ -95,8 +96,16 @@ Five crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/
   docs. `dump` captures one frame from a given device and writes it as a 16-bit PGM for visual
   inspection. Purely read-only against devices it's just listing; `dump` takes the target device
   the same way live face-auth would.
+- **`crates/face-auth-tray`**: The optional tray icon (`deploy.sh --with-tray`, see `docs/tray.md`),
+  which replaces upstream's GTK GUI. Two binaries: `face-auth-tray` (per-user, `ksni`
+  StatusNotifierItem, never in the auth path; spots scans by `face-auth` in `/proc`, reads
+  enrolment via `face-auth --enrolled`) and `face-auth-helper`, the only thing its polkit policy
+  lets pkexec run. The helper takes one verb (`enrol|retrain|uninstall`), no flags, and the target
+  user from `PKEXEC_UID` only; keep it that way, and keep ksni/zbus out of it. `data/` holds the
+  policy, desktop files and the generated icon (`FACE_AUTH_BLESS_ICONS=1 cargo test -p
+  face-auth-tray` after changing `icon.rs`).
 
-The `npu` Cargo feature (on `face-auth-core`, propagated through the other four crates) swaps
+The `npu` Cargo feature (on `face-auth-core`, propagated through the other five crates) swaps
 the inference backend from pure-Rust `tract-onnx` (CPU) to `openvino` (NPU/GPU/CPU via OpenVINO
 runtime); see `#[cfg(feature = "npu")]` in `inference.rs` and `detector.rs`. Backend selection
 at runtime is `config.backend()` (`"tract"` default or `"openvino"`) plus `config.npu_device()`
@@ -211,5 +220,5 @@ This is a fork of `pfalkingham/authFace` (git remote `upstream`), resynced by re
 features onto `upstream/main` rather than merging (the histories had diverged too far). To keep
 future syncs cheap, prefer extending upstream's structure over reshaping it, and keep fork-only
 behaviour in clearly separate functions/files (`lockout.rs`, `pin-camera.sh`, the `npu` cfg
-blocks). The GTK GUI and GNOME scan-indicator extension are intentionally dropped here; skip
-them when pulling upstream changes.
+blocks). The GTK GUI and GNOME scan-indicator extension are intentionally dropped here (the tray replaces
+them); skip them when pulling upstream changes.

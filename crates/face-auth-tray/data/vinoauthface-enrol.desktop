@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Enrol face (vinoAuthFace)
+Comment=Enrol your face for face unlock
+Exec=pkexec /usr/local/libexec/face-auth-helper enrol
+Icon=vinoauthface
+Terminal=true
+Categories=Settings;Security;

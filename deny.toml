@@ -24,6 +24,9 @@ exceptions = [
     { crate = "option-ext", allow = ["MPL-2.0"] },
     # Public-domain dedication.
     { crate = "tiny-keccak", allow = ["CC0-1.0"] },
+    # Public-domain dedication. The tray's StatusNotifierItem; never linked
+    # into face-auth.
+    { crate = "ksni", allow = ["Unlicense"] },
 ]
 
 [bans]
