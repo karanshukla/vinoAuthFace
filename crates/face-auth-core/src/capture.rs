@@ -1,6 +1,6 @@
 use nix::fcntl::{open, OFlag};
 use nix::sys::stat::Mode;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, OwnedFd};
 use libc::{c_void, mmap, munmap, pollfd, PROT_READ, MAP_SHARED, MAP_FAILED, POLLIN};
 use anyhow::Result;
 
@@ -170,7 +170,6 @@ impl Camera {
     pub fn open(device_path: &str) -> Result<Self> {
         let fd = open(device_path, OFlag::O_RDWR, Mode::empty())
             .map_err(|e| anyhow::anyhow!("Failed to open {}: {}", device_path, e))?;
-        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
 
         // Query current format instead of setting it.
         // VIDIOC_S_FMT triggers sensor init on IR cameras (~2s delay).
@@ -428,7 +427,6 @@ fn cstr_to_string(bytes: &[u8]) -> String {
 pub fn query_caps(device_path: &str) -> Result<CameraCaps> {
     let fd = open(device_path, OFlag::O_RDWR, Mode::empty())
         .map_err(|e| anyhow::anyhow!("Failed to open {}: {}", device_path, e))?;
-    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
     let mut cap: v4l2_capability = unsafe { std::mem::zeroed() };
     ioctl(fd.as_raw_fd(), VIDIOC_QUERYCAP, &mut cap as *mut _ as *mut c_void)?;
     Ok(CameraCaps { driver: cstr_to_string(&cap.driver), card: cstr_to_string(&cap.card) })
@@ -439,7 +437,6 @@ pub fn query_caps(device_path: &str) -> Result<CameraCaps> {
 pub fn query_format(device_path: &str) -> Result<(u32, u32, u32)> {
     let fd = open(device_path, OFlag::O_RDWR, Mode::empty())
         .map_err(|e| anyhow::anyhow!("Failed to open {}: {}", device_path, e))?;
-    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
     let mut fmt = make_v4l2_format(V4L2_BUF_TYPE_VIDEO_CAPTURE, 0, 0, 0);
     ioctl(fd.as_raw_fd(), VIDIOC_G_FMT, &mut fmt as *mut _ as *mut c_void)?;
     let pix: &v4l2_pix_format = unsafe { &*(fmt.raw.as_ptr() as *const v4l2_pix_format) };

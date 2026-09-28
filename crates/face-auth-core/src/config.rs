@@ -575,6 +575,41 @@ mod tests {
         assert!(cfg.validate().is_ok());
     }
 
+    /// Every key the shipped example sets or documents must parse, through
+    /// both paths that read TOML: the `toml` crate (the PAM user overlay) and
+    /// the `config` crate (face-enroll and the tools). Uncommenting the
+    /// documented keys also catches the example drifting from the struct.
+    #[test]
+    fn example_config_parses_through_both_loaders() {
+        let raw = include_str!("../../../config/face-auth.toml.example");
+        let uncommented: String = raw
+            .lines()
+            .map(|l| match l.strip_prefix("# ") {
+                Some(rest) if rest.split_once(" = ").is_some_and(|(k, _)| {
+                    !k.is_empty() && k.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                }) => rest.split(" #").next().unwrap_or(rest).to_string(),
+                _ => l.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for text in [raw, uncommented.as_str()] {
+            let via_toml: FaceAuthConfig = toml::from_str(text).expect("toml crate parses example");
+            via_toml.validate().expect("example is valid");
+            let via_config: FaceAuthConfig = Config::builder()
+                .add_source(config::File::from_str(text, config::FileFormat::Toml))
+                .build()
+                .unwrap()
+                .try_deserialize()
+                .expect("config crate parses example");
+            assert_eq!(via_config.threshold(), via_toml.threshold());
+        }
+
+        let full: FaceAuthConfig = toml::from_str(&uncommented).unwrap();
+        assert!(full.pinned_camera_index.is_some() && full.lockout_threshold.is_some());
+        assert_eq!(full.backend(), "tract");
+    }
+
     #[test]
     fn defaults_are_valid() {
         assert!(FaceAuthConfig::default().validate().is_ok());

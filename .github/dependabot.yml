@@ -10,9 +10,13 @@ updates:
       day: monday
     cooldown:
       default-days: 7
+    # Minor and patch bumps travel together; a major bump gets its own PR, so
+    # one breaking crate cannot hold every routine update hostage (#40 bundled
+    # thiserror 2, dirs 7 and toml 1 with patch releases).
     groups:
       cargo:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
     ignore:
       # tract 0.22+ changed the plan types the detector and encoder are built
       # on (Dependabot's 0.23 bump broke the build once already). Moving off
@@ -36,3 +40,4 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
