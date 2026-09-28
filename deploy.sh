@@ -254,6 +254,15 @@ if [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(fin
     NPU_STEP="building with the NPU backend (a first build takes a few minutes)"
     if [ "$OPENVINO_MODE" = "ovfetch" ]; then
         stage_ovfetch || { [ -n "$OV_STAGE" ] && rm -rf "$OV_STAGE"; exit 1; }
+        # openvino-sys's build script records where it found OpenVINO and
+        # never reruns on an environment change. A first install builds
+        # against the staging prefix, deleted once installed, so the next
+        # relink would search a directory that is gone. Rebuild it whenever
+        # the recorded directory is not the one this build uses.
+        if grep -hs '^cargo:rustc-link-search=native=' target/release/build/openvino-sys-*/output \
+                | grep -qvxF "cargo:rustc-link-search=native=$OV_LIB_DIR"; then
+            as_user "$CARGO_BIN" clean --quiet --release -p openvino-sys
+        fi
         # LD_LIBRARY_PATH is where openvino-sys's build script looks for a flat
         # prefix. The rpath is how face-auth finds it at unlock time: pam_exec
         # gives it no environment. DT_RPATH (--disable-new-dtags) rather than
