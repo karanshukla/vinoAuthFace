@@ -136,7 +136,8 @@ find_ovfetch() {
     return 1
 }
 
-CONF_NPU_DEVICE="$(sed -n 's/^npu_device *= *"\(.*\)"/\1/p' "$CONFIG_DIR/face-auth.toml" 2>/dev/null | head -1)"
+# No config yet on a first install: sed fails, and pipefail must not end the script.
+CONF_NPU_DEVICE="$(sed -n 's/^npu_device *= *"\(.*\)"/\1/p' "$CONFIG_DIR/face-auth.toml" 2>/dev/null | head -1 || true)"
 if OVFETCH_BIN="$(find_ovfetch)"; then
     # Run as the user: resolving and downloading need no privileges. The plan
     # is reused below to install exactly what was checked here.
@@ -185,7 +186,7 @@ BIN_SRC="$ARTIFACT_DIR"
 OV_STAGE=""
 stage_ovfetch() {
     local want have
-    want="$(grep -o '"sha256": "[0-9a-f]*"' <<<"$OVFETCH_PLAN" | head -1)"
+    want="$(grep -o '"sha256": "[0-9a-f]*"' <<<"$OVFETCH_PLAN" | head -1 || true)"
     have="$(grep -o '"sha256": "[0-9a-f]*"' "$OPENVINO_INSTALL_DIR/ovfetch.lock.json" 2>/dev/null | head -1 || true)"
     if [ -n "$want" ] && [ "$want" = "$have" ] \
        && (cd "$OPENVINO_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS) 2>/dev/null; then

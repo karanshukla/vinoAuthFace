@@ -6,6 +6,8 @@ use openvino::{Core as OvCore, DeviceType, ElementType, InferRequest, PartialSha
 #[cfg(feature = "npu")]
 const ENCODER_SIZE: i64 = 112;
 
+// One encoder per process, so the size gap between variants costs nothing.
+#[cfg_attr(feature = "npu", allow(clippy::large_enum_variant))]
 pub enum FaceEncoder {
     Tract(TypedRunnableModel<TypedModel>),
     #[cfg(feature = "npu")]
