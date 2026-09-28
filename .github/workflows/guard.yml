@@ -1,0 +1,75 @@
+name: Guard
+
+# Fails any PR from someone other than the owner that touches what decides
+# who gets authenticated: the Rust sources, the install/uninstall/pin scripts
+# (they write PAM stacks, the template store and SELinux policy), the default
+# config, dependencies, CI, or security policy. `guard` is a required check, so
+# such a PR can only merge through the owner's ruleset bypass.
+#
+# pull_request_target runs THIS file from main, never the PR's copy, so a PR
+# cannot edit the guard to pass itself. That trigger is only safe because
+# nothing from the PR is checked out or executed: the changed files are read
+# through the API as data.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check who is changing what
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          OWNER: karanshukla
+        run: |
+          set -euo pipefail
+          if [ "$AUTHOR" = "$OWNER" ]; then
+            echo "PR by $OWNER; nothing to guard."
+            exit 0
+          fi
+
+          gh api --paginate "repos/$REPO/pulls/$PR/files" \
+            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > files.tsv
+
+          sensitive() {
+            case "$1" in
+              crates/* | pam/* | selinux/* | config/* | .github/* \
+              | deploy.sh | uninstall.sh | pin-camera.sh \
+              | Cargo.toml | Cargo.lock | deny.toml | SECURITY.md) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          flagged=()
+          while IFS=$'\t' read -r name previous; do
+            # A rename is judged on both ends, so moving a protected file out of
+            # a protected path does not slip through.
+            for path in "$name" "$previous"; do
+              [ -n "$path" ] || continue
+              sensitive "$path" && flagged+=("$path")
+            done
+          done < files.tsv
+
+          if [ ${#flagged[@]} -eq 0 ]; then
+            echo "No protected paths touched by $AUTHOR."
+            exit 0
+          fi
+          {
+            echo "## Guard: $OWNER must merge this"
+            echo
+            echo "\`$AUTHOR\` changed paths that control authentication:"
+            echo
+            printf -- '- `%s`\n' "${flagged[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf '::error::%s changed protected path %s\n' "$AUTHOR" "${flagged[@]}"
+          exit 1
