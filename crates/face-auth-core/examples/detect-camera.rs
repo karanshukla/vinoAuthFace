@@ -12,7 +12,7 @@ fn main() {
         println!("{path:<14} name={name:?}");
         println!("  {:<22} {}", "name looks like IR:", ir_name);
         match opens {
-            Ok(_) => println!("  {:<22} yes (GREY capture)", "opens as IR device:"),
+            Ok(_) => println!("  {:<22} yes (supported capture format)", "opens as IR device:"),
             Err(e) => println!("  {:<22} no — {e}", "opens as IR device:"),
         }
         println!();
