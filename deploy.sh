@@ -135,6 +135,8 @@ DETECTOR_CHECKSUM="e9adbd0f920ddcce9368434c4d34d72520dc0c19b526fd44b4ef49bde2c3b
 BIN_DIR="/usr/local/bin"
 SHARE_DIR="/usr/local/share/face-auth"
 COMPLETION_DIR="/usr/local/share/bash-completion/completions"
+ZSH_COMPLETION_DIR="/usr/local/share/zsh/site-functions"
+FISH_COMPLETION_DIR="/usr/local/share/fish/vendor_completions.d"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
 PAM_SERVICES="sudo swaylock gdm-password polkit-1 kde-fingerprint plasmalogin-fingerprint cosmic-greeter"
@@ -603,9 +605,11 @@ if [ "$NPU_ACTIVE" = 1 ] && [ "$OPENVINO_MODE" = "archive" ]; then
 fi
 
 # Run after the OpenVINO runtime is in place: an NPU build cannot start without it.
-install -dm755 "$COMPLETION_DIR"
+install -dm755 "$COMPLETION_DIR" "$ZSH_COMPLETION_DIR" "$FISH_COMPLETION_DIR"
 "$BIN_DIR/vinoauthface" completions bash > "$COMPLETION_DIR/vinoauthface"
-chmod 644 "$COMPLETION_DIR/vinoauthface"
+"$BIN_DIR/vinoauthface" completions zsh > "$ZSH_COMPLETION_DIR/_vinoauthface"
+"$BIN_DIR/vinoauthface" completions fish > "$FISH_COMPLETION_DIR/vinoauthface.fish"
+chmod 644 "$COMPLETION_DIR/vinoauthface" "$ZSH_COMPLETION_DIR/_vinoauthface" "$FISH_COMPLETION_DIR/vinoauthface.fish"
 
 # ---- Install models ----
 # Staged in a private mktemp directory. A fixed /tmp path can be pre-created by

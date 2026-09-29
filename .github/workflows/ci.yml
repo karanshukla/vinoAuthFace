@@ -118,6 +118,8 @@ jobs:
           test "$(stat -c %G /usr/local/bin/vinoauthface-auth)" = face-auth
           test -x /usr/local/bin/vinoauthface
           grep -q improve /usr/local/share/bash-completion/completions/vinoauthface
+          grep -q improve /usr/local/share/zsh/site-functions/_vinoauthface
+          grep -q improve /usr/local/share/fish/vendor_completions.d/vinoauthface.fish
           grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/sudo
           test "$(stat -c %a /var/lib/face-auth)" = 2750
           test "$(stat -c %U:%a /var/cache/face-auth)" = root:755
@@ -152,6 +154,8 @@ jobs:
           test ! -e /etc/pam.d/cosmic-greeter
           test ! -e /var/cache/face-auth
           test ! -e /usr/local/share/bash-completion/completions/vinoauthface
+          test ! -e /usr/local/share/zsh/site-functions/_vinoauthface
+          test ! -e /usr/local/share/fish/vendor_completions.d/vinoauthface.fish
           test ! -e /usr/local/bin/vinoauthface-tray
           test ! -e /usr/local/libexec/vinoauthface-helper
           test ! -e /usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
