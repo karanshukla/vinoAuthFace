@@ -814,6 +814,11 @@ for service in $PAM_SERVICES; do
     cp "$conf" "$conf.face-auth.bak"
     sed -i "${line_no}i $PAM_LINE" "$conf"
     PAM_DONE+=("$service")
+    # Record what we wrote so uninstall.sh can tell whether the user has
+    # edited the copy since. Legacy markers are empty.
+    if [ -f "$PAM_DIR/.face-auth-$service-created" ]; then
+        sha256sum "$conf" | cut -d' ' -f1 > "$PAM_DIR/.face-auth-$service-created"
+    fi
 done
 # Joined with ", " for the summary lines.
 join() { local IFS=,; echo "$*" | sed 's/,/, /g'; }

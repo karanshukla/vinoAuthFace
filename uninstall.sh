@@ -110,11 +110,32 @@ rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/gnome-shell/extensions/authf
 echo "Restoring PAM configs..."
 for service in $PAM_SERVICES; do
     conf="$PAM_DIR/$service"
-    if [ -f "$PAM_DIR/.face-auth-$service-created" ]; then
-        # deploy.sh created this override from the vendor default; removing
-        # it restores exactly what the service used before.
-        rm -f "$conf" "$conf.face-auth.bak" "$PAM_DIR/.face-auth-$service-created"
-        echo "Removed $conf (created by vinoAuthFace)"
+    marker="$PAM_DIR/.face-auth-$service-created"
+    if [ -f "$marker" ]; then
+        # deploy.sh created this override from the vendor default. Remove it
+        # only if it is still what deploy.sh wrote; if the user has edited
+        # it since, strip our line and keep their changes. A marker with no
+        # recorded hash (older deploy) falls back to comparing against the
+        # vendor file once our line is gone.
+        recorded=$(cat "$marker" 2>/dev/null)
+        if [ -n "$recorded" ]; then
+            unchanged=false
+            [ "$(sha256sum "$conf" 2>/dev/null | cut -d' ' -f1)" = "$recorded" ] && unchanged=true
+        else
+            unchanged=false
+            if [ -f "/usr/lib/pam.d/$service" ] && [ -f "$conf" ] \
+               && sed '/pam_exec\.so.*face-auth/d' "$conf" | cmp -s - "/usr/lib/pam.d/$service"; then
+                unchanged=true
+            fi
+        fi
+        if [ "$unchanged" = true ] || [ ! -f "$conf" ]; then
+            rm -f "$conf" "$conf.face-auth.bak" "$marker"
+            echo "Removed $conf (created by vinoAuthFace)"
+        else
+            sed -i '/pam_exec\.so.*face-auth/d' "$conf" 2>/dev/null || true
+            rm -f "$conf.face-auth.bak" "$marker"
+            echo "Kept $conf (edited since deploy); removed only the vinoAuthFace line"
+        fi
         continue
     fi
     [ -f "$conf" ] || continue

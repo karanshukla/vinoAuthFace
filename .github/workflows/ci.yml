@@ -105,6 +105,8 @@ jobs:
           sudo cp /etc/pam.d/gdm-password /tmp/gdm-password.orig
           # A vendor-only service: deploy.sh must copy it to /etc/pam.d to patch it.
           printf '%s\n' '#%PAM-1.0' 'auth       include      login' | sudo tee /usr/lib/pam.d/cosmic-greeter
+          # A second one that stays untouched: uninstall must delete it outright.
+          printf '%s\n' '#%PAM-1.0' 'auth       include      login' | sudo tee /usr/lib/pam.d/kde-fingerprint
 
       - name: "Branch 1: cargo present -> build from source"
         run: |
@@ -151,10 +153,20 @@ jobs:
           set +e; /usr/local/bin/vinoauthface-auth --enrolled; rc=$?; set -e
           test "$rc" = 1
 
+      # deploy.sh records the sha256 of each vendor copy it created. A copy the
+      # user edited afterwards must survive uninstall (minus our line); an
+      # untouched one is deleted.
       - name: Reset install
         run: |
+          test -s /etc/pam.d/.face-auth-cosmic-greeter-created
+          echo 'auth       optional     pam_permit.so' | sudo tee -a /etc/pam.d/cosmic-greeter
           sudo ./uninstall.sh
-          test ! -e /etc/pam.d/cosmic-greeter
+          test -f /etc/pam.d/cosmic-greeter
+          grep -q pam_permit /etc/pam.d/cosmic-greeter
+          ! grep -q face-auth /etc/pam.d/cosmic-greeter
+          test ! -e /etc/pam.d/.face-auth-cosmic-greeter-created
+          sudo rm /etc/pam.d/cosmic-greeter
+          test ! -e /etc/pam.d/kde-fingerprint
           test ! -e /var/cache/face-auth
           test ! -e /usr/local/share/bash-completion/completions/vinoauthface
           test ! -e /usr/local/share/zsh/site-functions/_vinoauthface
