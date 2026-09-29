@@ -132,6 +132,10 @@ pub const MOTION_PATCH_SIZE: usize = 48;
 /// detector's box jitter on top.
 pub const MOTION_MAX_SHIFT: i32 = 4;
 
+/// Side of the square blocks `MotionProfile::local` is taken over, in patch
+/// pixels. About the size of an eye at `MOTION_PATCH_SIZE`.
+pub const MOTION_BLOCK: usize = 8;
+
 /// Per-pixel change, in units of the patch's own standard deviation, below
 /// which a difference is sensor noise rather than motion.
 const MOTION_NOISE_FLOOR: f32 = 0.25;
@@ -158,8 +162,12 @@ pub struct MotionProfile {
     /// moved by hand moves as one piece and leaves little here; a real face
     /// moves in parts (blinks, mouth, parallax as the head turns).
     pub residual: f32,
+    /// The largest `residual` of any one `MOTION_BLOCK` square block. A blink
+    /// is a big change in a small area, which `residual`, averaged over the
+    /// whole face, dilutes to almost nothing.
+    pub local: f32,
     /// The rigid shift, in patch pixels, that best lines `b` up with `a`.
-    pub shift: (i32, i32),
+    pub shift: (f32, f32),
 }
 
 pub fn face_patch(frame: &IrFrame, face_box: &FaceBox) -> anyhow::Result<FacePatch> {
@@ -189,46 +197,90 @@ pub fn face_patch(frame: &IrFrame, face_box: &FaceBox) -> anyhow::Result<FacePat
 /// Compare two face patches: how much changed, and how much of that a single
 /// rigid shift can't explain.
 ///
-/// Both counts are taken over the same inner window (the patch less
+/// The shift is found to a quarter of a patch pixel: whole pixels first, then
+/// refined with bilinear sampling. A photo rarely moves by whole pixels, and
+/// a half-pixel misalignment leaves residue along every sharp edge (eyes,
+/// glasses), right where a blink would show.
+///
+/// Every count is taken over the same inner window (the patch less
 /// `MOTION_MAX_SHIFT` on each side) so every candidate shift is scored on the
-/// same number of pixels.
+/// same pixels.
 pub fn motion_profile(a: &FacePatch, b: &FacePatch) -> MotionProfile {
     let n = MOTION_PATCH_SIZE as i32;
     let s = MOTION_MAX_SHIFT;
     let expected = MOTION_PATCH_SIZE * MOTION_PATCH_SIZE;
     if a.data.len() != expected || b.data.len() != expected {
-        return MotionProfile { total: 0.0, residual: 0.0, shift: (0, 0) };
+        return MotionProfile { total: 0.0, residual: 0.0, local: 0.0, shift: (0.0, 0.0) };
     }
 
-    let inner = ((n - 2 * s) * (n - 2 * s)) as f32;
-    let at = |dx: i32, dy: i32| {
+    // `b` at (x, y), bilinearly. Callers keep x and y within [0, n - 1].
+    let sample = |x: f32, y: f32| {
+        let (x0, y0) = (x.floor() as i32, y.floor() as i32);
+        let (fx, fy) = (x - x0 as f32, y - y0 as f32);
+        let (x1, y1) = ((x0 + 1).min(n - 1), (y0 + 1).min(n - 1));
+        let px = |xx: i32, yy: i32| b.data[(yy * n + xx) as usize];
+        (px(x0, y0) * (1.0 - fx) + px(x1, y0) * fx) * (1.0 - fy) + (px(x0, y1) * (1.0 - fx) + px(x1, y1) * fx) * fy
+    };
+    let span = (n - 2 * s) as usize;
+    let inner = (span * span) as f32;
+    // Sum of absolute differences at a shift, for choosing it.
+    let cost = |dx: f32, dy: f32| {
         let mut sum = 0.0f32;
-        let mut changed = 0usize;
         for y in s..n - s {
             for x in s..n - s {
-                let pa = a.data[(y * n + x) as usize];
-                let pb = b.data[((y + dy) * n + x + dx) as usize];
-                let d = (pa - pb).abs();
-                sum += d;
+                sum += (a.data[(y * n + x) as usize] - sample(x as f32 + dx, y as f32 + dy)).abs();
+            }
+        }
+        sum
+    };
+    // Changed pixels at a shift, overall and per block.
+    let blocks = span / MOTION_BLOCK;
+    let changed = |dx: f32, dy: f32| {
+        let mut all = 0usize;
+        let mut per_block = vec![0usize; blocks * blocks];
+        for y in 0..span {
+            for x in 0..span {
+                let (px, py) = (x as i32 + s, y as i32 + s);
+                let d = (a.data[(py * n + px) as usize] - sample(px as f32 + dx, py as f32 + dy)).abs();
                 if d > MOTION_NOISE_FLOOR {
-                    changed += 1;
+                    all += 1;
+                    if x / MOTION_BLOCK < blocks && y / MOTION_BLOCK < blocks {
+                        per_block[(y / MOTION_BLOCK) * blocks + x / MOTION_BLOCK] += 1;
+                    }
                 }
             }
         }
-        (sum, changed as f32 / inner)
+        let worst = per_block.iter().copied().max().unwrap_or(0);
+        (all as f32 / inner, worst as f32 / (MOTION_BLOCK * MOTION_BLOCK) as f32)
     };
 
-    let (_, total) = at(0, 0);
-    let mut best = (f32::INFINITY, total, (0, 0));
+    let mut best = (f32::INFINITY, (0.0f32, 0.0f32));
     for dy in -s..=s {
         for dx in -s..=s {
-            let (sum, frac) = at(dx, dy);
-            if sum < best.0 {
-                best = (sum, frac, (dx, dy));
+            let c = cost(dx as f32, dy as f32);
+            if c < best.0 {
+                best = (c, (dx as f32, dy as f32));
             }
         }
     }
-    MotionProfile { total, residual: best.1, shift: best.2 }
+    let (ix, iy) = best.1;
+    let limit = s as f32;
+    for qy in -3..=3 {
+        for qx in -3..=3 {
+            let (dx, dy) = (ix + qx as f32 * 0.25, iy + qy as f32 * 0.25);
+            if dx.abs() > limit || dy.abs() > limit {
+                continue;
+            }
+            let c = cost(dx, dy);
+            if c < best.0 {
+                best = (c, (dx, dy));
+            }
+        }
+    }
+
+    let (total, _) = changed(0.0, 0.0);
+    let (residual, local) = changed(best.1 .0, best.1 .1);
+    MotionProfile { total, residual, local, shift: best.1 }
 }
 
 /// Default CLAHE parameters. `CLIP_LIMIT` follows OpenCV's convention: the
@@ -479,7 +531,7 @@ mod tests {
     fn identical_faces_have_zero_motion() {
         let a = scene(0, 0, 1.0, 0.0, None);
         let p = profile(&a, &a.clone(), &MIDDLE);
-        assert_eq!(p, MotionProfile { total: 0.0, residual: 0.0, shift: (0, 0) });
+        assert_eq!(p, MotionProfile { total: 0.0, residual: 0.0, local: 0.0, shift: (0.0, 0.0) });
     }
 
     #[test]
@@ -508,7 +560,34 @@ mod tests {
         let p = profile(&a, &b, &MIDDLE);
         assert!(p.total > 0.1, "{p:?}");
         assert!(p.residual < 0.02, "{p:?}");
-        assert_eq!(p.shift, (-3, 2));
+        assert_eq!(p.shift, (-3.0, 2.0));
+    }
+
+    #[test]
+    fn subpixel_translation_leaves_little_local_residual() {
+        // 1 frame px is about half a patch px: whole-pixel alignment alone
+        // would leave residue along every edge.
+        let a = scene(0, 0, 1.0, 0.0, None);
+        let b = scene(1, 1, 1.0, 0.0, None);
+        let p = profile(&a, &b, &MIDDLE);
+        assert!(p.local < 0.1, "{p:?}");
+        assert!(p.residual < 0.01, "{p:?}");
+    }
+
+    #[test]
+    fn blink_sized_change_is_local_not_spread() {
+        // An eyelid closing: a 16px square (8x8 in the patch, most of one
+        // block, a small share of the face) loses its texture.
+        let a = scene(0, 0, 1.0, 0.0, None);
+        let mut blink = a.clone();
+        for y in 90..106u32 {
+            for x in 90..106u32 {
+                blink.data[(y * 200 + x) as usize] = 20000;
+            }
+        }
+        let p = profile(&a, &blink, &MIDDLE);
+        assert!(p.local > 0.3, "{p:?}");
+        assert!(p.residual < 0.1, "{p:?}");
     }
 
     #[test]

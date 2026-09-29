@@ -79,12 +79,14 @@ of systemd, and the blobs live in `/var/lib/face-auth`, which survives image upd
   region counts, after removing brightness and contrast changes, so a hand moving beside a still
   photo or an auto-exposure step doesn't pass it. This defeats a rigidly held image, but not a
   photo moved by hand.
-- **Moved photos: opt-in, uncalibrated.** `liveness_residual_motion_threshold` additionally
-  requires motion a single rigid shift can't explain (blinks, mouth, parallax as the head turns).
-  In software tests, synthetic clips of a moved, tilted or zoomed IR photo peaked at 0.14, and a
-  moving real face cleared 0.2 in over half its frame pairs. But a real face held still stays
-  below 0.2 for the whole scan and fails, so the default is 0 (off) until the check is
-  calibrated on still faces ([#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
+- **Moved photos: opt-in.** `liveness_residual_motion_threshold` additionally requires motion a
+  single rigid shift (found to a quarter pixel) can't explain, in the most-changed eye-sized block
+  of the face: a blink, the mouth, parallax as the head turns. In software tests, synthetic clips
+  of a moved, tilted or zoomed IR photo peaked at 0.20, blinks reached 0.3-0.6, and a moving face
+  cleared 0.3 in most frame pairs. It stays off by default because a face held still can go the
+  whole scan without a qualifying blink: on one real 15 s still clip, with glasses glare covering
+  both eyes, the first came about 8.5 s in
+  ([#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
 - **Printed photos remain an open risk.** Paper does reflect NIR, and the above is untested
   against real prints on a real sensor; a print bent or flexed as it moves isn't rigid. There's
   no structured-light or depth check. High-quality IR-visible prints or 3D masks may bypass

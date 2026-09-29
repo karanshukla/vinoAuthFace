@@ -21,8 +21,9 @@ replayed on top:
   frame, so a hand moving beside a photo or an exposure change no longer
   passes it (#17, #28). An opt-in check for motion a rigid shift can't explain
   (`liveness_residual_motion_threshold`, default 0 = off) also stops a photo
-  moved by hand, but at 0.2 it fails a face held still, so it stays off until
-  it's calibrated.
+  moved by hand. It measures the most-changed eye-sized block after a
+  quarter-pixel alignment, so a blink counts; 0.3 is the value to try. Off by
+  default because a still face may not blink within one scan.
 - Motion liveness gate, failed-match lockout (`lockout.bin` in the root-owned
   store), camera pinning (`pin-camera.sh`).
 - Detector box decode with face crop before encoding, and the detector's

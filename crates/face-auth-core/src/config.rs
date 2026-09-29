@@ -396,12 +396,12 @@ impl FaceAuthConfig {
         self.liveness_motion_threshold.unwrap_or(0.01)
     }
 
-    /// Minimum fraction of face-patch pixels still changed after undoing the
-    /// best rigid shift, required in the same frame pair as
-    /// `liveness_motion_threshold`. Stops a photo moved by hand. See
-    /// `preprocess::motion_profile`'s `residual`. Zero disables the check,
-    /// and is the default until it's calibrated on a still face: 0.2 failed
-    /// a real face held still for the whole scan.
+    /// Minimum fraction of the most-changed block of the face patch (about an
+    /// eye's size) still changed after undoing the best rigid shift, required
+    /// in the same frame pair as `liveness_motion_threshold`. Stops a photo
+    /// moved by hand. See `preprocess::motion_profile`'s `local`. Zero
+    /// disables the check, and is the default: a still face may not blink
+    /// inside one scan, especially behind glasses glare.
     pub fn liveness_residual_motion_threshold(&self) -> f32 {
         self.liveness_residual_motion_threshold.unwrap_or(0.0)
     }

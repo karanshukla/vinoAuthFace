@@ -130,11 +130,13 @@ scan_interval_ms = 0
 # rigidly held photo. 0 disables it.
 # liveness_motion_threshold = 0.01
 #
-# Fraction of face pixels still changed after undoing the best rigid shift
-# (0.0 - 1.0, default 0 = off). A photo moved by hand moves as one piece; a
-# real face moves in parts (blinks, mouth, head turning). Off by default: 0.2
-# stops a moved photo but also fails a face held still, so it isn't
-# calibrated yet.
+# Motion a rigid shift can't explain (0.0 - 1.0, default 0 = off): the
+# fraction still changed, after undoing the best shift, in the most-changed
+# eye-sized block of the face. A photo moved by hand moves as one piece; a
+# real face moves in parts (a blink, the mouth, the head turning). Moved-photo
+# tests peak around 0.2 and blinks reach 0.3-0.6, so 0.3 is the value to try.
+# Off by default: a face held still may not blink within one scan, and
+# glasses glare over the eyes hides blinks.
 # liveness_residual_motion_threshold = 0.0
 
 # Minimum face size (0.0 - 0.75, default 0 = off). The larger side of the

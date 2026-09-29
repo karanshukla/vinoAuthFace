@@ -168,8 +168,8 @@ impl FaceAuth {
         let mut face_seen = false;
         // Motion liveness: a match only counts once real motion has been seen
         // between consecutive face frames. `total` defeats a static photo;
-        // `residual` (motion a rigid shift can't explain) defeats one moved
-        // by hand.
+        // `local` (motion a rigid shift can't explain, in the most-changed
+        // part of the face) defeats one moved by hand.
         let motion_threshold = self.config.liveness_motion_threshold();
         let residual_threshold = self.config.liveness_residual_motion_threshold();
         let mut prev_face: Option<(crate::capture::IrFrame, FaceBox)> = None;
@@ -261,11 +261,12 @@ impl FaceAuth {
                 nap(deadline);
                 continue;
             };
-            motion_seen |= motion.total >= motion_threshold && motion.residual >= residual_threshold;
+            motion_seen |= motion.total >= motion_threshold && motion.local >= residual_threshold;
             tracing::debug!(
                 frame = frame_num,
                 motion = motion.total,
                 residual = motion.residual,
+                local = motion.local,
                 shift = ?motion.shift,
                 motion_threshold,
                 residual_threshold,

@@ -35,17 +35,19 @@ fn main() -> anyhow::Result<()> {
     let mut prev = None;
     let mut spent = Duration::ZERO;
     let mut pairs = 0u32;
-    println!("{:>5} {:>7} {:>8} {:>7}", "frame", "total", "residual", "shift");
+    println!("{:>5} {:>7} {:>8} {:>7} {:>7}", "frame", "total", "residual", "local", "shift");
 
+    let mut read = |file: &mut std::fs::File| -> Option<IrFrame> {
+        file.read_exact(&mut buf).ok()?;
+        Some(IrFrame { data: buf.iter().map(|&b| b as u16 * 257).collect(), width, height })
+    };
     for n in 0.. {
-        if file.read_exact(&mut buf).is_err() {
+        // Frames in pairs, keeping the brighter, as `capture_illuminated_frame`
+        // does: a strobing emitter's dark frame can still pass `assess_frame`.
+        let (Some(a), Some(b)) = (read(&mut file), read(&mut file)) else {
             break;
-        }
-        let raw = IrFrame {
-            data: buf.iter().map(|&b| b as u16 * 257).collect(),
-            width,
-            height,
         };
+        let raw = if b.mean_intensity() > a.mean_intensity() { b } else { a };
         if assess_frame(&raw) != FrameQuality::Ok {
             continue;
         }
@@ -70,7 +72,7 @@ fn main() -> anyhow::Result<()> {
         if let Some(m) = profile {
             spent += dt;
             pairs += 1;
-            println!("{n:>5} {:>7.4} {:>8.4} {:>7?}", m.total, m.residual, m.shift);
+            println!("{n:>5} {:>7.4} {:>8.4} {:>7.4} ({:.2},{:.2})", m.total, m.residual, m.local, m.shift.0, m.shift.1);
         }
     }
     if pairs > 0 {
