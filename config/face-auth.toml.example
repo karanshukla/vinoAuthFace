@@ -102,13 +102,13 @@ scan_interval_ms = 0
 # start_delay_ms = 2000
 # start_delay_scope = "screen_lock"
 
-# Confirm with Enter (default true). After a face match for sudo, su or polkit,
+# Confirm with Enter (default false). After a face match for sudo, su or polkit,
 # face-auth asks for Enter on the terminal before it lets the caller through, so
 # a process that runs `sudo` while you sit in front of the camera cannot get
 # root unnoticed. Waits 20 s, and any other key declines. Not asked when there
 # is no terminal (pkexec from a GUI), and never on lock screens or login.
 # System policy only.
-# require_confirmation_elevation = true
+# require_confirmation_elevation = false
 
 # Motion liveness (0.0 - 1.0, default 0.01). During a scan, a match is only
 # accepted once at least this fraction of pixels has changed between two

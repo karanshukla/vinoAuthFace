@@ -85,11 +85,11 @@ aren't delayed. Set `start_delay_ms = 0` in `/etc/face-auth.toml` to disable it,
 
 ## sudo says the face matched and waits for Enter
 
-After a match for `sudo`, `su` or polkit, face-auth asks for Enter on the terminal, so a process
+With `require_confirmation_elevation = true` in `/etc/face-auth.toml` (off by default), a match for
+`sudo`, `su` or polkit is followed by a request for Enter on the terminal, so a process
 that runs `sudo` while you happen to sit at the camera can't get root unnoticed. Any other key, or
 20 seconds of silence, falls through to the password. Lock screens and login are never asked, nor
-is a caller with no terminal (`pkexec` from a GUI). Set `require_confirmation_elevation = false`
-in `/etc/face-auth.toml` to turn it off.
+is a caller with no terminal (`pkexec` from a GUI). Set it back to `false` to turn it off.
 
 ## Face auth stopped being tried after a few failures
 
