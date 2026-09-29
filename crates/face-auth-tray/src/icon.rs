@@ -130,24 +130,24 @@ const SMALL: Grid = Grid {
 };
 
 /// 16-unit design for the symbolic tray icon, which has no tile: the
-/// viewfinder fills the icon like vinoWhisper's outline does, instead of
-/// sitting in the middle of it with a wide margin.
+/// viewfinder sits on a 12-unit square with a 2-unit margin, the same
+/// footprint as the other icons in the tray.
 const SYMBOLIC: Grid = Grid {
     tile: Shape::new(0.0, 0.0, 16.0, 16.0, 0.0),
     edge: 0.0,
     marks: &[
-        (Shape::new(1.0, 1.0, 4.0, 1.0, 0.0), Part::Bracket),
-        (Shape::new(1.0, 1.0, 1.0, 4.0, 0.0), Part::Bracket),
-        (Shape::new(11.0, 1.0, 4.0, 1.0, 0.0), Part::Bracket),
-        (Shape::new(14.0, 1.0, 1.0, 4.0, 0.0), Part::Bracket),
-        (Shape::new(1.0, 14.0, 4.0, 1.0, 0.0), Part::Bracket),
-        (Shape::new(1.0, 11.0, 1.0, 4.0, 0.0), Part::Bracket),
-        (Shape::new(11.0, 14.0, 4.0, 1.0, 0.0), Part::Bracket),
-        (Shape::new(14.0, 11.0, 1.0, 4.0, 0.0), Part::Bracket),
-        (Shape::new(5.0, 4.0, 2.0, 3.0, 0.0), Part::Feature),
-        (Shape::new(9.0, 4.0, 2.0, 3.0, 0.0), Part::Feature),
-        (Shape::new(5.0, 11.0, 6.0, 1.0, 0.0), Part::Feature),
-        (Shape::new(3.0, 8.0, 10.0, 1.0, 0.0), Part::ScanLine),
+        (Shape::new(2.0, 2.0, 3.0, 1.0, 0.0), Part::Bracket),
+        (Shape::new(2.0, 2.0, 1.0, 3.0, 0.0), Part::Bracket),
+        (Shape::new(11.0, 2.0, 3.0, 1.0, 0.0), Part::Bracket),
+        (Shape::new(13.0, 2.0, 1.0, 3.0, 0.0), Part::Bracket),
+        (Shape::new(2.0, 13.0, 3.0, 1.0, 0.0), Part::Bracket),
+        (Shape::new(2.0, 11.0, 1.0, 3.0, 0.0), Part::Bracket),
+        (Shape::new(11.0, 13.0, 3.0, 1.0, 0.0), Part::Bracket),
+        (Shape::new(13.0, 11.0, 1.0, 3.0, 0.0), Part::Bracket),
+        (Shape::new(5.0, 5.0, 2.0, 2.0, 0.0), Part::Feature),
+        (Shape::new(9.0, 5.0, 2.0, 2.0, 0.0), Part::Feature),
+        (Shape::new(5.0, 10.0, 6.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(4.0, 8.0, 8.0, 1.0, 0.0), Part::ScanLine),
     ],
     size: 16.0,
 };
