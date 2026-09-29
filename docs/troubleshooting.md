@@ -1,6 +1,10 @@
 # Troubleshooting
 
 ```bash
+# Check the whole install in one go: PAM hooks, models, ownership, templates,
+# camera, pin and sealing. Run it with sudo to include the enrolment count.
+sudo vinoauthface doctor
+
 # Which camera will it use?
 vinoauthface-camera-diag list
 
