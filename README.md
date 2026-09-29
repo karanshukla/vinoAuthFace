@@ -69,7 +69,7 @@ sudo ./uninstall.sh --purge   # templates too
 | [PAM integration](docs/pam.md) | Services, KDE, polkit, Bitwarden, keyrings |
 | [Hardware and diagnostics](docs/hardware.md) | Supported cameras, `face-camera-diag`, hardware reports |
 | [Troubleshooting](docs/troubleshooting.md) | Debug output, common errors |
-| [Tray icon](docs/tray.md) | Optional tray: status, enrol, retrain, test scan, uninstall (`--with-tray`) |
+| [Tray icon](docs/tray.md) | Optional tray: status, enrol, retrain, test scan, uninstall (installed by default, `--no-tray` to skip) |
 | [Security model](docs/security.md) | Trust model, spoofing, frame injection, limitations |
 | [Architecture](docs/architecture.md) | Pipeline, models and licensing, project layout, upstream relationship |
 

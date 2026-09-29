@@ -27,7 +27,7 @@ the release's `SHA256SUMS`. Build from source for an unreleased change or the NP
 | Bitwarden | Only if installed | Adds Bitwarden's polkit unlock action |
 | SELinux | Compiles and loads policy | Allows `xdm_t` to mmap the camera for lock-screen auth |
 | NPU cache | Empties and refills it | `/var/cache/face-auth`, root-owned. Emptied because a new model or driver leaves stale entries, then refilled with `face-auth --warm-cache` (NPU builds only) |
-| Tray | Only with `--with-tray` | Tray binary, root helper, polkit actions, autostart and launchers. See [tray.md](tray.md). Every deploy also installs `uninstall.sh` to `/usr/local/share/face-auth/` |
+| Tray | Unless `--no-tray` | Tray binary, root helper, polkit actions, autostart and launchers. See [tray.md](tray.md). Every deploy also installs `uninstall.sh` to `/usr/local/share/face-auth/` |
 | Storage | Secures the template store | `/var/lib/face-auth`, `root:face-auth` `2750`, templates `0640`, per-user `lockout/` `2770`. An existing store is re-secured in place |
 
 ## Building from source

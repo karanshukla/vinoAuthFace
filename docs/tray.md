@@ -9,8 +9,10 @@ Plasma shows it natively (StatusNotifierItem). GNOME needs the AppIndicator exte
 ## Install
 
 ```bash
-sudo ./deploy.sh --with-tray        # or: sudo FACE_AUTH_TRAY=1 ./deploy.sh
+sudo ./deploy.sh
 ```
+
+The tray installs by default. Skip it with `sudo ./deploy.sh --no-tray` (or `FACE_AUTH_TRAY=0`).
 
 It starts at the next login, or run `face-auth-tray` now. `uninstall.sh` removes it.
 

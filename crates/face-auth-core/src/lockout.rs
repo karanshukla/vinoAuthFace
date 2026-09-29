@@ -51,9 +51,18 @@ impl LockoutState {
         let Ok(dir) = user_store_dir(user, embeddings_dir) else {
             return Self::default();
         };
-        let Ok(file) = File::open(lockout_dir(&dir).join(STATE_FILE)) else {
+        // Never follow a link and never block on a FIFO: the directory is
+        // group-writable, and PAM must not hang on what is found in it.
+        let Ok(file) = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(lockout_dir(&dir).join(STATE_FILE))
+        else {
             return Self::default();
         };
+        if !file.metadata().is_ok_and(|m| m.is_file() && m.len() <= 64) {
+            return Self::default();
+        }
         let mut reader = BufReader::new(file);
         let mut parse = || -> std::io::Result<Self> {
             if reader.read_u32::<LittleEndian>()? != LOCKOUT_VERSION {
