@@ -75,13 +75,16 @@ of systemd, and the blobs live in `/var/lib/face-auth`, which survives image upd
 - **Screens are blocked by sensor physics.** OLED and most LCD panels emit essentially no near-IR
   and barely reflect the camera's illuminator, so a phone showing your photo produces no
   face-shaped IR signal. Measured: zero detections across 100 attempts against a phone screen.
-- **Motion liveness** requires, in one pair of consecutive frames, both motion of the face and
-  motion a single rigid shift can't explain (blinks, mouth, parallax as the head turns). Only the
-  face region counts, after removing brightness and contrast changes, so a hand moving beside a
-  still photo or an auto-exposure step doesn't pass it. This defeats a rigidly held image and,
-  in software tests, a photo moved by hand: synthetic clips of a moved, tilted or zoomed IR photo
-  peaked at 0.14 rigid-residual motion against the 0.2 default, while a real face cleared 0.2 in
-  over half its frame pairs ([#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
+- **Motion liveness** requires motion of the face between consecutive frames. Only the face
+  region counts, after removing brightness and contrast changes, so a hand moving beside a still
+  photo or an auto-exposure step doesn't pass it. This defeats a rigidly held image, but not a
+  photo moved by hand.
+- **Moved photos: opt-in, uncalibrated.** `liveness_residual_motion_threshold` additionally
+  requires motion a single rigid shift can't explain (blinks, mouth, parallax as the head turns).
+  In software tests, synthetic clips of a moved, tilted or zoomed IR photo peaked at 0.14, and a
+  moving real face cleared 0.2 in over half its frame pairs. But a real face held still stays
+  below 0.2 for the whole scan and fails, so the default is 0 (off) until the check is
+  calibrated on still faces ([#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
 - **Printed photos remain an open risk.** Paper does reflect NIR, and the above is untested
   against real prints on a real sensor; a print bent or flexed as it moves isn't rigid. There's
   no structured-light or depth check. High-quality IR-visible prints or 3D masks may bypass

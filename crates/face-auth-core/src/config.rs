@@ -399,9 +399,11 @@ impl FaceAuthConfig {
     /// Minimum fraction of face-patch pixels still changed after undoing the
     /// best rigid shift, required in the same frame pair as
     /// `liveness_motion_threshold`. Stops a photo moved by hand. See
-    /// `preprocess::motion_profile`'s `residual`. Zero disables the check.
+    /// `preprocess::motion_profile`'s `residual`. Zero disables the check,
+    /// and is the default until it's calibrated on a still face: 0.2 failed
+    /// a real face held still for the whole scan.
     pub fn liveness_residual_motion_threshold(&self) -> f32 {
-        self.liveness_residual_motion_threshold.unwrap_or(0.2)
+        self.liveness_residual_motion_threshold.unwrap_or(0.0)
     }
 
     /// Smallest accepted face, as the larger side of its box over the same
@@ -598,7 +600,10 @@ mod tests {
 
     #[test]
     fn user_overlay_may_only_raise_residual_motion_threshold() {
-        let mut cfg = system_baseline();
+        let mut cfg = FaceAuthConfig {
+            liveness_residual_motion_threshold: Some(0.2),
+            ..system_baseline()
+        };
         cfg.apply_user_overlay(&FaceAuthConfig {
             liveness_residual_motion_threshold: Some(0.0),
             ..FaceAuthConfig::default()

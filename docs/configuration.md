@@ -27,7 +27,7 @@ threshold = 0.6
 capture_timeout_ms = 5000
 scan_duration_ms = 5000
 liveness_motion_threshold = 0.01
-liveness_residual_motion_threshold = 0.2
+liveness_residual_motion_threshold = 0.0
 ```
 
 ### What a user may override at the login prompt

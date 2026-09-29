@@ -131,9 +131,11 @@ scan_interval_ms = 0
 # liveness_motion_threshold = 0.01
 #
 # Fraction of face pixels still changed after undoing the best rigid shift
-# (0.0 - 1.0, default 0.2). A photo moved by hand moves as one piece; a real
-# face moves in parts (blinks, mouth, head turning). 0 disables it.
-# liveness_residual_motion_threshold = 0.2
+# (0.0 - 1.0, default 0 = off). A photo moved by hand moves as one piece; a
+# real face moves in parts (blinks, mouth, head turning). Off by default: 0.2
+# stops a moved photo but also fails a face held still, so it isn't
+# calibrated yet.
+# liveness_residual_motion_threshold = 0.0
 
 # Minimum face size (0.0 - 0.75, default 0 = off). The larger side of the
 # detected face box, as a fraction of the same side of the frame. Smaller faces

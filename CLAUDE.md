@@ -136,7 +136,8 @@ both total motion (`preprocess::motion_profile`'s `total` ≥ `liveness_motion_t
 motion a rigid shift can't explain (`residual` ≥ `liveness_residual_motion_threshold`). Both
 are measured on a normalised patch of the face, cut from the pre-CLAHE frame with the earlier
 frame's box, so background motion and exposure changes don't count. `total` defeats a static
-photo; `residual` a photo moved by hand. `examples/motion-profile.rs` prints both for a clip.
+photo; `residual` a photo moved by hand (default 0 = off: 0.2 failed a still face, and it's
+not calibrated yet). `examples/motion-profile.rs` prints both for a clip.
 
 Every entry point calls `config.verify_pinned_camera()` first (no-op unless `pin-camera.sh` has
 been run). The two authenticate paths also consult `lockout::check` before any camera work;
