@@ -27,6 +27,7 @@ fi
 
 BIN_DIR="/usr/local/bin"
 SHARE_DIR="/usr/local/share/face-auth"
+COMPLETION_DIR="/usr/local/share/bash-completion/completions"
 NPU_CACHE_DIR="/var/cache/face-auth"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
@@ -43,7 +44,7 @@ fi
 
 echo "Removing binaries..."
 rm -f "$BIN_DIR/face-auth"
-rm -f "$BIN_DIR/face-enroll"
+rm -f "$BIN_DIR/face-enroll" "$COMPLETION_DIR/face-enroll"
 
 # The tray (installed by deploy.sh unless --no-tray). A running tray exits on its own when its
 # uninstall entry finishes; one started some other way keeps running until

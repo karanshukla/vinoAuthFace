@@ -126,6 +126,7 @@ DETECTOR_CHECKSUM="e9adbd0f920ddcce9368434c4d34d72520dc0c19b526fd44b4ef49bde2c3b
 
 BIN_DIR="/usr/local/bin"
 SHARE_DIR="/usr/local/share/face-auth"
+COMPLETION_DIR="/usr/local/share/bash-completion/completions"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
 VAR_DIR="/var/lib/face-auth"
@@ -505,6 +506,9 @@ if findmnt -no OPTIONS --target "$BIN_DIR" 2>/dev/null | tr ',' '\n' | grep -qx 
         "sudo, polkit and GDM still work; KDE's lock screen and swaylock fall back to the password."
 fi
 install -Dm755 "$BIN_SRC/face-enroll" "$BIN_DIR/face-enroll"
+install -dm755 "$COMPLETION_DIR"
+"$BIN_DIR/face-enroll" --completions bash > "$COMPLETION_DIR/face-enroll"
+chmod 644 "$COMPLETION_DIR/face-enroll"
 ok Binaries "face-auth, face-enroll in $BIN_DIR"
 # The tray's uninstall entry runs this copy; the repo may be long gone.
 install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"

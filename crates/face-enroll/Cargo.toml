@@ -9,6 +9,7 @@ publish.workspace = true
 face-auth-core = { path = "../face-auth-core" }
 anyhow = { workspace = true }
 clap = { workspace = true }
+clap_complete = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 libc = "0.2"

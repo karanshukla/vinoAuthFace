@@ -1,4 +1,5 @@
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::Shell;
 use face_auth_core::{user, EnrollProgress, FaceAuth, FaceAuthConfig};
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -9,8 +10,8 @@ use tracing_subscriber::{fmt, EnvFilter};
     after_help = "Templates live under a root-owned directory, so this must be run with sudo."
 )]
 struct Args {
-    #[arg(short, long, help = "Username to enrol")]
-    user: String,
+    #[arg(short, long, help = "Username to enrol", required_unless_present = "completions")]
+    user: Option<String>,
 
     /// 30 gives enough pose and expression variation from one sitting for
     /// reliable matching; fewer enrol faster but match less reliably.
@@ -37,10 +38,18 @@ struct Args {
 
     #[arg(short, long, help = "Verbose output")]
     verbose: bool,
+
+    #[arg(long, value_name = "SHELL", hide = true, help = "Print a shell completion script and exit")]
+    completions: Option<Shell>,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    if let Some(shell) = args.completions {
+        clap_complete::generate(shell, &mut Args::command(), "face-enroll", &mut std::io::stdout());
+        return Ok(());
+    }
 
     let filter = if args.verbose {
         EnvFilter::new("face_auth_core=debug,face_enroll=debug")
@@ -56,7 +65,7 @@ fn main() -> anyhow::Result<()> {
     // Resolve to the canonical account name. `getent passwd 0` succeeds and
     // would otherwise enrol into a directory literally named "0", which the
     // authentication path (looking up "root") never reads — a silent no-op.
-    let info = user::lookup(&args.user)?;
+    let info = user::lookup(args.user.as_deref().expect("clap requires --user"))?;
 
     // The system template directory is root-owned 0700 so that no unprivileged
     // process can plant a face for an account. Writing there needs root; say so

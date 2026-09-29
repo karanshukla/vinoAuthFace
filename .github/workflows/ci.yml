@@ -114,6 +114,7 @@ jobs:
           test -g /usr/local/bin/face-auth
           test "$(stat -c %G /usr/local/bin/face-auth)" = face-auth
           test -x /usr/local/bin/face-enroll
+          grep -q -- --improve /usr/local/share/bash-completion/completions/face-enroll
           grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/sudo
           test "$(stat -c %a /var/lib/face-auth)" = 2750
           test "$(stat -c %U:%a /var/cache/face-auth)" = root:755
@@ -146,6 +147,7 @@ jobs:
         run: |
           sudo ./uninstall.sh
           test ! -e /var/cache/face-auth
+          test ! -e /usr/local/share/bash-completion/completions/face-enroll
           test ! -e /usr/local/bin/face-auth-tray
           test ! -e /usr/local/libexec/face-auth-helper
           test ! -e /usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
