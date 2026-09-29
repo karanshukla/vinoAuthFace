@@ -28,6 +28,8 @@ fi
 BIN_DIR="/usr/local/bin"
 SHARE_DIR="/usr/local/share/face-auth"
 COMPLETION_DIR="/usr/local/share/bash-completion/completions"
+ZSH_COMPLETION_DIR="/usr/local/share/zsh/site-functions"
+FISH_COMPLETION_DIR="/usr/local/share/fish/vendor_completions.d"
 NPU_CACHE_DIR="/var/cache/face-auth"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
@@ -46,6 +48,7 @@ fi
 echo "Removing binaries..."
 rm -f "$BIN_DIR/vinoauthface-auth" "$BIN_DIR/face-auth"
 rm -f "$BIN_DIR/vinoauthface" "$COMPLETION_DIR/vinoauthface" "$BIN_DIR/face-enroll" "$COMPLETION_DIR/face-enroll"
+rm -f "$ZSH_COMPLETION_DIR/_vinoauthface" "$FISH_COMPLETION_DIR/vinoauthface.fish"
 
 # The tray (installed by deploy.sh unless --no-tray). A running tray exits on its own when its
 # uninstall entry finishes; one started some other way keeps running until
