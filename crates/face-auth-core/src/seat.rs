@@ -98,6 +98,19 @@ mod tests {
     }
 
     #[test]
+    fn a_text_console_session_is_the_owners_and_nobody_elses() {
+        let root = fake_run(
+            "vt",
+            "IS_SEAT0=1\nACTIVE=3\nACTIVE_UID=1000\n",
+            &[("3", "UID=1000\nCLASS=user\nTYPE=tty\nVTNR=3\n")],
+        );
+        assert!(check(&root, 1000).is_ok());
+        assert!(check(&root, 1001).is_err(), "su from a VT must not reach another account's face");
+        assert!(check(&root, 0).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn no_active_or_unreadable_session_denies() {
         let root = fake_run("none", "IS_SEAT0=1\n", &[]);
         assert!(check(&root, 1000).is_err());
