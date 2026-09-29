@@ -15,8 +15,8 @@ upstream. It adds motion liveness, a failed-match lockout, camera pinning, an NP
 see [what this fork adds](docs/architecture.md#relationship-to-upstream).
 
 > Face unlock here is a convenience over a password you still have, not a stronger factor. Phone
-> screens don't fool the IR sensor (which is why there is no RGB path), but printed photos are an
-> open risk. See [docs/security.md](docs/security.md).
+> screens don't fool the IR sensor (which is why there is no RGB path), but a printed IR photo
+> moved by hand can, and that's an accepted risk. See [docs/security.md](docs/security.md).
 
 ## Why this exists
 

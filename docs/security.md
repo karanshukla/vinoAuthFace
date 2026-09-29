@@ -89,10 +89,14 @@ of systemd, and the blobs live in `/var/lib/face-auth`, which survives image upd
   whole scan without a qualifying blink: on one real 15 s still clip, with glasses glare covering
   both eyes, the first came about 8.5 s in
   ([#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
-- **Printed photos remain an open risk.** Paper does reflect NIR, and the above is untested
-  against real prints on a real sensor; a print bent or flexed as it moves isn't rigid. There's
-  no structured-light or depth check. High-quality IR-visible prints or 3D masks may bypass
-  verification.
+- **Printed photos are an accepted risk.** A laser print of an IR photo of you, moved by hand,
+  can pass on a default install: paper reflects NIR, and the moved-photo check above is off by
+  default. This has beaten other IR face unlock too (Windows Hello, SySS-2017-027), and it needs
+  an IR capture of your face, not an ordinary photo. The defenses above were measured in software
+  against synthetic prints, not against real prints on a real sensor, and a print flexed as it
+  moves isn't rigid. There's no structured-light or depth check, so 3D masks are out of scope too.
+  Accepted because face unlock here is a convenience over a password you still have, not a
+  stronger factor ([#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
 
 ## Frame injection (a fake camera)
 
