@@ -14,6 +14,11 @@ const EMBEDDING_VERSION_LEGACY: u32 = 1;
 /// produce incompatible embedding spaces with the same 512-d shape, so
 /// comparing across them yields meaningless similarities rather than an error.
 const EMBEDDING_VERSION: u32 = 2;
+/// v3: the v2 body (count, dim, vectors) sealed to the TPM. The version and
+/// `model_tag` stay in the clear so "wrong model" can be reported without a
+/// working TPM; the tag is authenticated anyway, as part of the sealed name.
+/// Layout: version, tag length, tag, blob length, blob.
+const EMBEDDING_VERSION_SEALED: u32 = 3;
 const EMBEDDING_DIM: u32 = 512;
 
 /// A tag is a file name. Bounded for the same reason as `MAX_EMBEDDINGS`.
@@ -27,9 +32,14 @@ const MAX_MODEL_TAG_LEN: u32 = 255;
 /// several `--improve` passes.
 const MAX_EMBEDDINGS: u32 = 256;
 
-/// Largest valid file: header, a full-length tag, and `MAX_EMBEDDINGS` vectors.
-const MAX_STORE_BYTES: u64 =
-    16 + MAX_MODEL_TAG_LEN as u64 + MAX_EMBEDDINGS as u64 * EMBEDDING_DIM as u64 * 4;
+const MAX_PAYLOAD_BYTES: u64 = 8 + MAX_EMBEDDINGS as u64 * EMBEDDING_DIM as u64 * 4;
+
+/// A sealed blob is the payload base64-encoded plus systemd's credential
+/// header; 2x and a page of slack covers it.
+const MAX_SEALED_BYTES: u64 = MAX_PAYLOAD_BYTES * 2 + 4096;
+
+/// Largest valid file: header, a full-length tag, and a full sealed blob.
+const MAX_STORE_BYTES: u64 = 16 + MAX_MODEL_TAG_LEN as u64 + MAX_SEALED_BYTES;
 
 /// Biometric templates: root-owned, readable by the `face-auth` group that the
 /// set-group-ID `face-auth` binary runs with, never writable by it. The
@@ -90,13 +100,83 @@ fn check_template_file(file: &File, dir_uid: u32) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The name a sealed payload is bound to. systemd authenticates it with the
+/// data, so a blob copied to another account or another model's tag no longer
+/// unseals. Both parts are validated or bounded: usernames by
+/// `validate_username`, the tag by length and by rejecting `/`.
+fn seal_name(user: &str, model_tag: &str) -> anyhow::Result<String> {
+    validate_username(user)?;
+    anyhow::ensure!(
+        !model_tag.is_empty() && !model_tag.contains('/') && !model_tag.contains('\0'),
+        FaceAuthError::InvalidEmbeddingFormat
+    );
+    Ok(format!("vinoauthface.{user}.{model_tag}"))
+}
+
+/// The v2 body: count, dim, vectors. Rejects trailing bytes.
+fn read_body(reader: &mut impl Read) -> anyhow::Result<Vec<Vec<f32>>> {
+    let count = reader.read_u32::<LittleEndian>()?;
+    let dim = reader.read_u32::<LittleEndian>()?;
+
+    if dim != EMBEDDING_DIM || count > MAX_EMBEDDINGS {
+        return Err(FaceAuthError::InvalidEmbeddingFormat.into());
+    }
+
+    let mut embeddings = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let mut embedding = vec![0.0f32; EMBEDDING_DIM as usize];
+        for val in &mut embedding {
+            *val = reader.read_f32::<LittleEndian>()?;
+        }
+        // A non-finite stored value makes every comparison NaN, which
+        // fails closed but silently. Reject it as corruption instead.
+        if !embedding.iter().all(|v| v.is_finite()) {
+            return Err(FaceAuthError::InvalidEmbeddingFormat.into());
+        }
+        embeddings.push(embedding);
+    }
+
+    // Trailing bytes mean this is not the file we think it is.
+    let mut trailing = [0u8; 1];
+    if reader.read(&mut trailing)? != 0 {
+        return Err(FaceAuthError::InvalidEmbeddingFormat.into());
+    }
+    Ok(embeddings)
+}
+
+fn write_body(w: &mut impl Write, embeddings: &[Vec<f32>]) -> anyhow::Result<()> {
+    w.write_u32::<LittleEndian>(embeddings.len() as u32)?;
+    w.write_u32::<LittleEndian>(EMBEDDING_DIM)?;
+    for embedding in embeddings {
+        anyhow::ensure!(
+            embedding.len() == EMBEDDING_DIM as usize,
+            "embedding has {} dimensions, expected {}",
+            embedding.len(),
+            EMBEDDING_DIM
+        );
+        for &val in embedding {
+            w.write_f32::<LittleEndian>(val)?;
+        }
+    }
+    Ok(())
+}
+
+fn read_tag(reader: &mut impl Read) -> anyhow::Result<String> {
+    let len = reader.read_u32::<LittleEndian>()?;
+    if len > MAX_MODEL_TAG_LEN {
+        return Err(FaceAuthError::InvalidEmbeddingFormat.into());
+    }
+    let mut bytes = vec![0u8; len as usize];
+    reader.read_exact(&mut bytes)?;
+    Ok(String::from_utf8(bytes).map_err(|_| FaceAuthError::InvalidEmbeddingFormat)?)
+}
+
 impl EmbeddingStore {
     pub fn model_tag_matches(&self, current_tag: &str) -> bool {
         self.model_tag.as_deref().is_none_or(|t| t == current_tag)
     }
 
-    pub fn load(user: &str, embeddings_dir: &Path) -> anyhow::Result<Self> {
-        let user_dir = user_store_dir(user, embeddings_dir)?;
+    fn open(user_dir: &Path) -> anyhow::Result<BufReader<File>> {
         let file = match OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
@@ -108,55 +188,92 @@ impl EmbeddingStore {
             }
             Err(e) => return Err(e.into()),
         };
-        check_template_file(&file, fs::metadata(&user_dir)?.uid())?;
-        let mut reader = BufReader::new(file);
+        check_template_file(&file, fs::metadata(user_dir)?.uid())?;
+        Ok(BufReader::new(file))
+    }
+
+    pub fn load(user: &str, embeddings_dir: &Path) -> anyhow::Result<Self> {
+        Self::load_with(user, embeddings_dir, false)
+    }
+
+    /// `require_sealed` is the downgrade guard: with sealing on, a plaintext
+    /// file is refused rather than trusted, so swapping one in does not
+    /// sidestep the TPM.
+    ///
+    /// A sealed file that will not unseal is `SealUnavailable`, not a fallback:
+    /// the key is gone. It is an error before any face is scanned, so it never
+    /// counts toward lockout.
+    pub fn load_with(user: &str, embeddings_dir: &Path, require_sealed: bool) -> anyhow::Result<Self> {
+        let user_dir = user_store_dir(user, embeddings_dir)?;
+        let mut reader = Self::open(&user_dir)?;
 
         let version = reader.read_u32::<LittleEndian>()?;
-        let model_tag = match version {
-            EMBEDDING_VERSION_LEGACY => None,
+        if require_sealed && version != EMBEDDING_VERSION_SEALED {
+            return Err(FaceAuthError::SealRequired.into());
+        }
+        let (model_tag, embeddings) = match version {
+            EMBEDDING_VERSION_LEGACY => (None, read_body(&mut reader)?),
             EMBEDDING_VERSION => {
+                let tag = read_tag(&mut reader)?;
+                (Some(tag), read_body(&mut reader)?)
+            }
+            EMBEDDING_VERSION_SEALED => {
+                let tag = read_tag(&mut reader)?;
                 let len = reader.read_u32::<LittleEndian>()?;
-                if len > MAX_MODEL_TAG_LEN {
+                if len as u64 > MAX_SEALED_BYTES {
                     return Err(FaceAuthError::InvalidEmbeddingFormat.into());
                 }
-                let mut bytes = vec![0u8; len as usize];
-                reader.read_exact(&mut bytes)?;
-                Some(String::from_utf8(bytes).map_err(|_| FaceAuthError::InvalidEmbeddingFormat)?)
+                let mut blob = vec![0u8; len as usize];
+                reader.read_exact(&mut blob)?;
+                let mut trailing = [0u8; 1];
+                if reader.read(&mut trailing)? != 0 {
+                    return Err(FaceAuthError::InvalidEmbeddingFormat.into());
+                }
+                let payload = crate::seal::unseal(user, &seal_name(user, &tag)?, &blob)?;
+                anyhow::ensure!(
+                    payload.len() as u64 <= MAX_PAYLOAD_BYTES,
+                    FaceAuthError::InvalidEmbeddingFormat
+                );
+                (Some(tag), read_body(&mut payload.as_slice())?)
             }
             _ => return Err(FaceAuthError::InvalidEmbeddingFormat.into()),
         };
 
-        let count = reader.read_u32::<LittleEndian>()?;
-        let dim = reader.read_u32::<LittleEndian>()?;
-
-        if dim != EMBEDDING_DIM || count > MAX_EMBEDDINGS {
-            return Err(FaceAuthError::InvalidEmbeddingFormat.into());
-        }
-
-        let mut embeddings = Vec::with_capacity(count as usize);
-        for _ in 0..count {
-            let mut embedding = vec![0.0f32; EMBEDDING_DIM as usize];
-            for val in &mut embedding {
-                *val = reader.read_f32::<LittleEndian>()?;
-            }
-            // A non-finite stored value makes every comparison NaN, which
-            // fails closed but silently. Reject it as corruption instead.
-            if !embedding.iter().all(|v| v.is_finite()) {
-                return Err(FaceAuthError::InvalidEmbeddingFormat.into());
-            }
-            embeddings.push(embedding);
-        }
-
-        // Trailing bytes mean this is not the file we think it is.
-        let mut trailing = [0u8; 1];
-        if reader.read(&mut trailing)? != 0 {
-            return Err(FaceAuthError::InvalidEmbeddingFormat.into());
-        }
-
         Ok(Self { embeddings, model_tag })
     }
 
+    /// Has this user enrolled? Reads the header only, so a sealed store is
+    /// answered without touching the TPM (the tray asks as the user, who has
+    /// no business opening it).
+    pub fn is_enrolled(user: &str, embeddings_dir: &Path) -> anyhow::Result<bool> {
+        let user_dir = user_store_dir(user, embeddings_dir)?;
+        let mut reader = match Self::open(&user_dir) {
+            Ok(r) => r,
+            Err(e) if matches!(e.downcast_ref(), Some(FaceAuthError::NoEmbeddings)) => return Ok(false),
+            Err(e) => return Err(e),
+        };
+        if reader.read_u32::<LittleEndian>()? == EMBEDDING_VERSION_SEALED {
+            return Ok(true);
+        }
+        drop(reader);
+        Ok(!Self::load(user, embeddings_dir)?.embeddings.is_empty())
+    }
+
     pub fn save(&self, user: &str, embeddings_dir: &Path, model_tag: &str) -> anyhow::Result<()> {
+        self.save_with(user, embeddings_dir, model_tag, false)
+    }
+
+    /// With `seal`, the body is sealed to the TPM. No TPM (or a failed seal)
+    /// warns and writes a plaintext v2 file instead: absence fails open so
+    /// enrolment still works on hardware without one. An *existing* sealed
+    /// store is the opposite case and never falls back; see `load_with`.
+    pub fn save_with(
+        &self,
+        user: &str,
+        embeddings_dir: &Path,
+        model_tag: &str,
+        seal: bool,
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(
             model_tag.len() <= MAX_MODEL_TAG_LEN as usize,
             "model tag longer than {MAX_MODEL_TAG_LEN} bytes"
@@ -194,21 +311,20 @@ impl EmbeddingStore {
             file.set_permissions(fs::Permissions::from_mode(EMBEDDINGS_FILE_MODE))?;
             let mut writer = BufWriter::new(file);
 
-            writer.write_u32::<LittleEndian>(EMBEDDING_VERSION)?;
-            writer.write_u32::<LittleEndian>(model_tag.len() as u32)?;
-            writer.write_all(model_tag.as_bytes())?;
-            writer.write_u32::<LittleEndian>(self.embeddings.len() as u32)?;
-            writer.write_u32::<LittleEndian>(EMBEDDING_DIM)?;
-
-            for embedding in &self.embeddings {
-                anyhow::ensure!(
-                    embedding.len() == EMBEDDING_DIM as usize,
-                    "embedding has {} dimensions, expected {}",
-                    embedding.len(),
-                    EMBEDDING_DIM
-                );
-                for &val in embedding {
-                    writer.write_f32::<LittleEndian>(val)?;
+            let sealed = if seal { seal_payload(user, model_tag, &self.embeddings) } else { None };
+            match sealed {
+                Some(blob) => {
+                    writer.write_u32::<LittleEndian>(EMBEDDING_VERSION_SEALED)?;
+                    writer.write_u32::<LittleEndian>(model_tag.len() as u32)?;
+                    writer.write_all(model_tag.as_bytes())?;
+                    writer.write_u32::<LittleEndian>(blob.len() as u32)?;
+                    writer.write_all(&blob)?;
+                }
+                None => {
+                    writer.write_u32::<LittleEndian>(EMBEDDING_VERSION)?;
+                    writer.write_u32::<LittleEndian>(model_tag.len() as u32)?;
+                    writer.write_all(model_tag.as_bytes())?;
+                    write_body(&mut writer, &self.embeddings)?;
                 }
             }
 
@@ -230,6 +346,33 @@ impl EmbeddingStore {
 
     pub fn add_embedding(&mut self, embedding: Vec<f32>) {
         self.embeddings.push(embedding);
+    }
+}
+
+/// `None` when sealing is unavailable or fails, after saying so loudly.
+fn seal_payload(user: &str, model_tag: &str, embeddings: &[Vec<f32>]) -> Option<Vec<u8>> {
+    if !crate::seal::available() {
+        tracing::warn!(
+            "seal_embeddings is on but no TPM (/dev/tpmrm0) or systemd-creds was found: \
+             templates are stored UNSEALED"
+        );
+        return None;
+    }
+    let sealed = (|| {
+        let mut payload = Vec::new();
+        write_body(&mut payload, embeddings)?;
+        crate::seal::seal(user, &seal_name(user, model_tag)?, &payload)
+    })();
+    match sealed {
+        Ok(blob) if blob.len() as u64 <= MAX_SEALED_BYTES => Some(blob),
+        Ok(_) => {
+            tracing::warn!("sealed blob larger than expected: templates are stored UNSEALED");
+            None
+        }
+        Err(e) => {
+            tracing::warn!("could not seal templates to the TPM ({e:#}): templates are stored UNSEALED");
+            None
+        }
     }
 }
 
@@ -422,5 +565,94 @@ mod tests {
 
         assert!(EmbeddingStore::load("alice", &dir).is_err());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Writes a v3 file whose blob is junk: what a cleared TPM or a swapped
+    /// board looks like, and needs no TPM to build.
+    fn plant_sealed(dir: &Path, user: &str, blob: &[u8]) {
+        fs::create_dir_all(dir.join(user)).unwrap();
+        let mut buf = Vec::new();
+        buf.write_u32::<LittleEndian>(EMBEDDING_VERSION_SEALED).unwrap();
+        buf.write_u32::<LittleEndian>(TAG.len() as u32).unwrap();
+        buf.extend_from_slice(TAG.as_bytes());
+        buf.write_u32::<LittleEndian>(blob.len() as u32).unwrap();
+        buf.extend_from_slice(blob);
+        let path = dir.join(user).join("embeddings.bin");
+        fs::write(&path, &buf).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    }
+
+    #[test]
+    fn unsealable_store_is_a_specific_error_not_a_fallback() {
+        let dir = tmpdir("unseal");
+        plant_sealed(&dir, "alice", b"not a credential");
+
+        let err = EmbeddingStore::load("alice", &dir).unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<FaceAuthError>(),
+            Some(FaceAuthError::SealUnavailable)
+        ));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn enrolled_check_needs_no_tpm_for_a_sealed_store() {
+        let dir = tmpdir("enrolled");
+        assert!(!EmbeddingStore::is_enrolled("alice", &dir).unwrap());
+        plant_sealed(&dir, "alice", b"opaque");
+        assert!(EmbeddingStore::is_enrolled("alice", &dir).unwrap());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn sealing_required_refuses_a_plaintext_store() {
+        let dir = tmpdir("downgrade");
+        let mut store = EmbeddingStore::default();
+        store.add_embedding(sample(0.1));
+        store.save("alice", &dir, TAG).unwrap();
+
+        assert!(EmbeddingStore::load_with("alice", &dir, false).is_ok());
+        let err = EmbeddingStore::load_with("alice", &dir, true).unwrap_err();
+        assert!(matches!(err.downcast_ref::<FaceAuthError>(), Some(FaceAuthError::SealRequired)));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn asking_for_a_seal_never_loses_the_templates() {
+        // With a usable TPM this writes v3, without one a warned-about v2.
+        // Either way what was enrolled comes back.
+        let dir = tmpdir("sealfallback");
+        let mut store = EmbeddingStore::default();
+        store.add_embedding(sample(0.3));
+        store.save_with("alice", &dir, TAG, true).unwrap();
+
+        let loaded = EmbeddingStore::load("alice", &dir).unwrap();
+        assert_eq!(loaded.embeddings, vec![sample(0.3)]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_oversized_sealed_blob() {
+        let dir = tmpdir("bigblob");
+        fs::create_dir_all(dir.join("alice")).unwrap();
+        let mut buf = Vec::new();
+        buf.write_u32::<LittleEndian>(EMBEDDING_VERSION_SEALED).unwrap();
+        buf.write_u32::<LittleEndian>(0).unwrap();
+        buf.write_u32::<LittleEndian>(u32::MAX).unwrap();
+        let path = dir.join("alice/embeddings.bin");
+        fs::write(&path, &buf).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+
+        assert!(EmbeddingStore::load("alice", &dir).is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn seal_name_binds_user_and_tag_and_rejects_path_tricks() {
+        assert_eq!(seal_name("alice", TAG).unwrap(), format!("vinoauthface.alice.{TAG}"));
+        assert_ne!(seal_name("alice", TAG).unwrap(), seal_name("bob", TAG).unwrap());
+        assert!(seal_name("alice", "../x").is_err());
+        assert!(seal_name("../alice", TAG).is_err());
+        assert!(seal_name("alice", "").is_err());
     }
 }

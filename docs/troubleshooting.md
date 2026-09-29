@@ -8,8 +8,8 @@ vinoauthface-camera-diag list
 sudo env RUST_LOG=face_auth_core=debug,vinoauthface_auth=debug vinoauthface-auth --verify $USER
 echo $?   # 0 = match, 1 = no match, 2 = error
 
-# PAM logs
-journalctl -b | grep -i -e pam_exec -e vinoauthface
+# What each PAM scan did (match / no match / error, service, sealed or not)
+journalctl -b -t vinoauthface-auth
 
 # SELinux denials
 sudo ausearch -m avc -ts recent
@@ -17,7 +17,9 @@ sudo ausearch -m avc -ts recent
 
 `RUST_LOG` only works through `--verify` under `sudo`. When `vinoauthface-auth` runs from a PAM stack
 with borrowed privileges (sudo's own process, or a lock screen via the set-group-ID bit), it drops
-the caller's environment, `RUST_LOG` included.
+the caller's environment, `RUST_LOG` included. Every scan still leaves one line in syslog
+(`authpriv`) with its outcome, the PAM service and whether the templates were sealed, e.g.
+`face match for 'you' (service kde, sealed templates)`.
 
 ## "PAM_USER is not set"
 

@@ -41,6 +41,7 @@ pub struct FaceAuthConfig {
     pub lockout_threshold: Option<u32>,
     pub lockout_base_delay_ms: Option<u64>,
     pub lockout_max_delay_ms: Option<u64>,
+    pub seal_embeddings: Option<bool>,
     pub seat_check: Option<bool>,
     pub abort_if_ssh: Option<bool>,
     pub abort_if_lid_closed: Option<bool>,
@@ -70,6 +71,7 @@ impl Default for FaceAuthConfig {
             lockout_threshold: None,
             lockout_base_delay_ms: None,
             lockout_max_delay_ms: None,
+            seal_embeddings: None,
             seat_check: None,
             abort_if_ssh: None,
             abort_if_lid_closed: None,
@@ -459,6 +461,13 @@ impl FaceAuthConfig {
         self.abort_if_lid_closed.unwrap_or(false)
     }
 
+    /// Seal new templates to the TPM, and refuse plaintext ones on load (the
+    /// downgrade guard). Off by default: the unseal sits on the auth path and
+    /// needs systemd 256+. System policy only.
+    pub fn seal_embeddings(&self) -> bool {
+        self.seal_embeddings.unwrap_or(false)
+    }
+
     pub fn lockout_policy(&self) -> crate::lockout::LockoutPolicy {
         let d = crate::lockout::LockoutPolicy::default();
         crate::lockout::LockoutPolicy {
@@ -658,9 +667,12 @@ mod tests {
             lockout_threshold: Some(u32::MAX),
             pinned_camera_path: Some("/sys/devices/evil".to_string()),
             pinned_camera_index: Some(9),
+            seal_embeddings: Some(false),
             ..FaceAuthConfig::default()
         };
+        cfg.seal_embeddings = Some(true);
         cfg.apply_user_overlay(&overlay);
+        assert!(cfg.seal_embeddings(), "a user must not lift the downgrade guard");
         assert_eq!(cfg.embeddings_dir(), PathBuf::from(DEFAULT_EMBEDDINGS_DIR));
         assert!(cfg.model_path().starts_with("/usr/local/share"));
         assert!(cfg.detector_model_path().starts_with("/usr/local/share"));

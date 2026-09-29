@@ -26,6 +26,19 @@ pub enum FaceAuthError {
     #[error("Invalid embedding format")]
     InvalidEmbeddingFormat,
 
+    #[error(
+        "templates are sealed to the TPM and could not be unsealed (no access to the TPM, or it \
+         was cleared or replaced?); if it was replaced, re-enroll with `sudo vinoauthface \
+         enroll --user <name>`"
+    )]
+    SealUnavailable,
+
+    #[error(
+        "templates are not TPM-sealed but seal_embeddings is on; re-enroll (or run \
+         `vinoauthface improve`) as root to seal them"
+    )]
+    SealRequired,
+
     #[error("No face detected in frame")]
     NoFaceDetected,
 }

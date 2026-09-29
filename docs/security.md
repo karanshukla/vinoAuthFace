@@ -37,6 +37,39 @@ report a vulnerability, see [SECURITY.md](../SECURITY.md).
   the desk. No active session, or state it can't read, declines too. Without `/run/systemd/seats`
   (no logind) the check is skipped. `seat_check = false` turns it off.
 
+## Templates at rest (TPM sealing)
+
+Off by default; set `seal_embeddings = true` in `/etc/face-auth.toml`, then enrol again (or run
+`vinoauthface improve`, which rewrites the existing templates sealed). The template
+payload is encrypted by `systemd-creds` with a key sealed to this machine's TPM, so a stolen
+laptop or a disk booted in another OS yields nothing usable. Nothing extra to install: it is part
+of systemd, and the blobs live in `/var/lib/face-auth`, which survives image updates.
+
+- **It defends the powered-off case only.** On the running machine root can unseal any user's
+  templates, and each user their own (as `vinoauthface-auth` does). It is not protection against a
+  local root attacker.
+- **No PCR policy.** The key survives firmware, bootloader and `bootc`/`rpm-ostree` updates. The
+  price is that it doesn't notice a modified boot chain.
+- **Bound to the account and the model.** The user name and recognition-model tag are part of the
+  sealed credential's name, which systemd authenticates, so a blob copied to another account or
+  relabelled for another model won't unseal.
+- **No TPM: enrolment warns and stores unsealed.** Hardware without one still works.
+- **Sealed but unsealable is an error, not a fallback.** After a TPM clear or a board swap the
+  key is gone. Face auth declines, PAM falls through to your password, it doesn't count toward
+  lockout, and the message tells you to re-enrol.
+- **Downgrade guard.** With the option on, a plaintext template file is refused. Someone with
+  offline write access can also edit `/etc/face-auth.toml`, so this stops a swapped file, not a
+  determined offline attacker; only a PCR policy (deliberately not used) would.
+- **Sealed per user.** Credentials are user-scoped (`systemd-creds --uid`, systemd 256+). A lock
+  screen runs as you and unseals your own templates with no polkit prompt; `sudo` and the polkit
+  helper run as root, which can unseal anyone's. A greeter checking a *different* user (running as
+  `gdm`/`sddm`) can't, and falls through to the password. The key also mixes in the user name, UID
+  and `machine-id`: change any of them and you re-enrol. Unsealing adds to each scan's start-up;
+  check `RUST_LOG=face_auth_core=debug` "store loaded" timing on your hardware.
+- **Needs both the TPM and `/var/lib/systemd/credential.secret`.** Scoped credentials can't use
+  the TPM alone (`host+tpm2`). The host secret is root-only, and a disk without this machine's
+  TPM still can't unseal.
+
 ## Presentation attacks (something held up to the real camera)
 
 - **Screens are blocked by sensor physics.** OLED and most LCD panels emit essentially no near-IR
