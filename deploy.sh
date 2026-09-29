@@ -129,6 +129,7 @@ SHARE_DIR="/usr/local/share/face-auth"
 COMPLETION_DIR="/usr/local/share/bash-completion/completions"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
+PAM_SERVICES="sudo swaylock gdm-password polkit-1 kde-fingerprint plasmalogin-fingerprint cosmic-greeter"
 VAR_DIR="/var/lib/face-auth"
 NPU_CACHE_DIR="/var/cache/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
@@ -147,7 +148,7 @@ printf '%svinoAuthFace installer%s\n' "$BOLD" "$RESET"
 
 # ---- Undo any previous partial setup ----
 
-for service in sudo swaylock gdm-password polkit-1 kde-fingerprint; do
+for service in $PAM_SERVICES; do
     if [ -f "$PAM_DIR/$service" ]; then
         sed -i '/pam_exec\.so.*face-auth/d' "$PAM_DIR/$service" 2>/dev/null || true
     fi
@@ -734,14 +735,18 @@ fi
 # ---- PAM setup ----
 PAM_DONE=() PAM_ABSENT=() PAM_COVERED=()
 
-# polkit-1 (pkexec, GUI admin prompts, Bitwarden's system unlock) usually has
-# no /etc/pam.d override: it falls back to the vendor file in /usr/lib/pam.d.
-# Materialise that as an override so there is something to patch, and mark it
-# so uninstall.sh deletes it rather than "restoring" a file that never was.
-if [ ! -f "$PAM_DIR/polkit-1" ] && [ -f /usr/lib/pam.d/polkit-1 ]; then
-    cp /usr/lib/pam.d/polkit-1 "$PAM_DIR/polkit-1"
-    touch "$PAM_DIR/.face-auth-polkit-1-created"
-fi
+# These services usually have no /etc/pam.d override and fall back to the
+# vendor file in /usr/lib/pam.d (polkit-1: pkexec, GUI admin prompts,
+# Bitwarden's system unlock; the KDE and COSMIC lock screens and greeters, on
+# image-based distros). Materialise the vendor file as an override so there is
+# something to patch, and mark it so uninstall.sh deletes it rather than
+# "restoring" a file that never was.
+for service in polkit-1 kde-fingerprint plasmalogin-fingerprint cosmic-greeter; do
+    if [ ! -f "$PAM_DIR/$service" ] && [ -f "/usr/lib/pam.d/$service" ]; then
+        cp "/usr/lib/pam.d/$service" "$PAM_DIR/$service"
+        touch "$PAM_DIR/.face-auth-$service-created"
+    fi
+done
 
 # A face match ends the auth stack, so the line goes just above the first
 # module that actually authenticates. Gates above that (pam_nologin,
@@ -754,7 +759,7 @@ pam_included_stacks() {
          $1 == "@include" { print $2 }' "$1"
 }
 
-for service in sudo swaylock gdm-password polkit-1 kde-fingerprint; do
+for service in $PAM_SERVICES; do
     conf="$PAM_DIR/$service"
     if [ ! -f "$conf" ]; then
         PAM_ABSENT+=("$service")

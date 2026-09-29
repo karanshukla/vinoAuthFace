@@ -148,6 +148,6 @@ sudo ./uninstall.sh           # binaries, models, config, PAM changes, camera pi
 sudo ./uninstall.sh --purge   # ...plus face templates and the face-auth group
 ```
 
-This restores the PAM backups, removes the `polkit-1` override only if `deploy.sh` created it, and
+This restores the PAM backups, removes a PAM override (`polkit-1`, KDE, COSMIC) only if `deploy.sh` created it, and
 removes the Bitwarden action only if `deploy.sh` installed it. It also cleans up leftovers from
 older installs that had the GTK GUI.
