@@ -3,7 +3,7 @@
 ## How it works
 
 ```
-PAM (sudo / gdm-password / swaylock / polkit-1 / kde-fingerprint)
+PAM (sudo / gdm-password / swaylock / polkit-1 / kde-fingerprint / cosmic-greeter)
   │
   ▼
 face-auth (static binary, set-group-ID face-auth)

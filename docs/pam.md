@@ -9,6 +9,8 @@
 | `swaylock` | `/etc/pam.d/swaylock` | swaylock |
 | `polkit-1` | `/etc/pam.d/polkit-1` | polkit prompts |
 | `kde-fingerprint` | `/etc/pam.d/kde-fingerprint` | KDE lock screen |
+| `plasmalogin-fingerprint` | `/etc/pam.d/plasmalogin-fingerprint` | Plasma login screen |
+| `cosmic-greeter` | `/etc/pam.d/cosmic-greeter` | COSMIC lock screen and greeter |
 
 The line goes just above the first `auth` line that actually authenticates: `pam_unix`,
 `pam_sss`, `pam_fprintd`, `pam_u2f`, or an `include`/`substack`/`@include` of another stack.
@@ -30,8 +32,24 @@ through to the password prompt.
 
 KScreenLocker starts the `kde-fingerprint` service up front, alongside the password field, so the
 KDE lock screen unlocks hands-free: look at the camera and it opens, or type your password as
-usual. The Plasma login greeter isn't wired up yet
-([#32](https://github.com/karanshukla/vinoAuthFace/issues/32)).
+usual. `plasmalogin-fingerprint` is the same pattern for the Plasma login manager.
+
+Plasma before 6.7 has a bug where a biometric unlock counts against `pam_faillock`
+(kscreenlocker 29d01bf7), so repeated face unlocks can lock the password out until it expires.
+Update Plasma or drop `pam_faillock` from the stack if you hit it.
+
+## COSMIC
+
+`cosmic-greeter` is one service for both the lock screen and the greeter. It shows a single PAM
+message at a time, so the password field is hidden while face-auth scans, and there is no text
+to say so. At login it runs as the `greeter` user rather than the person unlocking.
+
+## Vendor-only services
+
+On image-based distros these services often exist only as a vendor default in `/usr/lib/pam.d`.
+`deploy.sh` copies that file to `/etc/pam.d` first to have something to patch (as it does for
+`polkit-1`), and `uninstall.sh` deletes the copy rather than "restoring" a file that never
+existed.
 
 ## polkit
 
