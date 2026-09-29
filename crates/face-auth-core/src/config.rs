@@ -35,6 +35,7 @@ pub struct FaceAuthConfig {
     pub backend: Option<String>,
     pub npu_device: Option<String>,
     pub liveness_motion_threshold: Option<f32>,
+    pub liveness_residual_motion_threshold: Option<f32>,
     pub min_face_size_ratio: Option<f32>,
     pub pinned_camera_path: Option<String>,
     pub pinned_camera_index: Option<u32>,
@@ -65,6 +66,7 @@ impl Default for FaceAuthConfig {
             backend: None,
             npu_device: None,
             liveness_motion_threshold: None,
+            liveness_residual_motion_threshold: None,
             min_face_size_ratio: None,
             pinned_camera_path: None,
             pinned_camera_index: None,
@@ -210,6 +212,15 @@ impl FaceAuthConfig {
             }
         }
 
+        if let Some(t) = overlay.liveness_residual_motion_threshold {
+            if t.is_finite()
+                && t >= self.liveness_residual_motion_threshold()
+                && LIVENESS_MOTION_RANGE.contains(&t)
+            {
+                self.liveness_residual_motion_threshold = Some(t);
+            }
+        }
+
         if let Some(t) = overlay.min_face_size_ratio {
             if t.is_finite()
                 && t >= self.min_face_size_ratio()
@@ -275,6 +286,10 @@ impl FaceAuthConfig {
         let m = self.liveness_motion_threshold();
         if !m.is_finite() || !LIVENESS_MOTION_RANGE.contains(&m) {
             bail!("liveness_motion_threshold {} outside 0.0..=1.0", m);
+        }
+        let m = self.liveness_residual_motion_threshold();
+        if !m.is_finite() || !LIVENESS_MOTION_RANGE.contains(&m) {
+            bail!("liveness_residual_motion_threshold {} outside 0.0..=1.0", m);
         }
         let r = self.min_face_size_ratio();
         if !r.is_finite() || !MIN_FACE_SIZE_RANGE.contains(&r) {
@@ -374,11 +389,19 @@ impl FaceAuthConfig {
         self.npu_device.clone().unwrap_or_else(|| "NPU".to_string())
     }
 
-    /// Minimum fraction of pixels that must change between consecutive face
-    /// frames in a scan before a match is accepted. See
-    /// `preprocess::frame_motion_fraction`. Zero disables the check.
+    /// Minimum fraction of face-patch pixels that must change between
+    /// consecutive face frames in a scan before a match is accepted. See
+    /// `preprocess::motion_profile`'s `total`. Zero disables the check.
     pub fn liveness_motion_threshold(&self) -> f32 {
         self.liveness_motion_threshold.unwrap_or(0.01)
+    }
+
+    /// Minimum fraction of face-patch pixels still changed after undoing the
+    /// best rigid shift, required in the same frame pair as
+    /// `liveness_motion_threshold`. Stops a photo moved by hand. See
+    /// `preprocess::motion_profile`'s `residual`. Zero disables the check.
+    pub fn liveness_residual_motion_threshold(&self) -> f32 {
+        self.liveness_residual_motion_threshold.unwrap_or(0.2)
     }
 
     /// Smallest accepted face, as the larger side of its box over the same
@@ -571,6 +594,22 @@ mod tests {
             ..FaceAuthConfig::default()
         });
         assert_eq!(cfg.liveness_motion_threshold(), 0.05);
+    }
+
+    #[test]
+    fn user_overlay_may_only_raise_residual_motion_threshold() {
+        let mut cfg = system_baseline();
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            liveness_residual_motion_threshold: Some(0.0),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.liveness_residual_motion_threshold(), 0.2);
+
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            liveness_residual_motion_threshold: Some(0.3),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.liveness_residual_motion_threshold(), 0.3);
     }
 
     #[test]

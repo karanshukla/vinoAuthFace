@@ -17,6 +17,11 @@ replayed on top:
 - `vinoauthface doctor` (#18) checks the install in one command: PAM hooks and
   their ordering, config and store ownership, model files, enrolment, camera
   format, camera pin and TPM sealing. Exits 1 if anything fails.
+- Motion liveness now compares a normalised patch of the face, not the whole
+  frame, and also needs motion a rigid shift can't explain
+  (`liveness_residual_motion_threshold`, default 0.2), so a hand moving beside
+  a photo, an exposure change, or a photo moved by hand no longer passes it
+  (#17, #28).
 - Motion liveness gate, failed-match lockout (`lockout.bin` in the root-owned
   store), camera pinning (`pin-camera.sh`).
 - Detector box decode with face crop before encoding, and the detector's
