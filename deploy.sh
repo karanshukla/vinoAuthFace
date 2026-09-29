@@ -556,14 +556,6 @@ if [ -n "$TRAY_SRC" ]; then
         restorecon "$BIN_DIR/vinoauthface-tray" /usr/local/libexec/vinoauthface-helper \
             "$POLKIT_ACTIONS_DIR/io.github.karanshukla.vinoauthface.policy" 2>/dev/null || true
     fi
-    # A tray already running keeps its old binary (or, after the rename, the
-    # deleted path of the old helper) and reports stale status. Matched on the
-    # command line: a process name is cut to 15 characters, this one is 17.
-    if command -v pkill &>/dev/null && pkill -f '(^|/)(vinoauthface-tray|face-auth-tray)( |$)'; then
-        ok Tray "stopped the running one; start the new one with vinoauthface-tray (or at next login)"
-    else
-        ok Tray "starts at your next login, or run vinoauthface-tray now"
-    fi
 elif [ "$WITH_TRAY" = 1 ]; then
     warn Tray "No tray binaries to install (no Rust toolchain, and the release has none)."
 fi
