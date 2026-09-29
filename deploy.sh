@@ -135,7 +135,7 @@ NPU_CACHE_DIR="/var/cache/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
 OPENVINO_INSTALL_DIR="/usr/local/lib/face-auth/openvino"
 
-PAM_LINE="auth       sufficient  pam_exec.so quiet /usr/local/bin/face-auth"
+PAM_LINE="auth       sufficient  pam_exec.so quiet /usr/local/bin/vinoauthface-auth"
 
 if [ "$(id -u)" -ne 0 ]; then
     fail "Run this with sudo" "It installs into /usr/local, /etc and /var/lib."
@@ -144,7 +144,7 @@ fi
 
 ACTUAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 
-printf '%sface-auth installer%s\n' "$BOLD" "$RESET"
+printf '%svinoAuthFace installer%s\n' "$BOLD" "$RESET"
 
 # ---- Undo any previous partial setup ----
 
@@ -360,7 +360,7 @@ if [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(fin
     BIN_SRC="target/release"
     NPU_ACTIVE=1
     ok Build "NPU backend (OpenVINO, glibc)"
-elif [ -f "$ARTIFACT_DIR/face-auth" ] && [ -f "$ARTIFACT_DIR/face-enroll" ] \
+elif [ -f "$ARTIFACT_DIR/vinoauthface-auth" ] && [ -f "$ARTIFACT_DIR/vinoauthface" ] \
    && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ]; then
     skip Build "using $ARTIFACT_DIR/ (FACE_AUTH_FORCE_BUILD=1 to rebuild)"
 elif CARGO_BIN="$(find_cargo)"; then
@@ -386,7 +386,7 @@ else
     printf '    %-10s %s%s%s\n' "" "$DIM" "$DOWNLOAD_BASE" "$RESET"
     DL_DIR="$(mktemp -d)"
     DOWNLOAD_OK=1
-    for asset in face-auth-$MUSL_TARGET face-enroll-$MUSL_TARGET SHA256SUMS; do
+    for asset in vinoauthface-auth-$MUSL_TARGET vinoauthface-$MUSL_TARGET SHA256SUMS; do
         curl "${CURL_FLAGS[@]}" --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
             -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" || { DOWNLOAD_OK=0; break; }
     done
@@ -394,7 +394,7 @@ else
         # Both binaries must be listed, not just match: --ignore-missing alone
         # would pass a file SHA256SUMS never mentions.
         if ! (cd "$DL_DIR" \
-                && grep -E "[ *](face-auth|face-enroll)-$MUSL_TARGET\$" SHA256SUMS > want \
+                && grep -E "[ *](vinoauthface-auth|vinoauthface)-$MUSL_TARGET\$" SHA256SUMS > want \
                 && [ "$(wc -l < want)" -eq 2 ] \
                 && sha256sum -c --strict --quiet want); then
             fail "Checksum verification failed for the downloaded binaries"
@@ -402,23 +402,23 @@ else
             exit 1
         fi
         mkdir -p "$DL_DIR/bin"
-        mv "$DL_DIR/face-auth-$MUSL_TARGET" "$DL_DIR/bin/face-auth"
-        mv "$DL_DIR/face-enroll-$MUSL_TARGET" "$DL_DIR/bin/face-enroll"
+        mv "$DL_DIR/vinoauthface-auth-$MUSL_TARGET" "$DL_DIR/bin/vinoauthface-auth"
+        mv "$DL_DIR/vinoauthface-$MUSL_TARGET" "$DL_DIR/bin/vinoauthface"
         BIN_SRC="$DL_DIR/bin"
         ok Download "release binaries, checksums verified"
         # Separately, so a release without the tray still installs the rest.
         if [ "$WITH_TRAY" = 1 ]; then
             TRAY_DL_OK=1
-            for asset in face-auth-tray-$MUSL_TARGET face-auth-helper-$MUSL_TARGET; do
+            for asset in vinoauthface-tray-$MUSL_TARGET vinoauthface-helper-$MUSL_TARGET; do
                 curl "${CURL_FLAGS[@]}" --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
                     -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" || { TRAY_DL_OK=0; break; }
             done
             if [ "$TRAY_DL_OK" = 1 ] && (cd "$DL_DIR" \
-                    && grep -E "[ *](face-auth-tray|face-auth-helper)-$MUSL_TARGET\$" SHA256SUMS > want-tray \
+                    && grep -E "[ *](vinoauthface-tray|vinoauthface-helper)-$MUSL_TARGET\$" SHA256SUMS > want-tray \
                     && [ "$(wc -l < want-tray)" -eq 2 ] \
                     && sha256sum -c --strict --quiet want-tray); then
-                mv "$DL_DIR/face-auth-tray-$MUSL_TARGET" "$DL_DIR/bin/face-auth-tray"
-                mv "$DL_DIR/face-auth-helper-$MUSL_TARGET" "$DL_DIR/bin/face-auth-helper"
+                mv "$DL_DIR/vinoauthface-tray-$MUSL_TARGET" "$DL_DIR/bin/vinoauthface-tray"
+                mv "$DL_DIR/vinoauthface-helper-$MUSL_TARGET" "$DL_DIR/bin/vinoauthface-helper"
             fi
         fi
     else
@@ -460,7 +460,7 @@ else
     fi
 fi
 
-for bin in face-auth face-enroll; do
+for bin in vinoauthface-auth vinoauthface; do
     if [ ! -f "$BIN_SRC/$bin" ]; then
         fail "Expected $BIN_SRC/$bin after the build, but it is missing"
         exit 1
@@ -472,9 +472,9 @@ done
 TRAY_SRC=""
 if [ "$WITH_TRAY" = 1 ]; then
     if [ -n "${DL_DIR:-}" ]; then
-        [ -f "$DL_DIR/bin/face-auth-tray" ] && TRAY_SRC="$DL_DIR/bin"
-    elif [ "$BIN_SRC" = "$ARTIFACT_DIR" ] && [ -f "$ARTIFACT_DIR/face-auth-tray" ] \
-         && [ -f "$ARTIFACT_DIR/face-auth-helper" ]; then
+        [ -f "$DL_DIR/bin/vinoauthface-tray" ] && TRAY_SRC="$DL_DIR/bin"
+    elif [ "$BIN_SRC" = "$ARTIFACT_DIR" ] && [ -f "$ARTIFACT_DIR/vinoauthface-tray" ] \
+         && [ -f "$ARTIFACT_DIR/vinoauthface-helper" ]; then
         TRAY_SRC="$ARTIFACT_DIR"
     elif CARGO_BIN="$(find_cargo)"; then
         step "building the tray"
@@ -488,8 +488,8 @@ fi
 
 # A binary that does not match the backend written to the config fails at
 # unlock time with a confusing error, so check the linkage now.
-if [ "$NPU_ACTIVE" = 1 ] && ! ldd "$BIN_SRC/face-auth" | grep -q libopenvino; then
-    fail "NPU build requested, but $BIN_SRC/face-auth has no OpenVINO linkage"
+if [ "$NPU_ACTIVE" = 1 ] && ! ldd "$BIN_SRC/vinoauthface-auth" | grep -q libopenvino; then
+    fail "NPU build requested, but $BIN_SRC/vinoauthface-auth has no OpenVINO linkage"
     exit 1
 fi
 
@@ -501,13 +501,17 @@ section "Install"
 # lets a non-root caller authenticate its own account (see
 # crates/face-auth/src/main.rs).
 getent group face-auth >/dev/null || groupadd --system face-auth
-install -D -o root -g face-auth -m 2755 "$BIN_SRC/face-auth" "$BIN_DIR/face-auth"
+install -D -o root -g face-auth -m 2755 "$BIN_SRC/vinoauthface-auth" "$BIN_DIR/vinoauthface-auth"
 if findmnt -no OPTIONS --target "$BIN_DIR" 2>/dev/null | tr ',' '\n' | grep -qx nosuid; then
     warn Binaries "$BIN_DIR is mounted nosuid, which ignores the set-group-ID bit." \
         "sudo, polkit and GDM still work; KDE's lock screen and swaylock fall back to the password."
 fi
-install -Dm755 "$BIN_SRC/face-enroll" "$BIN_DIR/face-enroll"
-ok Binaries "face-auth, face-enroll in $BIN_DIR"
+install -Dm755 "$BIN_SRC/vinoauthface" "$BIN_DIR/vinoauthface"
+ok Binaries "vinoauthface-auth, vinoauthface in $BIN_DIR"
+# Names from before the rename. The old set-group-ID binary in particular must
+# not be left behind, still runnable.
+rm -f "$BIN_DIR/face-auth" "$BIN_DIR/face-enroll" "$BIN_DIR/face-auth-tray" \
+    /usr/local/libexec/face-auth-helper /usr/local/share/bash-completion/completions/face-enroll
 # The tray's uninstall entry runs this copy; the repo may be long gone.
 install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"
 
@@ -525,8 +529,8 @@ else
     POLKIT_ACTIONS_DIR="/usr/local/share/polkit-1/actions"
 fi
 if [ -n "$TRAY_SRC" ]; then
-    install -Dm755 "$TRAY_SRC/face-auth-tray" "$BIN_DIR/face-auth-tray"
-    install -D -o root -g root -m 0755 "$TRAY_SRC/face-auth-helper" /usr/local/libexec/face-auth-helper
+    install -Dm755 "$TRAY_SRC/vinoauthface-tray" "$BIN_DIR/vinoauthface-tray"
+    install -D -o root -g root -m 0755 "$TRAY_SRC/vinoauthface-helper" /usr/local/libexec/vinoauthface-helper
     install -Dm644 "$TRAY_DATA/io.github.karanshukla.vinoauthface.policy" \
         "$POLKIT_ACTIONS_DIR/io.github.karanshukla.vinoauthface.policy"
     install -Dm644 "$TRAY_DATA/vinoauthface-tray.desktop" /etc/xdg/autostart/vinoauthface-tray.desktop
@@ -539,10 +543,10 @@ if [ -n "$TRAY_SRC" ]; then
             "/usr/local/share/icons/hicolor/symbolic/apps/$icon-symbolic.svg"
     done
     if command -v restorecon &>/dev/null; then
-        restorecon "$BIN_DIR/face-auth-tray" /usr/local/libexec/face-auth-helper \
+        restorecon "$BIN_DIR/vinoauthface-tray" /usr/local/libexec/vinoauthface-helper \
             "$POLKIT_ACTIONS_DIR/io.github.karanshukla.vinoauthface.policy" 2>/dev/null || true
     fi
-    ok Tray "starts at your next login, or run face-auth-tray now"
+    ok Tray "starts at your next login, or run vinoauthface-tray now"
 elif [ "$WITH_TRAY" = 1 ]; then
     warn Tray "No tray binaries to install (no Rust toolchain, and the release has none)."
 fi
@@ -585,8 +589,8 @@ fi
 
 # Run after the OpenVINO runtime is in place: an NPU build cannot start without it.
 install -dm755 "$COMPLETION_DIR"
-"$BIN_DIR/face-enroll" --completions bash > "$COMPLETION_DIR/face-enroll"
-chmod 644 "$COMPLETION_DIR/face-enroll"
+"$BIN_DIR/vinoauthface" completions bash > "$COMPLETION_DIR/vinoauthface"
+chmod 644 "$COMPLETION_DIR/vinoauthface"
 
 # ---- Install models ----
 # Staged in a private mktemp directory. A fixed /tmp path can be pre-created by
@@ -884,7 +888,7 @@ install -d -o root -g root -m 0755 "$NPU_CACHE_DIR"
 # both models on the CPU until the next sudo or polkit prompt.
 if [ "$NPU_ACTIVE" = 1 ]; then
     step "compiling the models for the NPU"
-    if WARM="$("$BIN_DIR/face-auth" --warm-cache 2>&1)"; then
+    if WARM="$("$BIN_DIR/vinoauthface-auth" --warm-cache 2>&1)"; then
         ok "NPU cache" "$WARM"
     else
         warn "NPU cache" "Could not compile the models, so face unlock falls through to the password." \
@@ -938,15 +942,15 @@ ok Store "$STORE_STATE"
 section "Done"
 if [ -f "$VAR_DIR/$ACTUAL_USER/embeddings.bin" ]; then
     printf '  %-10s %s\n' "Test" "sudo -k && sudo true, or lock the screen (Super+L)"
-    printf '  %-10s %s\n' "Re-enrol" "sudo face-enroll --user $ACTUAL_USER"
+    printf '  %-10s %s\n' "Re-enrol" "sudo vinoauthface enroll --user $ACTUAL_USER"
 else
-    printf '  %-10s %s\n' "Enrol" "sudo face-enroll --user $ACTUAL_USER"
+    printf '  %-10s %s\n' "Enrol" "sudo vinoauthface enroll --user $ACTUAL_USER"
     printf '  %-10s %s\n' "Then test" "sudo -k && sudo true, or lock the screen (Super+L)"
 fi
 PINNED="$(sed -n 's/^pinned_camera_path *= *"\(.*\)"/\1/p' "$CONF" 2>/dev/null | head -1)"
 if [ -n "$PINNED" ]; then
     printf '  %-10s %s%s%s\n' "Camera" "pinned to USB port " "${PINNED##*/}" " (re-pin only if you move it)"
 else
-    printf '  %-10s %s\n' "Camera" "once unlock works: sudo ./pin-camera.sh /dev/videoN (face-enroll prints it)"
+    printf '  %-10s %s\n' "Camera" "once unlock works: sudo ./pin-camera.sh /dev/videoN (vinoauthface enroll prints it)"
 fi
 printf '  %-10s %s\n' "Uninstall" "sudo ./uninstall.sh"

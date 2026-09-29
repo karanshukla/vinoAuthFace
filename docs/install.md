@@ -1,6 +1,6 @@
 # Installing
 
-`sudo ./deploy.sh` is the only supported install path. This page covers what it does, how to
+`sudo ./deploy.sh` (or `sudo ./install.sh`, which just runs it) is the only supported install path. This page covers what it does, how to
 build from source instead of using the release binaries, camera pinning, and removal.
 
 ## Requirements
@@ -20,13 +20,13 @@ the release's `SHA256SUMS`. Build from source for an unreleased change or the NP
 | Step | What | Details |
 |------|------|---------|
 | Build | Picks the first that applies | OpenVINO + cargo: NPU build. Prebuilt binaries in `target/`: use them (`FACE_AUTH_FORCE_BUILD=1` to rebuild). Cargo: static musl build. Otherwise: download and checksum-verify the release binaries |
-| Binaries | Installs to `/usr/local/bin` | `face-auth` (set-group-ID `face-auth`, see [security.md](security.md#trust-model)) and `face-enroll`, plus its bash completion in `/usr/local/share/bash-completion/completions` (regenerate with `face-enroll --completions bash`) |
+| Binaries | Installs to `/usr/local/bin` | `vinoauthface-auth` (set-group-ID `face-auth`, see [security.md](security.md#trust-model)) and `vinoauthface`, plus its bash completion in `/usr/local/share/bash-completion/completions` (regenerate with `vinoauthface completions bash`) |
 | Models | Downloads and SHA-256 verifies | Recognition model (`w600k_mbf.onnx` by default) and the `version-slim-320.onnx` detector, to `/usr/local/share/face-auth/`. A copy in `models/` is used first, and verified too |
 | Config | Installs default config | `/etc/face-auth.toml`, kept if it already exists; the deploy appends any settings from `config/face-auth.toml.example` it lacks, commented out at their defaults |
 | PAM | Patches PAM service files | See [pam.md](pam.md). Each file is backed up with a `.face-auth.bak` suffix |
 | Bitwarden | Only if installed | Adds Bitwarden's polkit unlock action |
 | SELinux | Compiles and loads policy | Allows `xdm_t` to mmap the camera for lock-screen auth |
-| NPU cache | Empties and refills it | `/var/cache/face-auth`, root-owned. Emptied because a new model or driver leaves stale entries, then refilled with `face-auth --warm-cache` (NPU builds only) |
+| NPU cache | Empties and refills it | `/var/cache/face-auth`, root-owned. Emptied because a new model or driver leaves stale entries, then refilled with `vinoauthface-auth --warm-cache` (NPU builds only) |
 | Tray | Unless `--no-tray` | Tray binary, root helper, polkit actions, autostart and launchers. See [tray.md](tray.md). Every deploy also installs `uninstall.sh` to `/usr/local/share/face-auth/` |
 | Storage | Secures the template store | `/var/lib/face-auth`, `root:face-auth` `2750`, templates `0640`, per-user `lockout/` `2770`. An existing store is re-secured in place |
 
@@ -59,7 +59,7 @@ npu` and sets `backend = "openvino"` in `/etc/face-auth.toml`. Pick the device w
 
 | Source | How it's found | Runtime lookup |
 |--------|----------------|----------------|
-| [ovfetch](https://github.com/karanshukla/ovfetch) 0.2.2+ | On `PATH` or in `~/.cargo/bin` | rpath baked into `face-auth` |
+| [ovfetch](https://github.com/karanshukla/ovfetch) 0.2.2+ | On `PATH` or in `~/.cargo/bin` | rpath baked into `vinoauthface-auth` |
 | System package | `libopenvino_c.so*` in a standard lib dir | The package's own `ldconfig` entry |
 | Extracted archive | `~/.local/opt` or `/opt/intel`, with `setupvars.sh` | Copied, then registered with `ldconfig` |
 
@@ -116,7 +116,7 @@ sudo ./pin-camera.sh /dev/videoN
 ```
 
 Run it after enrolment and a test unlock both work: it pins whatever device you give it, and
-`face-enroll` prints the exact command with the camera it used. It writes a udev rule for a stable
+`vinoauthface enroll` prints the exact command with the camera it used. It writes a udev rule for a stable
 `/dev/face-auth-ir` symlink and records the camera's physical identity in `/etc/face-auth.toml`.
 Re-run it if you replace the hardware on purpose. What this defends against:
 [security.md](security.md#frame-injection-a-fake-camera).

@@ -43,15 +43,15 @@ You need an IR camera on `uvcvideo`. Not sure yours works? See
 ```bash
 # 1. Install. Builds from source if it finds cargo, otherwise downloads
 #    checksum-verified release binaries.
-sudo ./deploy.sh
+sudo ./deploy.sh        # ./install.sh does the same
 
 # 2. Enrol your face
-sudo face-enroll --user $USER
+sudo vinoauthface enroll --user $USER
 
 # 3. Test
 sudo -k && sudo true
 
-# 4. Recommended: pin the camera (face-enroll prints the exact command)
+# 4. Recommended: pin the camera (vinoauthface enroll prints the exact command)
 sudo ./pin-camera.sh /dev/videoN
 ```
 
@@ -86,7 +86,7 @@ sudo ./uninstall.sh --purge   # templates too
 | [Installing](docs/install.md) | What `deploy.sh` does, building from source, NPU backend, distrobox, camera pinning, SELinux |
 | [Configuration and enrolment](docs/configuration.md) | Config files and what users may override, enrolment, mbf vs r50 models |
 | [PAM integration](docs/pam.md) | Services, KDE, polkit, Bitwarden, keyrings |
-| [Hardware and diagnostics](docs/hardware.md) | Supported cameras, `face-camera-diag`, hardware reports |
+| [Hardware and diagnostics](docs/hardware.md) | Supported cameras, `vinoauthface-camera-diag`, hardware reports |
 | [Troubleshooting](docs/troubleshooting.md) | Debug output, common errors |
 | [Tray icon](docs/tray.md) | Optional tray: status, enrol, retrain, test scan, uninstall (installed by default, `--no-tray` to skip) |
 | [Security model](docs/security.md) | Trust model, spoofing, frame injection, limitations |

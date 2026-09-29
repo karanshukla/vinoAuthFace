@@ -1,6 +1,6 @@
 # Security
 
-face-auth runs as root inside PAM. A successful match is `sufficient`: it skips the password and grants whatever the stack was guarding (sudo, the lock screen, polkit). A bug here is a local root, so the bar is higher than for a normal CLI.
+vinoAuthFace runs as root inside PAM. A successful match is `sufficient`: it skips the password and grants whatever the stack was guarding (sudo, the lock screen, polkit). A bug here is a local root, so the bar is higher than for a normal CLI.
 
 ## Reporting
 
@@ -17,7 +17,7 @@ If the bug is also in [upstream authFace](https://github.com/pfalkingham/authFac
 | Wrong account's template decides the result | Identity comes from `PAM_USER` only, resolved through NSS and validated before becoming a path component. |
 | Remote session triggers the local camera | Non-local `PAM_RHOST` is refused. |
 | Photo or screen held up to the camera | Active-NIR camera: screens emit no usable IR. Motion liveness rejects a rigidly held image. |
-| Spoofed USB device injecting frames | `pin-camera.sh` pins the physical port and V4L2 index; face-auth re-checks it from sysfs on every attempt and fails closed. Auto-detect ignores virtual (v4l2loopback) nodes. |
+| Spoofed USB device injecting frames | `pin-camera.sh` pins the physical port and V4L2 index; vinoauthface-auth re-checks it from sysfs on every attempt and fails closed. Auto-detect ignores virtual (v4l2loopback) nodes. |
 | Scripted retry loop | Exponential lockout after 5 failed matches, stored in the root-owned store so a user cannot reset it. |
 | Crafted template file or driver data | Every length read from disk or the driver is bounded before use; non-finite values and trailing bytes are rejected. |
 | Tampered model or release binary | Models are pinned by SHA-256 (detector URL pinned to a commit). Release binaries are verified against `SHA256SUMS` before install. |

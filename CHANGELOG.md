@@ -6,6 +6,14 @@ This fork (karanshukla/vinoAuthFace) was rebuilt on top of upstream's security
 pass below instead of merging, so upstream's fixes all apply. Fork features
 replayed on top:
 
+- **Commands renamed** (#76). `face-enroll` is now `vinoauthface enroll` and
+  `vinoauthface improve` (was `--improve`); `face-auth` is `vinoauthface-auth`;
+  the tray, its helper and the two debug tools are `vinoauthface-tray`,
+  `vinoauthface-helper`, `vinoauthface-camera-diag` and
+  `vinoauthface-similarity-check`. Config files, `FACE_AUTH_*` variables,
+  `/var/lib/face-auth` and the `face-auth` group keep their names. `deploy.sh`
+  removes the old binaries and rewrites the PAM lines; `uninstall.sh` removes
+  both generations.
 - Motion liveness gate, failed-match lockout (`lockout.bin` in the root-owned
   store), camera pinning (`pin-camera.sh`).
 - Detector box decode with face crop before encoding, and the detector's

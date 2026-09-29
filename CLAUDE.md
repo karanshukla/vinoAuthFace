@@ -60,9 +60,9 @@ cargo deny check
   are built on.
 
 To actually exercise a change end-to-end (not just unit tests), deploy and test on real
-hardware: `sudo ./deploy.sh`, `sudo face-enroll --user $USER`, `sudo -k && sudo true`. Test a
-stored face outside PAM with `sudo face-auth --verify $USER` (add
-`RUST_LOG=face_auth_core=debug` for scores). Without enrolling, `face-camera-diag list` and
+hardware: `sudo ./deploy.sh`, `sudo vinoauthface enroll --user $USER`, `sudo -k && sudo true`. Test a
+stored face outside PAM with `sudo vinoauthface-auth --verify $USER` (add
+`RUST_LOG=face_auth_core=debug` for scores). Without enrolling, `vinoauthface-camera-diag list` and
 `cargo run --release --example bench` exercise capture, detection and encoding on the real
 camera.
 
@@ -78,8 +78,8 @@ Six crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/d
   (resolved and validated through `user::lookup`, never `USER`/`LOGNAME`/`id -un`), refuses
   remote `PAM_RHOST` sessions, loads config via `FaceAuthConfig::load_for_auth`, then calls
   `authenticate_scan`. Exit 0 = matched, exit 1 = anything else (PAM's `sufficient` line falls
-  through to password). `face-auth --verify USER` (root only) runs the same scan outside PAM;
-  `face-auth --enrolled` (tray status) answers for the caller's own user ID only.
+  through to password). `vinoauthface-auth --verify USER` (root only) runs the same scan outside PAM;
+  `vinoauthface-auth --enrolled` (tray status) answers for the caller's own user ID only.
 - **`crates/face-enroll`** (`src/main.rs`): The enrollment CLI (`clap`-based).
 - **`crates/face-similarity-check`** (`src/main.rs`): Offline debug tool, not deployed by
   `deploy.sh`. Runs the same CLAHE → detect → crop → encode → cosine-similarity pipeline as a
@@ -95,11 +95,11 @@ Six crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/d
   which node is the IR sensor and what format it reports without reading through the
   docs. `dump` captures one frame from a given device and writes it as a 16-bit PGM for visual
   inspection. Purely read-only against devices it's just listing; `dump` takes the target device
-  the same way live face-auth would.
+  the same way live vinoauthface-auth would.
 - **`crates/face-auth-tray`**: The tray icon (installed by default, `deploy.sh --no-tray` skips it, see `docs/tray.md`),
-  which replaces upstream's GTK GUI. Two binaries: `face-auth-tray` (per-user, `ksni`
-  StatusNotifierItem, never in the auth path; spots scans by `face-auth` in `/proc`, reads
-  enrolment via `face-auth --enrolled`) and `face-auth-helper`, the only thing its polkit policy
+  which replaces upstream's GTK GUI. Two binaries: `vinoauthface-tray` (per-user, `ksni`
+  StatusNotifierItem, never in the auth path; spots scans by `vinoauthface-auth` in `/proc`, reads
+  enrolment via `vinoauthface-auth --enrolled`) and `vinoauthface-helper`, the only thing its polkit policy
   lets pkexec run. The helper takes one verb (`enrol|retrain|uninstall`), no flags, and the target
   user from `PKEXEC_UID` only; keep it that way, and keep ksni/zbus out of it. `data/` holds the
   policy, desktop files and the generated icon (`FACE_AUTH_BLESS_ICONS=1 cargo test -p
@@ -115,8 +115,8 @@ at runtime is `config.backend()` (`"tract"` default or `"openvino"`) plus `confi
 
 `FaceAuth` owns a `FaceDetector` + `FaceEncoder` (both loaded once at construction, from
 `config.model_path()`/`config.detector_model_path()`). `authenticate_scan` (the PAM path and
-`face-auth --verify`), `authenticate_once` (single-shot, no in-tree caller) and `enroll` /
-`enroll_append` (`face-enroll`) all run the same per-frame pipeline:
+`vinoauthface-auth --verify`), `authenticate_once` (single-shot, no in-tree caller) and `enroll` /
+`enroll_append` (`vinoauthface enroll`) all run the same per-frame pipeline:
 
 ```
 capture (V4L2, GREY/YUYV/Y16, brighter of a frame pair) → assess_frame (mean + variance gates)
@@ -140,7 +140,7 @@ enrolment does not.
 
 Two loaders, deliberately different:
 
-- `FaceAuthConfig::load()` (face-enroll and the offline tools) merges struct defaults →
+- `FaceAuthConfig::load()` (vinoauthface enroll and the offline tools) merges struct defaults →
   `/etc/face-auth.toml` → `~/.config/face-auth.toml` → `FACE_AUTH_*` env vars.
 - `FaceAuthConfig::load_for_auth(user)` (the PAM path) reads `/etc/face-auth.toml` only, ignores
   the environment, and applies the target user's `~/.config/face-auth.toml` through
@@ -170,9 +170,9 @@ behavior if you touch this path; it's what keeps existing installs from breaking
 ### Lockout (`lockout.rs`)
 
 Per-user exponential backoff state (`<user>/lockout/state.bin`, the one group-writable
-directory in the store, so the set-group-ID `face-auth` can update it from a lock screen running
+directory in the store, so the set-group-ID `vinoauthface-auth` can update it from a lock screen running
 as the user, while the user themselves cannot reach it to reset the count) tracked across
-separate PAM invocations (each `face-auth` run is a fresh process). Only throttles the *face*
+separate PAM invocations (each `vinoauthface-auth` run is a fresh process). Only throttles the *face*
 factor (never PAM's password fallback) and caps the actual sleep at `max_tarpit_ms`
 regardless of the computed cooldown, so a long lockout window still can't stall the password
 prompt. `authenticate_scan` only counts a scan toward failure if a face was actually detected

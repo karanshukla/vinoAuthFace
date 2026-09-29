@@ -1,17 +1,39 @@
-use clap::{CommandFactory, Parser};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use face_auth_core::{user, EnrollProgress, FaceAuth, FaceAuthConfig};
 use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "face-enroll",
-    about = "Enrol a face for IR authentication",
-    after_help = "Templates live under a root-owned directory, so this must be run with sudo."
+    name = "vinoauthface",
+    about = "vinoAuthFace: IR camera face unlock",
+    after_help = "Templates live under a root-owned directory, so enrol and improve must be run with sudo."
 )]
-struct Args {
-    #[arg(short, long, help = "Username to enrol", required_unless_present = "completions")]
-    user: Option<String>,
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+
+    #[arg(short, long, global = true, help = "Verbose output")]
+    verbose: bool,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Enrol a face, replacing any existing templates
+    Enroll(Capture),
+    /// Capture more frames and append them to the existing templates
+    Improve(Capture),
+    #[command(hide = true, about = "Print a shell completion script and exit")]
+    Completions {
+        #[arg(value_name = "SHELL")]
+        shell: Shell,
+    },
+}
+
+#[derive(Args, Debug)]
+struct Capture {
+    #[arg(short, long, help = "Username to enrol")]
+    user: String,
 
     /// 30 gives enough pose and expression variation from one sitting for
     /// reliable matching; fewer enrol faster but match less reliably.
@@ -32,32 +54,33 @@ struct Args {
 
     #[arg(long, help = "Embeddings directory (overrides config)")]
     embeddings_dir: Option<String>,
-
-    #[arg(long, help = "Append to existing embeddings instead of replacing")]
-    improve: bool,
-
-    #[arg(short, long, help = "Verbose output")]
-    verbose: bool,
-
-    #[arg(long, value_name = "SHELL", hide = true, help = "Print a shell completion script and exit")]
-    completions: Option<Shell>,
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let cli = Cli::parse();
 
-    if let Some(shell) = args.completions {
-        clap_complete::generate(shell, &mut Args::command(), "face-enroll", &mut std::io::stdout());
-        return Ok(());
-    }
-
-    let filter = if args.verbose {
-        EnvFilter::new("face_auth_core=debug,face_enroll=debug")
+    let filter = if cli.verbose {
+        EnvFilter::new("face_auth_core=debug,vinoauthface=debug")
     } else {
-        EnvFilter::new("face_auth_core=warn,face_enroll=info")
+        EnvFilter::new("face_auth_core=warn,vinoauthface=info")
     };
-    fmt().with_env_filter(filter).with_writer(std::io::stderr).init();
+    match cli.command {
+        Command::Completions { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "vinoauthface", &mut std::io::stdout());
+            Ok(())
+        }
+        Command::Enroll(args) => {
+            fmt().with_env_filter(filter).with_writer(std::io::stderr).init();
+            run(args, false)
+        }
+        Command::Improve(args) => {
+            fmt().with_env_filter(filter).with_writer(std::io::stderr).init();
+            run(args, true)
+        }
+    }
+}
 
+fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
     if args.frames == 0 {
         anyhow::bail!("--frames must be at least 1");
     }
@@ -65,7 +88,7 @@ fn main() -> anyhow::Result<()> {
     // Resolve to the canonical account name. `getent passwd 0` succeeds and
     // would otherwise enrol into a directory literally named "0", which the
     // authentication path (looking up "root") never reads — a silent no-op.
-    let info = user::lookup(args.user.as_deref().expect("clap requires --user"))?;
+    let info = user::lookup(&args.user)?;
 
     // The system template directory is root-owned 0700 so that no unprivileged
     // process can plant a face for an account. Writing there needs root; say so
@@ -75,10 +98,10 @@ fn main() -> anyhow::Result<()> {
     if euid != 0 && args.embeddings_dir.is_none() {
         anyhow::bail!(
             "enrolment writes to a root-owned template store; re-run with:\n\
-             \n    sudo face-enroll --user {}{}\n\
+             \n    sudo vinoauthface {} --user {}\n\
              \nOr pass --embeddings-dir to write somewhere you own.",
-            info.name,
-            if args.improve { " --improve" } else { "" }
+            if improve { "improve" } else { "enroll" },
+            info.name
         );
     }
 
@@ -120,7 +143,7 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-    if args.improve {
+    if improve {
         let (added, total) =
             auth.enroll_append(&info.name, args.frames, args.interval, &mut progress)?;
         println!("\nAdded {} embeddings for '{}' ({} total)", added, info.name, total);

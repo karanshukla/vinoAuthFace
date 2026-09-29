@@ -2,8 +2,8 @@
 //!
 //! A per-user session app, never in the authentication path. It runs
 //! unprivileged and elevates each action that touches the template store
-//! through pkexec and `face-auth-helper`. It learns about scans only by
-//! looking for the process in `/proc` (see `scanning.rs`): `face-auth` does not
+//! through pkexec and `vinoauthface-helper`. It learns about scans only by
+//! looking for the process in `/proc` (see `scanning.rs`): `vinoauthface-auth` does not
 //! know the tray exists.
 
 use face_auth_core::{capture, user, Camera, FaceAuthConfig};
@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 const DOCS: &str = "https://github.com/karanshukla/vinoAuthFace/tree/main/docs";
 /// How often `/proc` is checked for a running scan.
 const SCAN_POLL: Duration = Duration::from_millis(200);
-/// How often enrolment is re-read, to catch a `sudo face-enroll` run by hand.
+/// How often enrolment is re-read, to catch a `sudo vinoauthface enroll` run by hand.
 const STATUS_POLL: Duration = Duration::from_secs(30);
 /// pkexec's exit codes for a dismissed or refused prompt.
 const PKEXEC_CANCELLED: [i32; 2] = [126, 127];
@@ -46,9 +46,9 @@ enum Msg {
 
 #[derive(Debug, Clone, Default)]
 struct Status {
-    /// The IR camera face-auth would use, if one opens.
+    /// The IR camera vinoauthface-auth would use, if one opens.
     camera: Option<String>,
-    /// `None` when face-auth is missing or could not answer.
+    /// `None` when vinoauthface-auth is missing or could not answer.
     enrolled: Option<bool>,
     backend: String,
 }
@@ -76,7 +76,7 @@ impl Status {
     }
 }
 
-/// Asks the set-group-ID face-auth, which can open the store the user cannot.
+/// Asks the set-group-ID vinoauthface-auth, which can open the store the user cannot.
 fn enrolled() -> Option<bool> {
     let status = Command::new(FACE_AUTH)
         .arg("--enrolled")
@@ -261,7 +261,7 @@ impl ksni::Tray for Tray {
                 match s.enrolled {
                     Some(true) => "enrolled",
                     Some(false) => "not enrolled",
-                    None => "unknown (is face-auth installed?)",
+                    None => "unknown (is vinoauthface installed?)",
                 }
             )),
             info(format!("Backend: {}", s.backend)),
@@ -314,7 +314,7 @@ impl ksni::Tray for Tray {
     }
 }
 
-/// Run `pkexec face-auth-helper <verb>`, reading face-enroll's progress off
+/// Run `pkexec vinoauthface-helper <verb>`, reading vinoauthface enroll's progress off
 /// its stdout. `Ok(None)` when the password prompt was dismissed.
 fn run_helper(
     verb: Verb,
@@ -357,7 +357,7 @@ fn test_scan(user: &str) -> std::io::Result<(bool, String)> {
         .env_clear()
         .env("PATH", SAFE_PATH)
         .env("PAM_USER", user)
-        .env("PAM_SERVICE", "face-auth-tray")
+        .env("PAM_SERVICE", "vinoauthface-tray")
         .stdin(Stdio::null())
         .output()?;
     Ok((out.status.success(), last_line(&String::from_utf8_lossy(&out.stderr))))
@@ -379,7 +379,7 @@ fn perform(action: Action, handle: &Handle<Tray>, notifier: &Notifier, user: &st
                     "Face not recognised",
                     "No match within the scan window. Try Retrain in different light, or check the camera.",
                 ),
-                Err(e) => notifier.send(id, "Cannot run face-auth", &e.to_string()),
+                Err(e) => notifier.send(id, "Cannot run vinoauthface", &e.to_string()),
             };
         }
         Action::Enrol | Action::Retrain => {
@@ -468,7 +468,7 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
             scanning = now;
             handle.update(|t| t.scanning = now);
         }
-        // `face-auth --enrolled` is itself a face-auth process, so it only
+        // `vinoauthface-auth --enrolled` is itself a scan process, so it only
         // runs from here, between two /proc checks, never alongside one.
         if !scanning && last_status.elapsed() >= STATUS_POLL {
             let enrolled = enrolled();

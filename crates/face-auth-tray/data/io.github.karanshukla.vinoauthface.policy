@@ -5,7 +5,7 @@
 
 <!--
   The tray's three root actions. Each pins both the binary (exec.path) and
-  its only argument (the first-argument annotation), so pkexec cannot be pointed at face-enroll
+  its only argument (the first-argument annotation), so pkexec cannot be pointed at vinoauthface
   with caller-chosen flags. The helper acts only for PKEXEC_UID.
   auth_admin, never yes: every action changes who a face unlocks.
 -->
@@ -22,7 +22,7 @@
       <allow_inactive>no</allow_inactive>
       <allow_active>auth_admin</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/face-auth-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">enrol</annotate>
   </action>
 
@@ -34,7 +34,7 @@
       <allow_inactive>no</allow_inactive>
       <allow_active>auth_admin</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/face-auth-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">retrain</annotate>
   </action>
 
@@ -46,7 +46,7 @@
       <allow_inactive>no</allow_inactive>
       <allow_active>auth_admin</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/face-auth-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">uninstall</annotate>
   </action>
 </policyconfig>

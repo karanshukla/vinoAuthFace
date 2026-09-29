@@ -6,7 +6,7 @@
 PAM (sudo / gdm-password / swaylock / polkit-1 / kde-fingerprint / cosmic-greeter)
   │
   ▼
-face-auth (static binary, set-group-ID face-auth)
+vinoauthface-auth (static binary, set-group-ID face-auth)
   ├─ Drop the caller's environment if running with borrowed privileges
   ├─ Resolve PAM_USER via getent (never USER/LOGNAME); a non-root caller may only be itself
   ├─ Refuse if PAM_RHOST names a remote host
@@ -56,7 +56,7 @@ with upstream. On top of upstream it adds:
 | polkit-1, Bitwarden and KDE lock screen unlock | [pam.md](pam.md) |
 | YUYV and Y16 sensors, auto-detect for IR nodes not named "IR" | [hardware.md](hardware.md) |
 | Prebuilt release binaries; CI running real deploy/uninstall cycles | [install.md](install.md) |
-| `face-camera-diag` and `face-similarity-check` | [hardware.md](hardware.md#face-camera-diag) |
+| `vinoauthface-camera-diag` and `vinoauthface-similarity-check` | [hardware.md](hardware.md#vinoauthface-camera-diag) |
 | Tray icon: status, enrol, retrain, test scan, uninstall | [tray.md](tray.md) |
 
 Upstream's GTK settings GUI and GNOME scan-indicator extension aren't included. The optional
@@ -85,7 +85,7 @@ crates/
   face-enroll/             # Enrolment CLI
   face-camera-diag/        # Camera discovery tool (list, dump)
   face-similarity-check/   # Offline photo FAR tool
-  face-auth-tray/          # Tray icon + face-auth-helper (pkexec), polkit policy, desktop files
+  face-auth-tray/          # Tray icon + vinoauthface-helper (pkexec), polkit policy, desktop files
 config/face-auth.toml.example   # Documented config template
 selinux/face-auth.te            # SELinux policy source
 deploy.sh / uninstall.sh        # Install and removal

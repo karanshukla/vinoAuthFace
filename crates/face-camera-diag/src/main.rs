@@ -1,7 +1,7 @@
 //! Camera discovery and sanity check. Not installed by deploy.sh.
 //!
 //! `list` shows every V4L2 node with driver, card, VID:PID, current format,
-//! whether its name looks like an IR sensor, and which node face-auth would
+//! whether its name looks like an IR sensor, and which node vinoauthface-auth would
 //! pick on its own. It only queries capabilities and format, so it is safe
 //! against a camera in use. `dump` captures one illuminated frame and writes
 //! it as a 16-bit PGM for a visual check.
@@ -12,7 +12,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "face-camera-diag", about = "Discover and sanity-check V4L2 cameras for face-auth")]
+#[command(name = "vinoauthface-camera-diag", about = "Discover and sanity-check V4L2 cameras for vinoauthface")]
 struct Args {
     #[command(subcommand)]
     command: Option<Command>,

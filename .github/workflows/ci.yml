@@ -100,7 +100,7 @@ jobs:
             'auth       requisite    pam_nologin.so' \
             'auth       required     pam_faillock.so preauth' \
             'auth       include      login' | sudo tee /etc/pam.d/swaylock
-          echo 'auth sufficient pam_exec.so quiet /usr/local/bin/face-auth' | sudo tee /etc/pam.d/face-auth-ci-stack
+          echo 'auth sufficient pam_exec.so quiet /usr/local/bin/vinoauthface-auth' | sudo tee /etc/pam.d/face-auth-ci-stack
           printf '%s\n' '#%PAM-1.0' '@include face-auth-ci-stack' | sudo tee /etc/pam.d/gdm-password
           sudo cp /etc/pam.d/gdm-password /tmp/gdm-password.orig
           # A vendor-only service: deploy.sh must copy it to /etc/pam.d to patch it.
@@ -113,11 +113,11 @@ jobs:
           grep -A1 'pam_exec\.so.*face-auth' /etc/pam.d/sudo | grep -q '@include common-auth'
           cmp /etc/pam.d/gdm-password /tmp/gdm-password.orig
           grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/cosmic-greeter
-          test -x /usr/local/bin/face-auth
-          test -g /usr/local/bin/face-auth
-          test "$(stat -c %G /usr/local/bin/face-auth)" = face-auth
-          test -x /usr/local/bin/face-enroll
-          grep -q -- --improve /usr/local/share/bash-completion/completions/face-enroll
+          test -x /usr/local/bin/vinoauthface-auth
+          test -g /usr/local/bin/vinoauthface-auth
+          test "$(stat -c %G /usr/local/bin/vinoauthface-auth)" = face-auth
+          test -x /usr/local/bin/vinoauthface
+          grep -q improve /usr/local/share/bash-completion/completions/vinoauthface
           grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/sudo
           test "$(stat -c %a /var/lib/face-auth)" = 2750
           test "$(stat -c %U:%a /var/cache/face-auth)" = root:755
@@ -127,8 +127,8 @@ jobs:
       # anything that did not come through pkexec, and any named target.
       - name: Tray files and helper checks
         run: |
-          test -x /usr/local/bin/face-auth-tray
-          test "$(stat -c %U:%a /usr/local/libexec/face-auth-helper)" = root:755
+          test -x /usr/local/bin/vinoauthface-tray
+          test "$(stat -c %U:%a /usr/local/libexec/vinoauthface-helper)" = root:755
           policy=/usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
           test "$(grep -c 'exec.argv1' "$policy")" = 3
           test "$(grep -c '<allow_active>auth_admin</allow_active>' "$policy")" = 3
@@ -138,12 +138,12 @@ jobs:
           test -f /usr/local/share/icons/hicolor/symbolic/apps/vinoauthface-symbolic.svg
           # `! cmd` is exempt from set -e, so spell the failure out.
           refuses() { if "$@"; then echo "helper accepted: $*"; exit 1; fi; }
-          refuses sudo /usr/local/libexec/face-auth-helper enrol
-          refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/face-auth-helper enrol --user root
-          refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/face-auth-helper enroll
-          refuses /usr/local/libexec/face-auth-helper enrol
+          refuses sudo /usr/local/libexec/vinoauthface-helper enrol
+          refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper enrol --user root
+          refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper enroll
+          refuses /usr/local/libexec/vinoauthface-helper enrol
           # Not enrolled: --enrolled answers 1 (no), not 2 (error).
-          set +e; /usr/local/bin/face-auth --enrolled; rc=$?; set -e
+          set +e; /usr/local/bin/vinoauthface-auth --enrolled; rc=$?; set -e
           test "$rc" = 1
 
       - name: Reset install
@@ -151,9 +151,9 @@ jobs:
           sudo ./uninstall.sh
           test ! -e /etc/pam.d/cosmic-greeter
           test ! -e /var/cache/face-auth
-          test ! -e /usr/local/share/bash-completion/completions/face-enroll
-          test ! -e /usr/local/bin/face-auth-tray
-          test ! -e /usr/local/libexec/face-auth-helper
+          test ! -e /usr/local/share/bash-completion/completions/vinoauthface
+          test ! -e /usr/local/bin/vinoauthface-tray
+          test ! -e /usr/local/libexec/vinoauthface-helper
           test ! -e /usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
           test ! -e /etc/xdg/autostart/vinoauthface-tray.desktop
 
@@ -161,8 +161,8 @@ jobs:
         run: |
           mv "$HOME/.cargo/bin" "$HOME/.cargo/bin.hidden"
           sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" ./deploy.sh
-          test -x /usr/local/bin/face-auth
-          test -x /usr/local/bin/face-enroll
+          test -x /usr/local/bin/vinoauthface-auth
+          test -x /usr/local/bin/vinoauthface
 
       - name: Reset install (again)
         run: sudo ./uninstall.sh
@@ -170,21 +170,21 @@ jobs:
       - name: Stage a fake release for the download-fallback branch
         run: |
           mkdir -p /tmp/fake-release
-          cp target/x86_64-unknown-linux-musl/release/face-auth /tmp/fake-release/face-auth-x86_64-unknown-linux-musl
-          cp target/x86_64-unknown-linux-musl/release/face-enroll /tmp/fake-release/face-enroll-x86_64-unknown-linux-musl
-          cp target/x86_64-unknown-linux-musl/release/face-auth-tray /tmp/fake-release/face-auth-tray-x86_64-unknown-linux-musl
-          cp target/x86_64-unknown-linux-musl/release/face-auth-helper /tmp/fake-release/face-auth-helper-x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/vinoauthface-auth /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/vinoauthface /tmp/fake-release/vinoauthface-x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/vinoauthface-tray /tmp/fake-release/vinoauthface-tray-x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/vinoauthface-helper /tmp/fake-release/vinoauthface-helper-x86_64-unknown-linux-musl
           (cd /tmp/fake-release && sha256sum -- * > SHA256SUMS)
           # Remove the local prebuilt binaries so deploy.sh can't fall back to branch 2 instead.
-          rm -f target/x86_64-unknown-linux-musl/release/face-auth target/x86_64-unknown-linux-musl/release/face-enroll
-          rm -f target/x86_64-unknown-linux-musl/release/face-auth-tray target/x86_64-unknown-linux-musl/release/face-auth-helper
+          rm -f target/x86_64-unknown-linux-musl/release/vinoauthface-auth target/x86_64-unknown-linux-musl/release/vinoauthface
+          rm -f target/x86_64-unknown-linux-musl/release/vinoauthface-tray target/x86_64-unknown-linux-musl/release/vinoauthface-helper
 
       - name: "Branch 3: no cargo, no local binaries -> checksum-verified download"
         run: |
           sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" FACE_AUTH_DEPLOY_RELEASE_BASE="file:///tmp/fake-release" ./deploy.sh --with-tray
-          test -x /usr/local/bin/face-auth
-          cmp /usr/local/bin/face-auth /tmp/fake-release/face-auth-x86_64-unknown-linux-musl
-          cmp /usr/local/libexec/face-auth-helper /tmp/fake-release/face-auth-helper-x86_64-unknown-linux-musl
+          test -x /usr/local/bin/vinoauthface-auth
+          cmp /usr/local/bin/vinoauthface-auth /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
+          cmp /usr/local/libexec/vinoauthface-helper /tmp/fake-release/vinoauthface-helper-x86_64-unknown-linux-musl
 
       - name: Cleanup
         if: always()
@@ -246,8 +246,8 @@ jobs:
           # ovfetch#15: TBB dlopens its allocator by SONAME.
           test -e /usr/local/lib/face-auth/openvino/libtbbmalloc.so.2
           test ! -e /etc/ld.so.conf.d/face-auth-openvino.conf
-          readelf -d /usr/local/bin/face-auth | grep -q 'RPATH.*/usr/local/lib/face-auth/openvino'
-          ldd /usr/local/bin/face-auth | grep -q 'libopenvino_c.*/usr/local/lib/face-auth/openvino/'
+          readelf -d /usr/local/bin/vinoauthface-auth | grep -q 'RPATH.*/usr/local/lib/face-auth/openvino'
+          ldd /usr/local/bin/vinoauthface-auth | grep -q 'libopenvino_c.*/usr/local/lib/face-auth/openvino/'
 
       - name: Redeploy reuses the verified prefix
         run: |
@@ -257,14 +257,14 @@ jobs:
       - name: Compile the models on the CPU plugin
         run: |
           echo 'npu_device = "CPU"' | sudo tee -a /etc/face-auth.toml
-          sudo face-auth --warm-cache
+          sudo vinoauthface-auth --warm-cache
 
       # Not root, so the set-group-ID bit puts glibc in secure mode. With no
       # PAM_USER it exits 1 after loading; a loader failure would exit 127.
       - name: Libraries load in secure mode
         run: |
           set +e
-          env -i /usr/local/bin/face-auth 2> "$RUNNER_TEMP/err"
+          env -i /usr/local/bin/vinoauthface-auth 2> "$RUNNER_TEMP/err"
           rc=$?
           set -e
           cat "$RUNNER_TEMP/err"

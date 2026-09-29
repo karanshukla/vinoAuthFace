@@ -20,7 +20,7 @@
 #   require_confirmation_elevation
 #                                   ignored — system policy only
 #
-# FACE_AUTH_* environment variables affect face-enroll and the settings GUI.
+# FACE_AUTH_* environment variables affect the vinoauthface CLI and the offline tools.
 # They are ignored entirely during PAM authentication.
 
 # IR camera device path.
@@ -39,7 +39,7 @@ threshold = 0.6
 
 # Recognition model path (default: /usr/local/share/face-auth/w600k_mbf.onnx).
 # deploy.sh sets this when installed with FACE_AUTH_RECOGNITION_MODEL=r50.
-# Changing models requires re-enrolling; face-auth refuses templates made
+# Changing models requires re-enrolling; vinoAuthFace refuses templates made
 # with a different model.
 # model_path = "/usr/local/share/face-auth/w600k_mbf.onnx"
 
@@ -92,8 +92,8 @@ scan_interval_ms = 0
 # abort_if_lid_closed = true
 
 # Start delay (ms, 0 - 10000, default 2000, 0 disables). A screen locker runs
-# face-auth the instant it starts, so someone still at the camera after
-# locking would be unlocked at once. face-auth waits until the locker
+# vinoAuthFace the instant it starts, so someone still at the camera after
+# locking would be unlocked at once. vinoAuthFace waits until the locker
 # (its parent process) has been running this long, then scans. A retry on the
 # same lock screen does not wait again.
 # start_delay_scope: "screen_lock" (default; sudo, polkit and login are not
@@ -103,7 +103,7 @@ scan_interval_ms = 0
 # start_delay_scope = "screen_lock"
 
 # Confirm with Enter (default false). After a face match for sudo, su or polkit,
-# face-auth asks for Enter on the terminal before it lets the caller through, so
+# vinoAuthFace asks for Enter on the terminal before it lets the caller through, so
 # a process that runs `sudo` while you sit in front of the camera cannot get
 # root unnoticed. Waits 20 s, and any other key declines. Not asked when there
 # is no terminal (pkexec from a GUI), and never on lock screens or login.
@@ -122,7 +122,7 @@ scan_interval_ms = 0
 # closer"). A user's own config may only raise it.
 # min_face_size_ratio = 0.0
 
-# Camera pin, written by pin-camera.sh. When set, face-auth refuses frames
+# Camera pin, written by pin-camera.sh. When set, vinoAuthFace refuses frames
 # unless `device` resolves to this exact USB port and V4L2 index. Do not
 # hand-edit; re-run pin-camera.sh after intentionally changing hardware.
 # System policy only.

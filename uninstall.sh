@@ -44,13 +44,14 @@ else
 fi
 
 echo "Removing binaries..."
-rm -f "$BIN_DIR/face-auth"
-rm -f "$BIN_DIR/face-enroll" "$COMPLETION_DIR/face-enroll"
+rm -f "$BIN_DIR/vinoauthface-auth" "$BIN_DIR/face-auth"
+rm -f "$BIN_DIR/vinoauthface" "$COMPLETION_DIR/vinoauthface" "$BIN_DIR/face-enroll" "$COMPLETION_DIR/face-enroll"
 
 # The tray (installed by deploy.sh unless --no-tray). A running tray exits on its own when its
 # uninstall entry finishes; one started some other way keeps running until
 # logout, with nothing left for it to call.
-rm -f "$BIN_DIR/face-auth-tray" /usr/local/libexec/face-auth-helper
+rm -f "$BIN_DIR/vinoauthface-tray" /usr/local/libexec/vinoauthface-helper \
+    "$BIN_DIR/face-auth-tray" /usr/local/libexec/face-auth-helper
 rm -f /usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
 rm -f /usr/local/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
 rm -f /etc/xdg/autostart/vinoauthface-tray.desktop

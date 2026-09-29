@@ -8,30 +8,30 @@ report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - **Face templates are root-owned.** `/var/lib/face-auth` is `root:face-auth` mode `2750`, with
   templates at `0640`. Whatever can write a template decides whose face unlocks that account, so
   enrolment goes through `sudo`.
-- **`face-auth` is set-group-ID `face-auth`, not set-user-ID root.** Lock screens (KScreenLocker,
+- **`vinoauthface-auth` is set-group-ID `face-auth`, not set-user-ID root.** Lock screens (KScreenLocker,
   swaylock) run PAM as the user, so the binary borrows a group that can read templates and write
   only `<user>/lockout/` (`2770`). A bug in it exposes templates and lockout counters, never root.
   Nothing else has the group and the store is closed to everyone else, so a user can't reach
   their own lockout state to reset it.
 - **Borrowed privileges mean an untrusted caller.** When the real and effective user or group IDs
-  differ, `face-auth` drops the caller's environment (keeping only what `pam_exec` sets) and only
+  differ, `vinoauthface-auth` drops the caller's environment (keeping only what `pam_exec` sets) and only
   lets a non-root caller authenticate its own account.
 - **The PAM path trusts only `/etc/face-auth.toml`.** A user's own config may make matching
   stricter, never looser, and may not redirect model or template paths, unpin the camera, or lift
   the lockout. `FACE_AUTH_*` environment variables are ignored during authentication. Details:
   [configuration.md](configuration.md).
-- **Identity comes from `PAM_USER` only.** `face-auth` refuses to run if PAM didn't set it.
+- **Identity comes from `PAM_USER` only.** `vinoauthface-auth` refuses to run if PAM didn't set it.
 - **Remote sessions are refused.** If `PAM_RHOST` names a non-local host, face authentication is
   declined: the camera is at the console, so otherwise whoever sits at the desk would authenticate
-  an SSH session. `sudo` over SSH doesn't set `PAM_RHOST`, so face-auth also walks its own
+  an SSH session. `sudo` over SSH doesn't set `PAM_RHOST`, so vinoAuthFace also walks its own
   process ancestry and skips the scan if an `sshd` is found (`abort_if_ssh`, on by default). A
   `tmux` or `screen` session started over SSH and reattached later isn't caught: its server's
   parent is init, not `sshd`.
 - **The tray acts only through a fixed root helper.** The optional tray runs as the user. For
-  enrol, retrain and uninstall it runs `face-auth-helper` through pkexec. The helper takes one verb,
+  enrol, retrain and uninstall it runs `vinoauthface-helper` through pkexec. The helper takes one verb,
   no flags, and acts only for `PKEXEC_UID`. A face match can approve those polkit prompts, the same
   as `sudo`. See [tray.md](tray.md#privileges).
-- **Only the user at the seat.** face-auth reads logind's state in `/run/systemd` and declines
+- **Only the user at the seat.** vinoAuthFace reads logind's state in `/run/systemd` and declines
   unless the target account owns the active seat0 session, or seat0 is showing a login greeter.
   With fast user switching, a `sudo` in B's background session won't match A's face while A is at
   the desk. No active session, or state it can't read, declines too. Without `/run/systemd/seats`
@@ -50,10 +50,10 @@ report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
 ## Frame injection (a fake camera)
 
-By default face-auth trusts frames from whatever `device` resolves to. A USB device claiming the
+By default vinoAuthFace trusts frames from whatever `device` resolves to. A USB device claiming the
 real camera's VID/PID (just a string; any device can) could feed replayed frames.
 `pin-camera.sh` closes this by pinning the camera's physical USB port path and V4L2 index, read
-from sysfs, which a spoofed device can't occupy at the same time as the real one. face-auth
+from sysfs, which a spoofed device can't occupy at the same time as the real one. vinoAuthFace
 re-verifies that identity on every authentication and enrolment, independent of the udev rule.
 Opt-in ([install.md](install.md#pinning-the-camera-recommended)). This is separate from the
 presentation defences above; you want both.
@@ -67,7 +67,7 @@ Auto-detect only ever considers IR-named nodes or physical greyscale sensors, an
   PAM's password fallback is untouched, so wire `pam_faillock` for that separately.
 - **`sufficient` bypasses the rest of the auth stack.** A successful match satisfies
   authentication outright, so the strength of the stack becomes the strength of the face match.
-  The face-auth line currently sits above `pam_nologin` and `pam_faillock`
+  The vinoAuthFace line currently sits above `pam_nologin` and `pam_faillock`
   ([#31](https://github.com/karanshukla/vinoAuthFace/issues/31)).
 - **SELinux policy scope:** the lock-screen policy grants `xdm_t` mmap access to all V4L2
   devices. Narrowing it requires custom udev device types.

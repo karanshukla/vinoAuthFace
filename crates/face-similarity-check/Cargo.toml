@@ -5,6 +5,10 @@ edition = "2021"
 license.workspace = true
 publish.workspace = true
 
+[[bin]]
+name = "vinoauthface-similarity-check"
+path = "src/main.rs"
+
 [dependencies]
 face-auth-core = { path = "../face-auth-core" }
 image = { workspace = true }

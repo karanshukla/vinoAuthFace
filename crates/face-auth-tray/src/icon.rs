@@ -48,7 +48,7 @@ impl Shape {
 pub enum State {
     /// Enrolled, camera present.
     Ready,
-    /// A `face-auth` process is running somewhere on the machine.
+    /// A `vinoauthface-auth` process is running somewhere on the machine.
     Scanning,
     /// Not usable yet: no templates, or no IR camera.
     Attention,
