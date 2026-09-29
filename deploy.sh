@@ -126,6 +126,7 @@ DETECTOR_CHECKSUM="e9adbd0f920ddcce9368434c4d34d72520dc0c19b526fd44b4ef49bde2c3b
 
 BIN_DIR="/usr/local/bin"
 SHARE_DIR="/usr/local/share/face-auth"
+COMPLETION_DIR="/usr/local/share/bash-completion/completions"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
 VAR_DIR="/var/lib/face-auth"
@@ -580,6 +581,11 @@ if [ "$NPU_ACTIVE" = 1 ] && [ "$OPENVINO_MODE" = "archive" ]; then
     ldconfig
     ok OpenVINO "runtime in $OPENVINO_INSTALL_DIR"
 fi
+
+# Run after the OpenVINO runtime is in place: an NPU build cannot start without it.
+install -dm755 "$COMPLETION_DIR"
+"$BIN_DIR/face-enroll" --completions bash > "$COMPLETION_DIR/face-enroll"
+chmod 644 "$COMPLETION_DIR/face-enroll"
 
 # ---- Install models ----
 # Staged in a private mktemp directory. A fixed /tmp path can be pre-created by
