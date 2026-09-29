@@ -18,10 +18,15 @@ replayed on top:
   their ordering, config and store ownership, model files, enrolment, camera
   format, camera pin and TPM sealing. Exits 1 if anything fails.
 - Motion liveness now compares a normalised patch of the face, not the whole
-  frame, and also needs motion a rigid shift can't explain
-  (`liveness_residual_motion_threshold`, default 0.2), so a hand moving beside
-  a photo, an exposure change, or a photo moved by hand no longer passes it
-  (#17, #28).
+  frame, so a hand moving beside a photo or an exposure change no longer
+  passes it (#17, #28). An opt-in check for motion a rigid shift can't explain
+  (`liveness_residual_motion_threshold`, default 0 = off) also stops a photo
+  moved by hand. It measures the most-changed eye-sized block after a
+  quarter-pixel alignment, so a blink counts; 0.3 is the value to try. Off by
+  default because a still face may not blink within one scan.
+- A scan whose face matched but hasn't passed motion liveness yet runs up to
+  `liveness_grace_ms` (default 4000) longer, once, instead of failing someone
+  holding still. A scan that never matched still ends on time.
 - Motion liveness gate, failed-match lockout (`lockout.bin` in the root-owned
   store), camera pinning (`pin-camera.sh`).
 - Detector box decode with face crop before encoding, and the detector's

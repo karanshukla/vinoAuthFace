@@ -16,6 +16,7 @@ const THRESHOLD_RANGE: std::ops::RangeInclusive<f32> = 0.3..=1.0;
 const DETECTOR_THRESHOLD_RANGE: std::ops::RangeInclusive<f32> = 0.05..=1.0;
 const CAPTURE_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 100..=30_000;
 const SCAN_DURATION_RANGE: std::ops::RangeInclusive<u64> = 500..=30_000;
+const LIVENESS_GRACE_RANGE: std::ops::RangeInclusive<u64> = 0..=10_000;
 const SCAN_INTERVAL_RANGE: std::ops::RangeInclusive<u64> = 0..=5_000;
 const LIVENESS_MOTION_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 const START_DELAY_RANGE: std::ops::RangeInclusive<u64> = 0..=10_000;
@@ -31,6 +32,7 @@ pub struct FaceAuthConfig {
     pub detector_model_path: Option<String>,
     pub detector_threshold: Option<f32>,
     pub scan_duration_ms: Option<u64>,
+    pub liveness_grace_ms: Option<u64>,
     pub scan_interval_ms: Option<u64>,
     pub backend: Option<String>,
     pub npu_device: Option<String>,
@@ -62,6 +64,7 @@ impl Default for FaceAuthConfig {
             detector_model_path: None,
             detector_threshold: Some(0.5),
             scan_duration_ms: Some(5000),
+            liveness_grace_ms: None,
             scan_interval_ms: Some(0),
             backend: None,
             npu_device: None,
@@ -242,6 +245,11 @@ impl FaceAuthConfig {
                 self.scan_duration_ms = Some(v);
             }
         }
+        if let Some(v) = overlay.liveness_grace_ms {
+            if LIVENESS_GRACE_RANGE.contains(&v) {
+                self.liveness_grace_ms = Some(v);
+            }
+        }
         if let Some(v) = overlay.scan_interval_ms {
             if SCAN_INTERVAL_RANGE.contains(&v) {
                 self.scan_interval_ms = Some(v);
@@ -362,6 +370,16 @@ impl FaceAuthConfig {
             .clamp(*SCAN_DURATION_RANGE.start(), *SCAN_DURATION_RANGE.end())
     }
 
+    /// How much longer a scan keeps going, once, when a face has matched but
+    /// hasn't yet moved enough for motion liveness. Never applies to a scan
+    /// that didn't match, so an unattended `sudo` still ends on time. Zero
+    /// disables it.
+    pub fn liveness_grace_ms(&self) -> u64 {
+        self.liveness_grace_ms
+            .unwrap_or(4000)
+            .clamp(*LIVENESS_GRACE_RANGE.start(), *LIVENESS_GRACE_RANGE.end())
+    }
+
     /// Extra delay between scan attempts.
     ///
     /// Defaults to zero: the loop is already paced by the camera, which
@@ -396,12 +414,14 @@ impl FaceAuthConfig {
         self.liveness_motion_threshold.unwrap_or(0.01)
     }
 
-    /// Minimum fraction of face-patch pixels still changed after undoing the
-    /// best rigid shift, required in the same frame pair as
-    /// `liveness_motion_threshold`. Stops a photo moved by hand. See
-    /// `preprocess::motion_profile`'s `residual`. Zero disables the check.
+    /// Minimum fraction of the most-changed block of the face patch (about an
+    /// eye's size) still changed after undoing the best rigid shift, required
+    /// in the same frame pair as `liveness_motion_threshold`. Stops a photo
+    /// moved by hand. See `preprocess::motion_profile`'s `local`. Zero
+    /// disables the check, and is the default: a still face may not blink
+    /// inside one scan, especially behind glasses glare.
     pub fn liveness_residual_motion_threshold(&self) -> f32 {
-        self.liveness_residual_motion_threshold.unwrap_or(0.2)
+        self.liveness_residual_motion_threshold.unwrap_or(0.0)
     }
 
     /// Smallest accepted face, as the larger side of its box over the same
@@ -598,7 +618,10 @@ mod tests {
 
     #[test]
     fn user_overlay_may_only_raise_residual_motion_threshold() {
-        let mut cfg = system_baseline();
+        let mut cfg = FaceAuthConfig {
+            liveness_residual_motion_threshold: Some(0.2),
+            ..system_baseline()
+        };
         cfg.apply_user_overlay(&FaceAuthConfig {
             liveness_residual_motion_threshold: Some(0.0),
             ..FaceAuthConfig::default()
@@ -747,11 +770,19 @@ mod tests {
         let overlay = FaceAuthConfig {
             scan_duration_ms: Some(8000),
             scan_interval_ms: Some(999_999),
+            liveness_grace_ms: Some(2000),
             ..FaceAuthConfig::default()
         };
         cfg.apply_user_overlay(&overlay);
         assert_eq!(cfg.scan_duration_ms(), 8000);
         assert_eq!(cfg.scan_interval_ms(), 0, "out-of-range value ignored");
+        assert_eq!(cfg.liveness_grace_ms(), 2000);
+
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            liveness_grace_ms: Some(60_000),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.liveness_grace_ms(), 2000, "out-of-range value ignored");
     }
 
     #[test]

@@ -27,7 +27,7 @@ threshold = 0.6
 capture_timeout_ms = 5000
 scan_duration_ms = 5000
 liveness_motion_threshold = 0.01
-liveness_residual_motion_threshold = 0.2
+liveness_residual_motion_threshold = 0.0
 ```
 
 ### What a user may override at the login prompt
@@ -39,7 +39,7 @@ file they own, and is applied as a narrowing overlay:
 |-----|--------------------|
 | `threshold`, `detector_threshold`, `liveness_motion_threshold`, `liveness_residual_motion_threshold`, `min_face_size_ratio` | Honoured only if **>= the system value**. A lower number is ignored |
 | `device` | Honoured only if the path is a real IR capture device on this machine (IR-looking sysfs name, or a physical greyscale sensor, and opens in a supported format) |
-| `scan_duration_ms`, `scan_interval_ms`, `capture_timeout_ms` | Honoured within built-in bounds |
+| `scan_duration_ms`, `scan_interval_ms`, `capture_timeout_ms`, `liveness_grace_ms` | Honoured within built-in bounds |
 | `model_path`, `detector_model_path`, `embeddings_dir`, `pinned_camera_*`, `lockout_*`, `seal_embeddings`, `backend`, `npu_device`, `seat_check`, `abort_if_*`, `start_delay_*`, `require_confirmation_elevation` | **Ignored**: system policy only |
 
 This stops code running as you, which doesn't know your password, from writing a permissive

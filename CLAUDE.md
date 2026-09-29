@@ -128,15 +128,18 @@ capture (V4L2, GREY/YUYV/Y16, brighter of a frame pair) → assess_frame (mean +
   → cosine similarity vs stored embeddings
 ```
 
-`authenticate_scan` polls this in a loop until `scan_duration_ms` elapses. The loop is paced by
+`authenticate_scan` polls this in a loop until `scan_duration_ms` elapses (plus, once,
+`liveness_grace_ms` if a frame matched but was held back for liveness). The loop is paced by
 the camera itself; `scan_interval_ms` is an extra delay that defaults to 0. It additionally
 requires **motion-based liveness**: the first face-bearing frame only seeds a baseline (never
 encoded/matched), and a match is only accepted once one pair of consecutive face frames shows
 both total motion (`preprocess::motion_profile`'s `total` ≥ `liveness_motion_threshold`) and
-motion a rigid shift can't explain (`residual` ≥ `liveness_residual_motion_threshold`). Both
+motion a rigid shift can't explain in the most-changed 8x8 block (`local` ≥
+`liveness_residual_motion_threshold`; the shift is refined to a quarter pixel). Both
 are measured on a normalised patch of the face, cut from the pre-CLAHE frame with the earlier
 frame's box, so background motion and exposure changes don't count. `total` defeats a static
-photo; `residual` a photo moved by hand. `examples/motion-profile.rs` prints both for a clip.
+photo; `local` a photo moved by hand (default 0 = off: a still face may not blink within one
+scan). `examples/motion-profile.rs` prints all three for a clip.
 
 Every entry point calls `config.verify_pinned_camera()` first (no-op unless `pin-camera.sh` has
 been run). The two authenticate paths also consult `lockout::check` before any camera work;

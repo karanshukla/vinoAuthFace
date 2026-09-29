@@ -13,8 +13,8 @@
 #   min_face_size_ratio             honoured only if >= the value set here
 #   device                          honoured only if it is a real IR capture
 #                                   device present on this machine
-#   scan_duration_ms, scan_interval_ms, capture_timeout_ms
-#                                   honoured within built-in bounds
+#   scan_duration_ms, scan_interval_ms, capture_timeout_ms,
+#   liveness_grace_ms               honoured within built-in bounds
 #   model_path, detector_model_path, embeddings_dir,
 #   pinned_camera_*, lockout_*, backend, npu_device,
 #   seat_check, abort_if_*, start_delay_*,
@@ -61,6 +61,13 @@ detector_threshold = 0.5
 # The scanner keeps capturing and checking frames until this elapses or a match
 # is found, like Windows Hello.
 scan_duration_ms = 5000
+
+# Extra scan time, in milliseconds (0 - 10000, default 4000), used once and only
+# when a face has already matched but hasn't moved enough for motion liveness
+# yet. A face held still can take longer than the scan to blink or shift; this
+# waits for it instead of failing. A scan that never matched (nobody there, or
+# someone else) still ends after scan_duration_ms. 0 disables it.
+# liveness_grace_ms = 4000
 
 # Extra delay between capture attempts within a scan window, in milliseconds
 # (0 - 5000, default 0).
@@ -130,10 +137,14 @@ scan_interval_ms = 0
 # rigidly held photo. 0 disables it.
 # liveness_motion_threshold = 0.01
 #
-# Fraction of face pixels still changed after undoing the best rigid shift
-# (0.0 - 1.0, default 0.2). A photo moved by hand moves as one piece; a real
-# face moves in parts (blinks, mouth, head turning). 0 disables it.
-# liveness_residual_motion_threshold = 0.2
+# Motion a rigid shift can't explain (0.0 - 1.0, default 0 = off): the
+# fraction still changed, after undoing the best shift, in the most-changed
+# eye-sized block of the face. A photo moved by hand moves as one piece; a
+# real face moves in parts (a blink, the mouth, the head turning). Moved-photo
+# tests peak around 0.2 and blinks reach 0.3-0.6, so 0.3 is the value to try.
+# Off by default: a face held still may not blink within one scan, and
+# glasses glare over the eyes hides blinks.
+# liveness_residual_motion_threshold = 0.0
 
 # Minimum face size (0.0 - 0.75, default 0 = off). The larger side of the
 # detected face box, as a fraction of the same side of the frame. Smaller faces
