@@ -14,7 +14,7 @@ pub mod verify;
 
 pub use crate::capture::Camera;
 pub use crate::config::FaceAuthConfig;
-use crate::detector::{assess_frame, FaceDetector, FrameQuality};
+use crate::detector::{assess_frame, FaceBox, FaceDetector, FrameQuality};
 use crate::error::FaceAuthError;
 use crate::inference::FaceEncoder;
 use crate::storage::EmbeddingStore;
@@ -167,10 +167,13 @@ impl FaceAuth {
         // `sudo` with nobody at the camera is not a failed attempt.
         let mut face_seen = false;
         // Motion liveness: a match only counts once real motion has been seen
-        // between consecutive face frames, which defeats a static photo.
+        // between consecutive face frames. `total` defeats a static photo;
+        // `residual` (motion a rigid shift can't explain) defeats one moved
+        // by hand.
         let motion_threshold = self.config.liveness_motion_threshold();
-        let mut prev_face: Option<crate::capture::IrFrame> = None;
-        let mut motion_seen = motion_threshold <= 0.0;
+        let residual_threshold = self.config.liveness_residual_motion_threshold();
+        let mut prev_face: Option<(crate::capture::IrFrame, FaceBox)> = None;
+        let mut motion_seen = motion_threshold <= 0.0 && residual_threshold <= 0.0;
 
         // Wait out the remainder of the interval without overrunning the window.
         let nap = |deadline: Instant| {
@@ -223,6 +226,9 @@ impl FaceAuth {
                 continue;
             }
 
+            // Liveness compares the frame as captured; CLAHE remaps each
+            // frame differently and would add change of its own.
+            let raw = frame.clone();
             let mut frame = frame;
             crate::preprocess::histogram_equalize(&mut frame);
 
@@ -239,14 +245,33 @@ impl FaceAuth {
 
             // The first face frame has nothing to diff against, so it can never
             // pass the liveness gate. Use it as the baseline and skip encoding.
-            let Some(prev) = prev_face.replace(frame.clone()) else {
+            // Both patches are cut with the earlier frame's box: the detector's
+            // box wobbles in size from frame to frame, and two differently
+            // scaled patches would differ everywhere.
+            let motion = match &prev_face {
+                Some((prev_raw, prev_box)) => Some(crate::preprocess::motion_profile(
+                    &crate::preprocess::face_patch(prev_raw, prev_box)?,
+                    &crate::preprocess::face_patch(&raw, prev_box)?,
+                )),
+                None => None,
+            };
+            prev_face = Some((raw, face_box));
+            let Some(motion) = motion else {
                 tracing::debug!(frame = frame_num, "liveness baseline");
                 nap(deadline);
                 continue;
             };
-            let motion = crate::preprocess::frame_motion_fraction(&prev, &frame);
-            motion_seen |= motion >= motion_threshold;
-            tracing::debug!(frame = frame_num, motion, motion_threshold, motion_seen, "liveness");
+            motion_seen |= motion.total >= motion_threshold && motion.residual >= residual_threshold;
+            tracing::debug!(
+                frame = frame_num,
+                motion = motion.total,
+                residual = motion.residual,
+                shift = ?motion.shift,
+                motion_threshold,
+                residual_threshold,
+                motion_seen,
+                "liveness"
+            );
 
             let face = crate::preprocess::crop_to_face(&frame, &face_box, FACE_CROP_MARGIN)?;
             let input = crate::preprocess::preprocess_ir_frame(&face)?;

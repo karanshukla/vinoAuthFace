@@ -9,6 +9,7 @@
 #
 #   threshold, detector_threshold,
 #   liveness_motion_threshold,
+#   liveness_residual_motion_threshold,
 #   min_face_size_ratio             honoured only if >= the value set here
 #   device                          honoured only if it is a real IR capture
 #                                   device present on this machine
@@ -119,11 +120,20 @@ scan_interval_ms = 0
 # System policy only.
 # require_confirmation_elevation = false
 
-# Motion liveness (0.0 - 1.0, default 0.01). During a scan, a match is only
-# accepted once at least this fraction of pixels has changed between two
-# consecutive face frames. Defeats a rigidly held photo; a real face always
-# has some micro-motion. 0 disables it. A user's own config may only raise it.
+# Motion liveness. During a scan, a match is only accepted once one pair of
+# consecutive face frames shows both kinds of motion below. Only the face
+# region is compared, after removing brightness and contrast differences, so
+# movement elsewhere in view and auto-exposure changes don't count.
+# A user's own config may only raise either value.
+#
+# Fraction of face pixels that changed (0.0 - 1.0, default 0.01). Defeats a
+# rigidly held photo. 0 disables it.
 # liveness_motion_threshold = 0.01
+#
+# Fraction of face pixels still changed after undoing the best rigid shift
+# (0.0 - 1.0, default 0.2). A photo moved by hand moves as one piece; a real
+# face moves in parts (blinks, mouth, head turning). 0 disables it.
+# liveness_residual_motion_threshold = 0.2
 
 # Minimum face size (0.0 - 0.75, default 0 = off). The larger side of the
 # detected face box, as a fraction of the same side of the frame. Smaller faces

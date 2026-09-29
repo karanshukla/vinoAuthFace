@@ -47,7 +47,7 @@ with upstream. On top of upstream it adds:
 
 | Feature | Docs |
 |---|---|
-| Motion liveness: a match only counts after real pixel motion between consecutive face frames | [security.md](security.md#presentation-attacks-something-held-up-to-the-real-camera) |
+| Motion liveness: a match only counts after non-rigid motion of the face between consecutive frames | [security.md](security.md#presentation-attacks-something-held-up-to-the-real-camera) |
 | Lockout: exponential backoff after repeated failed matches, never blocking the password | [troubleshooting.md](troubleshooting.md#face-auth-stopped-being-tried-after-a-few-failures) |
 | Camera pinning by physical USB port, against frame injection | [security.md](security.md#frame-injection-a-fake-camera) |
 | Face crop before encoding (detector boxes decoded) | above |
@@ -76,7 +76,7 @@ crates/
       inference.rs         # tract / OpenVINO encoder
       lib.rs               # FaceAuth: auth scan (liveness, lockout) + enrolment
       lockout.rs           # Per-user failed-match backoff
-      preprocess.rs        # CLAHE, face crop, resize/normalise, motion fraction
+      preprocess.rs        # CLAHE, face crop, resize/normalise, motion profile
       storage.rs           # Template I/O (versioned, model-tagged, atomic)
       user.rs              # NSS lookup + username validation
       verify.rs            # Cosine similarity

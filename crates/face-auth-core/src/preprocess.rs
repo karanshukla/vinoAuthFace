@@ -123,28 +123,112 @@ pub fn preprocess_ir_frame(frame: &IrFrame) -> anyhow::Result<Array3<f32>> {
     Ok(array)
 }
 
-/// Fraction of pixels that changed by more than a noise floor between two
-/// equalised frames of the same size.
+/// Side of the square face patch that liveness compares, in pixels.
+pub const MOTION_PATCH_SIZE: usize = 48;
+
+/// Largest rigid shift, in patch pixels each way, that `motion_profile`
+/// compensates for. The patch is re-cropped around each frame's detection, so
+/// a moved face or print is already mostly centred; this absorbs the
+/// detector's box jitter on top.
+pub const MOTION_MAX_SHIFT: i32 = 4;
+
+/// Per-pixel change, in units of the patch's own standard deviation, below
+/// which a difference is sensor noise rather than motion.
+const MOTION_NOISE_FLOOR: f32 = 0.25;
+
+/// The face region of one frame, reduced to what liveness compares: a fixed
+/// size, zero mean and unit variance.
 ///
-/// A cheap liveness signal: a rigidly held photo produces near-zero motion,
-/// while a real face has micro-motion (blinks, breathing, sway) even when
-/// holding still. Counting changed pixels rather than averaging differences
-/// keeps a small, local change like a blink from being diluted by the static
-/// background.
-pub fn frame_motion_fraction(a: &IrFrame, b: &IrFrame) -> f32 {
-    if a.width != b.width || a.height != b.height || a.data.len() != b.data.len() || a.data.is_empty() {
-        return 0.0;
+/// Cropping to the detected box keeps motion elsewhere in view (the hand
+/// holding a print, someone walking past) out of the signal. Normalising
+/// removes gain and offset, so an auto-exposure step or a brighter strobe
+/// frame is not mistaken for motion. Take it from the frame before CLAHE:
+/// equalisation remaps each frame differently and would add its own change.
+#[derive(Clone, Debug)]
+pub struct FacePatch {
+    data: Vec<f32>,
+}
+
+/// How two consecutive face patches differ.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MotionProfile {
+    /// Fraction of pixels that changed, as the patches stand.
+    pub total: f32,
+    /// Fraction still changed after undoing the best rigid shift. A photo
+    /// moved by hand moves as one piece and leaves little here; a real face
+    /// moves in parts (blinks, mouth, parallax as the head turns).
+    pub residual: f32,
+    /// The rigid shift, in patch pixels, that best lines `b` up with `a`.
+    pub shift: (i32, i32),
+}
+
+pub fn face_patch(frame: &IrFrame, face_box: &FaceBox) -> anyhow::Result<FacePatch> {
+    let face = crop_to_face(frame, face_box, 0.0)?;
+    let img = DynamicImage::ImageLuma16(frame_to_luma16(&face)?);
+    let small = img
+        .resize_exact(
+            MOTION_PATCH_SIZE as u32,
+            MOTION_PATCH_SIZE as u32,
+            image::imageops::FilterType::Triangle,
+        )
+        .to_luma16();
+
+    let mut data: Vec<f32> = small.pixels().map(|p| p.0[0] as f32).collect();
+    let len = data.len() as f32;
+    let mean = data.iter().sum::<f32>() / len;
+    let var = data.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / len;
+    // A flat patch has no structure to compare; leave it at zero rather than
+    // dividing noise up into something that looks like motion.
+    let scale = if var > 1.0 { 1.0 / var.sqrt() } else { 0.0 };
+    for v in &mut data {
+        *v = (*v - mean) * scale;
+    }
+    Ok(FacePatch { data })
+}
+
+/// Compare two face patches: how much changed, and how much of that a single
+/// rigid shift can't explain.
+///
+/// Both counts are taken over the same inner window (the patch less
+/// `MOTION_MAX_SHIFT` on each side) so every candidate shift is scored on the
+/// same number of pixels.
+pub fn motion_profile(a: &FacePatch, b: &FacePatch) -> MotionProfile {
+    let n = MOTION_PATCH_SIZE as i32;
+    let s = MOTION_MAX_SHIFT;
+    let expected = MOTION_PATCH_SIZE * MOTION_PATCH_SIZE;
+    if a.data.len() != expected || b.data.len() != expected {
+        return MotionProfile { total: 0.0, residual: 0.0, shift: (0, 0) };
     }
 
-    const PER_PIXEL_NOISE_FLOOR: i32 = 1500; // ~2.3% of the u16 range
+    let inner = ((n - 2 * s) * (n - 2 * s)) as f32;
+    let at = |dx: i32, dy: i32| {
+        let mut sum = 0.0f32;
+        let mut changed = 0usize;
+        for y in s..n - s {
+            for x in s..n - s {
+                let pa = a.data[(y * n + x) as usize];
+                let pb = b.data[((y + dy) * n + x + dx) as usize];
+                let d = (pa - pb).abs();
+                sum += d;
+                if d > MOTION_NOISE_FLOOR {
+                    changed += 1;
+                }
+            }
+        }
+        (sum, changed as f32 / inner)
+    };
 
-    let changed = a
-        .data
-        .iter()
-        .zip(&b.data)
-        .filter(|(&x, &y)| (x as i32 - y as i32).abs() > PER_PIXEL_NOISE_FLOOR)
-        .count();
-    changed as f32 / a.data.len() as f32
+    let (_, total) = at(0, 0);
+    let mut best = (f32::INFINITY, total, (0, 0));
+    for dy in -s..=s {
+        for dx in -s..=s {
+            let (sum, frac) = at(dx, dy);
+            if sum < best.0 {
+                best = (sum, frac, (dx, dy));
+            }
+        }
+    }
+    MotionProfile { total, residual: best.1, shift: best.2 }
 }
 
 /// Default CLAHE parameters. `CLIP_LIMIT` follows OpenCV's convention: the
@@ -363,31 +447,83 @@ mod tests {
         assert!(crop_to_face(&f, &b, 0.3).is_err());
     }
 
-    #[test]
-    fn identical_frames_have_zero_motion() {
-        let a = frame(vec![1000, 2000, 3000, 4000], 2, 2);
-        assert_eq!(frame_motion_fraction(&a, &a.clone()), 0.0);
+    /// A 200x200 frame of smooth, non-repeating texture, offset by `(ox, oy)`
+    /// pixels, with an optional bright square standing in for a local change
+    /// such as a blink.
+    fn scene(ox: i32, oy: i32, gain: f32, offset: f32, blob: Option<(u32, u32)>) -> IrFrame {
+        let (w, h) = (200u32, 200u32);
+        let data = (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as i32 + ox, (i / w) as i32 + oy);
+                let (fx, fy) = (x as f32, y as f32);
+                let mut v = 20000.0 + 8000.0 * (fx * 0.11).sin() * (fy * 0.07).cos() + 6000.0 * ((fx + fy) * 0.05).sin();
+                if let Some((bx, by)) = blob {
+                    let (px, py) = ((i % w), (i / w));
+                    if (bx..bx + 30).contains(&px) && (by..by + 20).contains(&py) {
+                        v = 60000.0;
+                    }
+                }
+                (v * gain + offset).clamp(0.0, 65535.0) as u16
+            })
+            .collect();
+        frame(data, w, h)
+    }
+
+    const MIDDLE: FaceBox = FaceBox { x1: 0.25, y1: 0.25, x2: 0.75, y2: 0.75 };
+
+    fn profile(a: &IrFrame, b: &IrFrame, box_b: &FaceBox) -> MotionProfile {
+        motion_profile(&face_patch(a, &MIDDLE).unwrap(), &face_patch(b, box_b).unwrap())
     }
 
     #[test]
-    fn large_change_in_one_pixel_is_motion() {
-        let a = frame(vec![1000, 2000, 3000, 4000], 2, 2);
-        let b = frame(vec![1000, 2000, 3000, 40000], 2, 2);
-        assert_eq!(frame_motion_fraction(&a, &b), 0.25);
+    fn identical_faces_have_zero_motion() {
+        let a = scene(0, 0, 1.0, 0.0, None);
+        let p = profile(&a, &a.clone(), &MIDDLE);
+        assert_eq!(p, MotionProfile { total: 0.0, residual: 0.0, shift: (0, 0) });
     }
 
     #[test]
-    fn sensor_noise_is_not_motion() {
-        let a = frame(vec![1000, 2000, 3000, 4000], 2, 2);
-        let b = frame(vec![1050, 2050, 2950, 3950], 2, 2);
-        assert_eq!(frame_motion_fraction(&a, &b), 0.0);
+    fn brightness_change_is_not_motion() {
+        // An auto-exposure step: same picture, different gain and black level.
+        let a = scene(0, 0, 1.0, 0.0, None);
+        let b = scene(0, 0, 1.3, 2000.0, None);
+        let p = profile(&a, &b, &MIDDLE);
+        assert!(p.total < 0.01, "{p:?}");
     }
 
     #[test]
-    fn mismatched_frames_have_zero_motion() {
-        let a = frame(vec![1000, 2000, 3000, 4000], 2, 2);
-        let b = frame(vec![1000, 2000], 2, 1);
-        assert_eq!(frame_motion_fraction(&a, &b), 0.0);
+    fn motion_outside_the_face_is_ignored() {
+        let a = scene(0, 0, 1.0, 0.0, Some((5, 5)));
+        let b = scene(0, 0, 1.0, 0.0, Some((160, 170)));
+        let p = profile(&a, &b, &MIDDLE);
+        assert_eq!(p.total, 0.0, "{p:?}");
+    }
+
+    #[test]
+    fn rigid_translation_leaves_little_residual() {
+        // The scene moves 6px and the detection doesn't follow: the shift
+        // search has to find it.
+        let a = scene(0, 0, 1.0, 0.0, None);
+        let b = scene(6, -4, 1.0, 0.0, None);
+        let p = profile(&a, &b, &MIDDLE);
+        assert!(p.total > 0.1, "{p:?}");
+        assert!(p.residual < 0.02, "{p:?}");
+        assert_eq!(p.shift, (-3, 2));
+    }
+
+    #[test]
+    fn local_change_inside_the_face_is_residual() {
+        let a = scene(0, 0, 1.0, 0.0, None);
+        let b = scene(0, 0, 1.0, 0.0, Some((85, 90)));
+        let p = profile(&a, &b, &MIDDLE);
+        assert!(p.residual > 0.05, "{p:?}");
+    }
+
+    #[test]
+    fn flat_patches_have_zero_motion() {
+        let a = frame(vec![30000; 100 * 100], 100, 100);
+        let b = frame(vec![40000; 100 * 100], 100, 100);
+        assert_eq!(profile(&a, &b, &MIDDLE).total, 0.0);
     }
 
     fn spread(f: &IrFrame) -> u16 {
