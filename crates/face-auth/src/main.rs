@@ -6,6 +6,7 @@
 //! `pam_exec` sets from the PAM handle itself.
 
 mod confirm;
+mod prompt;
 
 use face_auth_core::environment::{self, SkipReason};
 use face_auth_core::error::FaceAuthError;
@@ -366,7 +367,9 @@ fn main() {
         "starting scan"
     );
 
+    let scanning = prompt::ScanPrompt::show();
     let result = auth.authenticate_scan(&info.name, scan_duration, scan_interval);
+    drop(scanning);
     tracing::debug!(total = ?t0.elapsed(), "scan finished");
 
     match result {

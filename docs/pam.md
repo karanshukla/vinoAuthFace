@@ -23,8 +23,10 @@ an older install), `deploy.sh` skips the service rather than scan the camera twi
 camera, timeout, lockout) falls through to the password prompt. `quiet` keeps `pam_exec` chatter
 out of the unlock UI.
 
-There's no visual cue while scanning. Auth either succeeds within the scan window or falls
-through to the password prompt.
+While scanning, `face-auth` writes `Looking for your face...` to the caller's controlling
+terminal (`/dev/tty`) and erases it when the scan ends, so `sudo` in a terminal or on a VT isn't
+silent. Lock screens and polkit agents have no terminal, so they show nothing. Auth either
+succeeds within the scan window or falls through to the password prompt.
 
 ## KDE
 
