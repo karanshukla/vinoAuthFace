@@ -32,11 +32,13 @@ fail() {
 # Bars only on a terminal; a log (CI, a pipe) keeps the quiet one-line steps.
 if [ -t 1 ]; then INTERACTIVE=1; CURL_FLAGS=(-fL -#); else INTERACTIVE=0; CURL_FLAGS=(-fsSL); fi
 
-# bar <done> <total> <label>: redraws one line in place, capped at 99% so a
-# rough total never claims to be finished before the build is.
+# bar <done> <total> <label> [final]: redraws one line in place, capped at 99%
+# so a rough total never claims to be finished before the build is. `final`
+# lifts the cap for the caller that knows the work succeeded.
 bar() {
-    local n="$1" total="$2" label="$3" width=30 pct filled
-    [ "$n" -ge "$total" ] && n=$((total - 1))
+    local n="$1" total="$2" label="$3" final="${4:-}" width=30 pct filled
+    [ -z "$final" ] && [ "$n" -ge "$total" ] && n=$((total - 1))
+    [ "$n" -gt "$total" ] && n=$total
     [ "$n" -lt 0 ] && n=0
     pct=$((n * 100 / total)); filled=$((n * width / total))
     printf '\r\e[K  %s%s%s %s%s%s %3d%% %s(%d/%d)%s' "$DIM" "$label" "$RESET" \
@@ -69,11 +71,17 @@ cargo_build() {
     "$@" --quiet --message-format=json-render-diagnostics >"$out" &
     pid=$!
     while kill -0 "$pid" 2>/dev/null; do
-        seen="$(grep -c '"reason":"compiler-artifact"' "$out" || true)"
+        # Distinct packages, not messages: a crate with a build script or
+        # several targets emits more than one artifact.
+        seen="$(grep '"reason":"compiler-artifact"' "$out" | grep -o '"package_id":"[^"]*"' | sort -u | wc -l || true)"
         bar "$seen" "$total" "$label"
         sleep 0.2
     done
     wait "$pid" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        bar "$total" "$total" "$label" final
+        sleep 0.3
+    fi
     rm -f "$out"
     printf '\r\e[K'
     return "$rc"
@@ -546,7 +554,14 @@ if [ -n "$TRAY_SRC" ]; then
         restorecon "$BIN_DIR/vinoauthface-tray" /usr/local/libexec/vinoauthface-helper \
             "$POLKIT_ACTIONS_DIR/io.github.karanshukla.vinoauthface.policy" 2>/dev/null || true
     fi
-    ok Tray "starts at your next login, or run vinoauthface-tray now"
+    # A tray already running keeps its old binary (or, after the rename, the
+    # deleted path of the old helper) and reports stale status. Matched on the
+    # command line: a process name is cut to 15 characters, this one is 17.
+    if command -v pkill &>/dev/null && pkill -f '(^|/)(vinoauthface-tray|face-auth-tray)( |$)'; then
+        ok Tray "stopped the running one; start the new one with vinoauthface-tray (or at next login)"
+    else
+        ok Tray "starts at your next login, or run vinoauthface-tray now"
+    fi
 elif [ "$WITH_TRAY" = 1 ]; then
     warn Tray "No tray binaries to install (no Rust toolchain, and the release has none)."
 fi
