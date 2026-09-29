@@ -48,6 +48,8 @@ your normal password prompt, so a broken camera can't lock you out.
 | `sudo` | `sudo` |
 | GNOME lock screen | `gdm-password` |
 | KDE lock screen (hands-free, next to the password field) | `kde-fingerprint` |
+| Plasma login screen | `plasmalogin-fingerprint` |
+| COSMIC lock screen and greeter | `cosmic-greeter` |
 | swaylock | `swaylock` |
 | polkit prompts (`pkexec`, settings, Bitwarden unlock) | `polkit-1` |
 

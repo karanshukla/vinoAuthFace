@@ -31,6 +31,7 @@ COMPLETION_DIR="/usr/local/share/bash-completion/completions"
 NPU_CACHE_DIR="/var/cache/face-auth"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
+PAM_SERVICES="sudo swaylock gdm-password polkit-1 kde-fingerprint plasmalogin-fingerprint cosmic-greeter"
 
 if [ "$USR_WRITABLE" = true ]; then
     ICON_DIR="/usr/share/icons/hicolor/scalable/apps"
@@ -103,12 +104,12 @@ rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/face-auth-gtk"
 rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/gnome-shell/extensions/authface-scan-indicator@samvivan.local"
 
 echo "Restoring PAM configs..."
-for service in sudo swaylock gdm-password polkit-1 kde-fingerprint; do
+for service in $PAM_SERVICES; do
     conf="$PAM_DIR/$service"
-    if [ "$service" = polkit-1 ] && [ -f "$PAM_DIR/.face-auth-polkit-1-created" ]; then
+    if [ -f "$PAM_DIR/.face-auth-$service-created" ]; then
         # deploy.sh created this override from the vendor default; removing
-        # it restores exactly what polkit used before.
-        rm -f "$conf" "$conf.face-auth.bak" "$PAM_DIR/.face-auth-polkit-1-created"
+        # it restores exactly what the service used before.
+        rm -f "$conf" "$conf.face-auth.bak" "$PAM_DIR/.face-auth-$service-created"
         echo "Removed $conf (created by face-auth)"
         continue
     fi
