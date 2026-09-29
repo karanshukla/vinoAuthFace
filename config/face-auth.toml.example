@@ -13,8 +13,8 @@
 #   min_face_size_ratio             honoured only if >= the value set here
 #   device                          honoured only if it is a real IR capture
 #                                   device present on this machine
-#   scan_duration_ms, scan_interval_ms, capture_timeout_ms
-#                                   honoured within built-in bounds
+#   scan_duration_ms, scan_interval_ms, capture_timeout_ms,
+#   liveness_grace_ms               honoured within built-in bounds
 #   model_path, detector_model_path, embeddings_dir,
 #   pinned_camera_*, lockout_*, backend, npu_device,
 #   seat_check, abort_if_*, start_delay_*,
@@ -61,6 +61,13 @@ detector_threshold = 0.5
 # The scanner keeps capturing and checking frames until this elapses or a match
 # is found, like Windows Hello.
 scan_duration_ms = 5000
+
+# Extra scan time, in milliseconds (0 - 10000, default 4000), used once and only
+# when a face has already matched but hasn't moved enough for motion liveness
+# yet. A face held still can take longer than the scan to blink or shift; this
+# waits for it instead of failing. A scan that never matched (nobody there, or
+# someone else) still ends after scan_duration_ms. 0 disables it.
+# liveness_grace_ms = 4000
 
 # Extra delay between capture attempts within a scan window, in milliseconds
 # (0 - 5000, default 0).

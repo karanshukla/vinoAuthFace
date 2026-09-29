@@ -78,7 +78,9 @@ of systemd, and the blobs live in `/var/lib/face-auth`, which survives image upd
 - **Motion liveness** requires motion of the face between consecutive frames. Only the face
   region counts, after removing brightness and contrast changes, so a hand moving beside a still
   photo or an auto-exposure step doesn't pass it. This defeats a rigidly held image, but not a
-  photo moved by hand.
+  photo moved by hand. Once a face has matched and only liveness is missing, the scan runs up to
+  `liveness_grace_ms` (default 4 s) longer so a still face isn't failed; that also gives a
+  matching photo the same extra time to produce motion.
 - **Moved photos: opt-in.** `liveness_residual_motion_threshold` additionally requires motion a
   single rigid shift (found to a quarter pixel) can't explain, in the most-changed eye-sized block
   of the face: a blink, the mouth, parallax as the head turns. In software tests, synthetic clips

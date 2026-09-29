@@ -159,7 +159,7 @@ impl FaceAuth {
         let mut cam = Camera::open(&self.config.device())?;
         tracing::debug!(elapsed = ?t0.elapsed(), "camera open");
 
-        let deadline = Instant::now() + Duration::from_millis(duration_ms);
+        let mut deadline = Instant::now() + Duration::from_millis(duration_ms);
         let mut frame_num: usize = 0;
         let mut consecutive_errors = 0u32;
         let mut last_reject: Option<FrameQuality> = None;
@@ -174,6 +174,13 @@ impl FaceAuth {
         let residual_threshold = self.config.liveness_residual_motion_threshold();
         let mut prev_face: Option<(crate::capture::IrFrame, FaceBox)> = None;
         let mut motion_seen = motion_threshold <= 0.0 && residual_threshold <= 0.0;
+        // A face held still can match well before it moves enough to pass.
+        // Once that has happened, the window is extended once rather than
+        // failing someone who is plainly there; a scan that never matched
+        // still ends on time.
+        let grace = Duration::from_millis(self.config.liveness_grace_ms());
+        let mut liveness_pending = false;
+        let mut extended = false;
 
         // Wait out the remainder of the interval without overrunning the window.
         let nap = |deadline: Instant| {
@@ -185,6 +192,11 @@ impl FaceAuth {
         };
 
         loop {
+            if Instant::now() >= deadline && liveness_pending && !extended && !grace.is_zero() {
+                extended = true;
+                deadline += grace;
+                tracing::debug!(frames = frame_num, grace_ms = grace.as_millis() as u64, "matched, liveness pending; extending scan");
+            }
             if Instant::now() >= deadline {
                 // If nothing ever reached the detector, say why: "no match" and
                 // "the illuminator never fired" need very different fixes.
@@ -281,6 +293,7 @@ impl FaceAuth {
             if verify_embedding(&embedding, &store, self.config.threshold())? {
                 if !motion_seen {
                     tracing::debug!(frame = frame_num, "match without liveness motion yet; continuing");
+                    liveness_pending = true;
                     nap(deadline);
                     continue;
                 }

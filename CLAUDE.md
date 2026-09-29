@@ -128,7 +128,8 @@ capture (V4L2, GREY/YUYV/Y16, brighter of a frame pair) → assess_frame (mean +
   → cosine similarity vs stored embeddings
 ```
 
-`authenticate_scan` polls this in a loop until `scan_duration_ms` elapses. The loop is paced by
+`authenticate_scan` polls this in a loop until `scan_duration_ms` elapses (plus, once,
+`liveness_grace_ms` if a frame matched but was held back for liveness). The loop is paced by
 the camera itself; `scan_interval_ms` is an extra delay that defaults to 0. It additionally
 requires **motion-based liveness**: the first face-bearing frame only seeds a baseline (never
 encoded/matched), and a match is only accepted once one pair of consecutive face frames shows

@@ -24,6 +24,9 @@ replayed on top:
   moved by hand. It measures the most-changed eye-sized block after a
   quarter-pixel alignment, so a blink counts; 0.3 is the value to try. Off by
   default because a still face may not blink within one scan.
+- A scan whose face matched but hasn't passed motion liveness yet runs up to
+  `liveness_grace_ms` (default 4000) longer, once, instead of failing someone
+  holding still. A scan that never matched still ends on time.
 - Motion liveness gate, failed-match lockout (`lockout.bin` in the root-owned
   store), camera pinning (`pin-camera.sh`).
 - Detector box decode with face crop before encoding, and the detector's
