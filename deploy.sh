@@ -506,9 +506,6 @@ if findmnt -no OPTIONS --target "$BIN_DIR" 2>/dev/null | tr ',' '\n' | grep -qx 
         "sudo, polkit and GDM still work; KDE's lock screen and swaylock fall back to the password."
 fi
 install -Dm755 "$BIN_SRC/face-enroll" "$BIN_DIR/face-enroll"
-install -dm755 "$COMPLETION_DIR"
-"$BIN_DIR/face-enroll" --completions bash > "$COMPLETION_DIR/face-enroll"
-chmod 644 "$COMPLETION_DIR/face-enroll"
 ok Binaries "face-auth, face-enroll in $BIN_DIR"
 # The tray's uninstall entry runs this copy; the repo may be long gone.
 install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"
@@ -584,6 +581,11 @@ if [ "$NPU_ACTIVE" = 1 ] && [ "$OPENVINO_MODE" = "archive" ]; then
     ldconfig
     ok OpenVINO "runtime in $OPENVINO_INSTALL_DIR"
 fi
+
+# Run after the OpenVINO runtime is in place: an NPU build cannot start without it.
+install -dm755 "$COMPLETION_DIR"
+"$BIN_DIR/face-enroll" --completions bash > "$COMPLETION_DIR/face-enroll"
+chmod 644 "$COMPLETION_DIR/face-enroll"
 
 # ---- Install models ----
 # Staged in a private mktemp directory. A fixed /tmp path can be pre-created by
