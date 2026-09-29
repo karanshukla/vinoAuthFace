@@ -1,4 +1,4 @@
-# authFace: IR Camera Face Unlock for Linux
+# vinoAuthFace: IR Camera Face Unlock for Linux
 
 **Windows Hello-style face unlock for Linux, through PAM and an IR camera.** Works on immutable
 distros (Bazzite, Bluefin, Fedora Silverblue, Fedora Kinoite) with no system packages, daemons or
