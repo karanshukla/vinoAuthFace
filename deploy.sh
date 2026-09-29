@@ -866,7 +866,19 @@ EOF
 fi
 
 # ---- SELinux policy (for lock screen) ----
-if command -v checkmodule &>/dev/null && command -v semodule_package &>/dev/null; then
+# Decide on whether SELinux is enabled, not on whether the tools are installed:
+# Ubuntu/Debian use AppArmor and need no policy, and loading a module into a
+# kernel with SELinux off is pointless.
+selinux_enabled=0
+if command -v selinuxenabled &>/dev/null; then
+    selinuxenabled && selinux_enabled=1
+elif [[ -e /sys/fs/selinux/enforce ]]; then
+    selinux_enabled=1
+fi
+
+if [[ $selinux_enabled -eq 0 ]]; then
+    step "SELinux not enabled; lock-screen policy not needed"
+elif command -v checkmodule &>/dev/null && command -v semodule_package &>/dev/null; then
     step "loading the SELinux policy (semodule can take 10-30 seconds)"
     mkdir -p "$SELINUX_DIR"
     cp selinux/face-auth.te "$SELINUX_DIR/face_auth.te"
@@ -876,7 +888,7 @@ if command -v checkmodule &>/dev/null && command -v semodule_package &>/dev/null
     ok SELinux "lock-screen camera policy loaded"
 else
     warn SELinux "Tools not found, so the lock screen can't reach the camera." \
-        "Install policycoreutils (sudo dnf install policycoreutils), then re-run this script."
+        "Install policycoreutils and checkpolicy (dnf install, or rpm-ostree install on Silverblue/Bazzite), then re-run this script."
 fi
 
 # ---- Embeddings directory ----

@@ -108,7 +108,10 @@ jobs:
 
       - name: "Branch 1: cargo present -> build from source"
         run: |
-          sudo ./deploy.sh --with-tray
+          sudo ./deploy.sh --with-tray 2>&1 | tee /tmp/deploy.log
+          # ubuntu-latest has no SELinux: deploy.sh must skip the policy quietly.
+          grep -q 'SELinux not enabled' /tmp/deploy.log
+          ! grep -q "Tools not found" /tmp/deploy.log
           test "$(grep -nE 'pam_faillock|face-auth|include' /etc/pam.d/swaylock | cut -d: -f1 | tr '\n' ' ')" = "3 4 5 "
           grep -A1 'pam_exec\.so.*face-auth' /etc/pam.d/sudo | grep -q '@include common-auth'
           cmp /etc/pam.d/gdm-password /tmp/gdm-password.orig
