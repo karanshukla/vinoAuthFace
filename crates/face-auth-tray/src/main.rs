@@ -478,7 +478,35 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
     }
 }
 
+/// Leaves the launching terminal: a tray started from a shell would otherwise
+/// die with it (SIGHUP on close). Autostart and launchers have no tty and skip
+/// this. Must run before any thread exists, since it forks.
+fn detach_from_terminal() {
+    // SAFETY: single-threaded here; the child only calls async-signal-safe libc.
+    unsafe {
+        if libc::isatty(libc::STDIN_FILENO) != 1 && libc::isatty(libc::STDERR_FILENO) != 1 {
+            return;
+        }
+        match libc::fork() {
+            -1 => return,
+            0 => {}
+            _ => libc::_exit(0),
+        }
+        libc::setsid();
+        let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
+        if null >= 0 {
+            for fd in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+                libc::dup2(null, fd);
+            }
+            if null > libc::STDERR_FILENO {
+                libc::close(null);
+            }
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
+    detach_from_terminal();
     let me = user::current()?;
     let (tx, rx) = mpsc::channel();
     let tray = Tray {
