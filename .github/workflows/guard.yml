@@ -44,7 +44,7 @@ jobs:
           sensitive() {
             case "$1" in
               crates/* | pam/* | selinux/* | config/* | .github/* \
-              | deploy.sh | uninstall.sh | pin-camera.sh \
+              | deploy.sh | update.sh | uninstall.sh | pin-camera.sh \
               | Cargo.toml | Cargo.lock | deny.toml | SECURITY.md) return 0 ;;
               *) return 1 ;;
             esac
