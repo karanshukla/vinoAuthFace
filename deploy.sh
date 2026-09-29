@@ -144,7 +144,7 @@ fi
 
 ACTUAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 
-printf '%sface-auth installer%s\n' "$BOLD" "$RESET"
+printf '%svinoAuthFace installer%s\n' "$BOLD" "$RESET"
 
 # ---- Undo any previous partial setup ----
 

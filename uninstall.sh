@@ -63,7 +63,7 @@ rm -rf "$NPU_CACHE_DIR"
 # Only remove the Bitwarden action if deploy.sh wrote it, not one Bitwarden
 # or the admin installed. The marker lives in $SHARE_DIR, so check first.
 if [ -f "$SHARE_DIR/.bitwarden-policy-installed" ]; then
-    echo "Removing Bitwarden polkit action installed by face-auth..."
+    echo "Removing Bitwarden polkit action installed by vinoAuthFace..."
     rm -f /usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy
 fi
 
@@ -110,7 +110,7 @@ for service in $PAM_SERVICES; do
         # deploy.sh created this override from the vendor default; removing
         # it restores exactly what the service used before.
         rm -f "$conf" "$conf.face-auth.bak" "$PAM_DIR/.face-auth-$service-created"
-        echo "Removed $conf (created by face-auth)"
+        echo "Removed $conf (created by vinoAuthFace)"
         continue
     fi
     [ -f "$conf" ] || continue
