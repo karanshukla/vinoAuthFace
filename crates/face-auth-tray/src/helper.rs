@@ -1,14 +1,14 @@
-//! What `face-auth-helper` may be asked to do, and for whom.
+//! What `vinoauthface-helper` may be asked to do, and for whom.
 //!
 //! polkit's `exec.path` pins the binary pkexec runs, not its arguments, so
-//! `pkexec face-enroll --embeddings-dir …` would be root writing wherever the
+//! `pkexec vinoauthface enroll --embeddings-dir …` would be root writing wherever the
 //! caller says. The helper is what polkit authorises instead: it takes one
 //! fixed verb and no flags, and acts only for the user pkexec says invoked it
 //! (`PKEXEC_UID`, which pkexec sets and a caller cannot).
 
-pub const HELPER: &str = "/usr/local/libexec/face-auth-helper";
-pub const FACE_ENROLL: &str = "/usr/local/bin/face-enroll";
-pub const FACE_AUTH: &str = "/usr/local/bin/face-auth";
+pub const HELPER: &str = "/usr/local/libexec/vinoauthface-helper";
+pub const FACE_ENROLL: &str = "/usr/local/bin/vinoauthface";
+pub const FACE_AUTH: &str = "/usr/local/bin/vinoauthface-auth";
 pub const UNINSTALLER: &str = "/usr/local/share/face-auth/uninstall.sh";
 pub const SAFE_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 
@@ -18,7 +18,7 @@ pub const SAFE_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 pub enum Verb {
     /// First-time enrolment. Replaces any existing templates.
     Enrol,
-    /// `face-enroll --improve`: append frames, keep what is there.
+    /// `vinoauthface improve`: append frames, keep what is there.
     Retrain,
     Uninstall,
 }
@@ -56,8 +56,8 @@ pub fn parse_request(args: &[String], pkexec_uid: Option<&str>) -> Result<(Verb,
 /// from the pkexec caller's user ID.
 pub fn command(verb: Verb, user: &str) -> (&'static str, Vec<String>) {
     match verb {
-        Verb::Enrol => (FACE_ENROLL, vec!["--user".into(), user.into()]),
-        Verb::Retrain => (FACE_ENROLL, vec!["--user".into(), user.into(), "--improve".into()]),
+        Verb::Enrol => (FACE_ENROLL, vec!["enroll".into(), "--user".into(), user.into()]),
+        Verb::Retrain => (FACE_ENROLL, vec!["improve".into(), "--user".into(), user.into()]),
         // Run as root with no SUDO_USER, so its per-user cleanup looks in
         // root's home, not in one the caller controls.
         Verb::Uninstall => ("/bin/bash", vec![UNINSTALLER.into()]),
@@ -109,10 +109,11 @@ mod tests {
         for verb in [Verb::Enrol, Verb::Retrain] {
             let (program, argv) = command(verb, "alice");
             assert_eq!(program, FACE_ENROLL);
-            assert_eq!(&argv[..2], ["--user", "alice"]);
+            assert_eq!(&argv[1..3], ["--user", "alice"]);
             assert!(argv.iter().all(|a| !a.contains("dir") && !a.contains("model") && !a.contains("device")));
         }
-        assert_eq!(command(Verb::Retrain, "alice").1.last().unwrap(), "--improve");
+        assert_eq!(command(Verb::Enrol, "alice").1[0], "enroll");
+        assert_eq!(command(Verb::Retrain, "alice").1[0], "improve");
         assert_eq!(command(Verb::Uninstall, "alice").1, [UNINSTALLER]);
     }
 }

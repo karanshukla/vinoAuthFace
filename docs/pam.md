@@ -1,6 +1,6 @@
 # PAM integration
 
-`deploy.sh` adds `auth sufficient pam_exec.so quiet /usr/local/bin/face-auth` to:
+`deploy.sh` adds `auth sufficient pam_exec.so quiet /usr/local/bin/vinoauthface-auth` to:
 
 | Service | File | Covers |
 |---------|------|--------|
@@ -18,14 +18,14 @@ Gates above that point, like `pam_nologin`, `pam_faillock preauth` and Fedora's
 `pam_selinux_permit`, still run before a face match can end the stack. Gates inside an included
 stack (Fedora's `system-auth`, say) don't.
 
-If a stack the service includes already runs face-auth (added by hand, an authselect profile,
+If a stack the service includes already runs vinoAuthFace (added by hand, an authselect profile,
 an older install), `deploy.sh` skips the service rather than scan the camera twice per attempt.
 
 `sufficient` means a face match (exit 0) authenticates immediately. Anything else (no match, no
 camera, timeout, lockout) falls through to the password prompt. `quiet` keeps `pam_exec` chatter
 out of the unlock UI.
 
-While scanning, `face-auth` writes `Looking for your face...` to the caller's controlling
+While scanning, `vinoauthface-auth` writes `Looking for your face...` to the caller's controlling
 terminal (`/dev/tty`) and erases it when the scan ends, so `sudo` in a terminal or on a VT isn't
 silent. Lock screens and polkit agents have no terminal, so they show nothing. Auth either
 succeeds within the scan window or falls through to the password prompt.
@@ -43,7 +43,7 @@ Update Plasma or drop `pam_faillock` from the stack if you hit it.
 ## COSMIC
 
 `cosmic-greeter` is one service for both the lock screen and the greeter. It shows a single PAM
-message at a time, so the password field is hidden while face-auth scans, and there is no text
+message at a time, so the password field is hidden while vinoAuthFace scans, and there is no text
 to say so. At login it runs as the `greeter` user rather than the person unlocking.
 
 ## Vendor-only services
@@ -61,7 +61,7 @@ the vendor default in `/usr/lib/pam.d/polkit-1`, so `deploy.sh` copies it to `/e
 first to have something to patch. `uninstall.sh` deletes that copy rather than "restoring" a file
 that never existed.
 
-face-auth only authenticates the account running the prompt. When an admin authenticates *on
+vinoAuthFace only authenticates the account running the prompt. When an admin authenticates *on
 behalf of* another logged-in user, it falls through to the password.
 
 ## Bitwarden biometric unlock
@@ -88,7 +88,7 @@ The first app that needs a secret asks for the password once, then the store sta
 session.
 
 - **Lock screen unlock is fine.** The store was opened at login and stays open across screen
-  locks, so there's nothing for face-auth to gate there.
+  locks, so there's nothing for vinoAuthFace to gate there.
 - **Plasma Login Manager quirk.** If you typed a password and your face matched first, PLM still
   hands the typed text to `pam_kwallet5`, so the wallet unlocks. A mistyped password gives a face
   login with a locked wallet.

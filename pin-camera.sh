@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Pins face-auth to one specific physical camera, closing the "plug in a USB device that
+# Pins vinoAuthFace to one specific physical camera, closing the "plug in a USB device that
 # claims the real camera's VID/PID and feeds it replayed/synthetic frames" injection vector.
 #
 # VID/PID alone doesn't identify hardware — it's just a string the device reports, and any USB
@@ -10,9 +10,9 @@ set -euo pipefail
 # sysfs, writes a udev rule that only creates /dev/face-auth-ir for a device at that exact port
 # (down to the specific V4L2 function index, since some cameras expose more than one node —
 # capture and metadata — at the same port), and records the same identity in face-auth.toml so
-# face-auth itself re-checks it on every authenticate/enroll call, independent of the udev rule.
+# vinoauthface-auth itself re-checks it on every authenticate/enroll call, independent of the udev rule.
 #
-# Run this once, after confirming (e.g. via a successful face-enroll) which device is actually
+# Run this once, after confirming (e.g. via a successful vinoauthface enroll) which device is actually
 # the right camera. Re-run it if you intentionally replace the hardware.
 
 CONFIG_FILE="/etc/face-auth.toml"
@@ -30,7 +30,7 @@ if [ -z "$DEVICE" ] && [ -f "$CONFIG_FILE" ]; then
 fi
 if [ -z "$DEVICE" ]; then
     echo "Usage: sudo ./pin-camera.sh /dev/videoN"
-    echo "(no device given and none set in $CONFIG_FILE. face-enroll prints the"
+    echo "(no device given and none set in $CONFIG_FILE. vinoauthface enroll prints the"
     echo " exact command with the camera it used; face-camera-diag list shows them all.)"
     exit 1
 fi
@@ -121,7 +121,7 @@ set_config_number "pinned_camera_index" "$INDEX"
 
 echo ""
 echo "=== Camera pinned ==="
-echo "face-auth will now refuse to authenticate or enroll if the device at /dev/$SYMLINK_NAME"
+echo "vinoAuthFace will now refuse to authenticate or enroll if the device at /dev/$SYMLINK_NAME"
 echo "doesn't match this exact physical port and function index."
 echo ""
 echo "This closes the frame-injection vector (a spoofed USB device impersonating the real"

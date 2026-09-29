@@ -1,4 +1,4 @@
-//! `face-enroll`'s stdout, read back into progress. Its human-readable lines
+//! `vinoauthface enroll`'s stdout, read back into progress. Its human-readable lines
 //! are the only channel from the root process to the tray: no new IPC, and
 //! nothing root writes anywhere the user controls.
 
@@ -13,7 +13,7 @@ pub enum Event {
     Finished(String),
 }
 
-/// One line of `face-enroll` output, or `None` for the banner and anything
+/// One line of `vinoauthface enroll` output, or `None` for the banner and anything
 /// else not worth showing.
 pub fn parse(line: &str) -> Option<Event> {
     let line = line.trim();
@@ -58,7 +58,7 @@ mod tests {
 
     // The exact lines crates/face-enroll/src/main.rs prints.
     #[test]
-    fn reads_every_progress_line_face_enroll_prints() {
+    fn reads_every_progress_line_enroll_prints() {
         assert_eq!(
             parse("Capturing frame 3/30 (attempt 4)..."),
             Some(Event::Capturing { frame: 3, wanted: 30 })

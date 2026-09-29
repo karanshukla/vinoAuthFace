@@ -2,12 +2,12 @@
 
 ## Compatibility
 
-face-auth only speaks V4L2 via `uvcvideo`. There's no libcamera integration, so a camera behind a
+vinoAuthFace only speaks V4L2 via `uvcvideo`. There's no libcamera integration, so a camera behind a
 different kernel stack (Intel IPU6, MIPI CSI) is unreachable whatever format it reports. Within
 `uvcvideo` it needs an IR capture node (`GREY`, `YUYV` or `Y16`) for the spoof resistance in
 [security.md](security.md) to hold. The pixel format is read from the driver, not assumed.
 
-| Camera stack | `face-camera-diag list` output | Support |
+| Camera stack | `vinoauthface-camera-diag list` output | Support |
 |---|---|---|
 | UVC IR (`uvcvideo` + GREY/YUYV/Y16 IR node) | `DRIVER=uvcvideo`, a node reports `GREY`/`YUYV`/`Y16` | ✅ Supported |
 | UVC RGB-only (`uvcvideo`, no IR node) | `DRIVER=uvcvideo`, only a colour-format node exists | ⚠️ Never auto-detected, and MJPEG is refused. A YUYV node set explicitly as `device` will capture, but with no IR there's no spoof resistance |
@@ -21,19 +21,19 @@ x86_64 only: V4L2 ioctl numbers and struct layouts are hardcoded.
 |---|---|---|---|---|
 | Unconfirmed model, FHD webcam with IR | `2b7e:55c0`, IR on `/dev/video2`, 360x360 GREY | `uvcvideo` | ✅ Supported | Reference hardware for this fork |
 
-If face-auth works (or doesn't) on yours, please
+If vinoAuthFace works (or doesn't) on yours, please
 [open an issue](https://github.com/karanshukla/vinoAuthFace/issues/new) with your
-`face-camera-diag list` output. Table format borrowed from
+`vinoauthface-camera-diag list` output. Table format borrowed from
 [Visage](https://github.com/sovren-software/visage)'s hardware docs.
 
-## face-camera-diag
+## vinoauthface-camera-diag
 
 A small offline tool, not installed by `deploy.sh`. Grab it from
 [Releases](https://github.com/karanshukla/vinoAuthFace/releases):
 
 ```bash
-curl -fLO https://github.com/karanshukla/vinoAuthFace/releases/latest/download/face-camera-diag-x86_64-unknown-linux-musl
-chmod +x face-camera-diag-x86_64-unknown-linux-musl
+curl -fLO https://github.com/karanshukla/vinoAuthFace/releases/latest/download/vinoauthface-camera-diag-x86_64-unknown-linux-musl
+chmod +x vinoauthface-camera-diag-x86_64-unknown-linux-musl
 ```
 
 or build it with `cargo build --release -p face-camera-diag`.
@@ -42,7 +42,7 @@ or build it with `cargo build --release -p face-camera-diag`.
 auto-detect would pick:
 
 ```
-$ face-camera-diag list
+$ vinoauthface-camera-diag list
 DEVICE         DRIVER     CARD                         VID:PID    FORMAT         NOTES
 /dev/video0    uvcvideo   Integrated_Webcam_FHD: Integrat 2b7e:55c0  1920x1080 MJPG
 /dev/video1    uvcvideo   Integrated_Webcam_FHD: Integrat 2b7e:55c0  -
@@ -50,7 +50,7 @@ DEVICE         DRIVER     CARD                         VID:PID    FORMAT        
 /dev/video3    uvcvideo   Integrated_Webcam_FHD: Integrat 2b7e:55c0  -
 ```
 
-`GREY`, `YUYV` or `Y16` is a format face-auth can capture. `-` usually means a paired metadata
+`GREY`, `YUYV` or `Y16` is a format vinoAuthFace can capture. `-` usually means a paired metadata
 node. The card name here says nothing about IR (sysfs truncates it at 32 bytes); auto-detect
 still finds the sensor because it's a physical node streaming native greyscale, which RGB webcams
 never do.
@@ -59,7 +59,7 @@ never do.
 or a black frame:
 
 ```bash
-face-camera-diag dump --device /dev/video2 --out frame.pgm
+vinoauthface-camera-diag dump --device /dev/video2 --out frame.pgm
 ```
 
 ## Other tools
@@ -72,12 +72,12 @@ From a source checkout:
 | `cargo run --example frame-stats` | Per-frame brightness, for spotting a strobing illuminator |
 | `cargo run --release --example bench` | Per-stage timings |
 
-`face-similarity-check` scores photos against your enrolled templates through the same pipeline,
+`vinoauthface-similarity-check` scores photos against your enrolled templates through the same pipeline,
 for gauging false-accept risk without a second person at the camera. Templates are root-owned, so
 it needs sudo:
 
 ```bash
-sudo face-similarity-check --user $USER photo1.jpg photo2.png
+sudo vinoauthface-similarity-check --user $USER photo1.jpg photo2.png
 ```
 
 Batch mode measures the pipeline instead of eyeballing single scores. Point it at a directory of
@@ -85,7 +85,7 @@ photos of you and a directory of other people; it reports TAR, FAR and the equal
 configured threshold. Photos with no detectable face are skipped and counted on stderr.
 
 ```bash
-sudo face-similarity-check --user $USER --genuine-dir me/ --impostor-dir others/ \
+sudo vinoauthface-similarity-check --user $USER --genuine-dir me/ --impostor-dir others/ \
   --sweep 0.30:0.70:0.02 --csv scores.csv
 ```
 

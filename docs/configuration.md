@@ -8,7 +8,7 @@ model.
 
 The authentication path and the unprivileged tools trust different things.
 
-**During PAM authentication** (`face-auth`: sudo, lock screen, login, polkit):
+**During PAM authentication** (`vinoauthface-auth`: sudo, lock screen, login, polkit):
 
 | Source | Effect |
 |--------|--------|
@@ -16,7 +16,7 @@ The authentication path and the unprivileged tools trust different things.
 | `~/.config/face-auth.toml` | May only make authentication **stricter**, see below |
 | `FACE_AUTH_*` environment | **Ignored entirely** |
 
-**For `face-enroll` and the offline tools**, the usual layering applies: environment variables,
+**For `vinoauthface enroll` and the offline tools**, the usual layering applies: environment variables,
 then `~/.config/face-auth.toml`, then `/etc/face-auth.toml`. Environment variable names follow the
 field names, so the capture timeout is `FACE_AUTH_CAPTURE_TIMEOUT_MS`.
 
@@ -57,17 +57,20 @@ wrong. `pin-camera.sh` sets `device` for you.
 Face templates are root-owned, so enrolment needs root:
 
 ```bash
-sudo face-enroll --user $USER            # replace templates with a new capture (30 frames)
-sudo face-enroll --improve --user $USER  # append, for other lighting or angles
+sudo vinoauthface enroll --user $USER    # replace templates with a new capture (30 frames)
+sudo vinoauthface improve --user $USER   # append, for other lighting or angles
 ```
 
-30 frames gives enough pose and expression variation from one sitting. Running `--improve` in
+30 frames gives enough pose and expression variation from one sitting. Running `improve` in
 different lighting is the biggest gain beyond that.
 
-Options: `--frames`, `--interval`, `--device`, `--threshold`, `--model`, `--embeddings-dir`,
-`--improve`, `-v`.
+Both take `--user`, `--frames`, `--interval`, `--device`, `--threshold`, `--model` and
+`--embeddings-dir`; `-v` works on either.
 
-**Re-enrol** after switching recognition model (face-auth refuses the old templates and says so)
+The command is `vinoauthface`, but the config files (`face-auth.toml`), `FACE_AUTH_*` variables,
+`/var/lib/face-auth` and the `face-auth` group keep their names.
+
+**Re-enrol** after switching recognition model (vinoAuthFace refuses the old templates and says so)
 and after any change to the preprocessing pipeline. Templates from older versions of this fork or
 upstream may still match, but re-enrolling is the safer bet.
 
@@ -93,8 +96,8 @@ sudo FACE_AUTH_RECOGNITION_MODEL=r50 ./deploy.sh
 
 **Switching models requires re-enrolling.** The two produce incompatible embedding spaces with the
 same 512-d shape, so comparing across them is meaningless rather than just less accurate. Every
-template file records the model that produced it, and face-auth refuses to authenticate or
-`--improve` against a mismatch. Files from before this existed carry no tag and are treated as
+template file records the model that produced it, and vinoAuthFace refuses to authenticate or
+`improve` against a mismatch. Files from before this existed carry no tag and are treated as
 compatible.
 
 Model sources and licensing: [architecture.md](architecture.md#models).

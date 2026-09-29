@@ -135,7 +135,7 @@ const NPU_CACHE_HOME: &str = "/var/cache/face-auth";
 ///
 /// The NPU driver caches compiled model blobs under `$HOME/.cache`, falling
 /// back to a *relative* `.cache` when `HOME` is unset, so it used whatever
-/// directory face-auth was started from. Under sudo that meant root reading
+/// directory vinoauthface-auth was started from. Under sudo that meant root reading
 /// and writing a model cache in a directory the user controls, and the blobs
 /// are only checksummed, not authenticated: a planted one is a model the NPU
 /// runs. Pointing `HOME` at a root-owned directory means only root paths
@@ -276,7 +276,7 @@ fn main() {
     pin_process_context();
 
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("face_auth_core=error,face_auth=error"));
+        .unwrap_or_else(|_| EnvFilter::new("face_auth_core=error,vinoauthface_auth=error"));
     fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
@@ -294,10 +294,10 @@ fn main() {
             [flag] if flag == "--warm-cache" => run_warm_cache(),
             [flag] if flag == "--enrolled" => run_enrolled(),
             _ => {
-                eprintln!("usage: face-auth            (PAM mode, reads PAM_USER)");
-                eprintln!("       face-auth --verify USER  (test a stored face, requires root)");
-                eprintln!("       face-auth --warm-cache   (compile the models into the NPU cache, requires root)");
-                eprintln!("       face-auth --enrolled     (exit 0 if you have enrolled a face)");
+                eprintln!("usage: vinoauthface-auth            (PAM mode, reads PAM_USER)");
+                eprintln!("       vinoauthface-auth --verify USER  (test a stored face, requires root)");
+                eprintln!("       vinoauthface-auth --warm-cache   (compile the models into the NPU cache, requires root)");
+                eprintln!("       vinoauthface-auth --enrolled     (exit 0 if you have enrolled a face)");
                 std::process::exit(2);
             }
         }

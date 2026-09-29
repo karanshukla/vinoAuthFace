@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "face-similarity-check",
+    name = "vinoauthface-similarity-check",
     about = "Score photos against an enrolled user's templates, without a live camera"
 )]
 struct Args {

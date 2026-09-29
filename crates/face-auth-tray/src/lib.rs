@@ -1,5 +1,5 @@
 //! Pieces of the tray that are pure enough to test, and the root helper's
-//! argument checks, shared by the `face-auth-tray` and `face-auth-helper`
+//! argument checks, shared by the `vinoauthface-tray` and `vinoauthface-helper`
 //! binaries.
 
 pub mod helper;

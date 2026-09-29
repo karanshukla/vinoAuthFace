@@ -1,13 +1,17 @@
 //! Whether a face scan is running, seen passively in `/proc`.
 //!
-//! `face-auth` never reports to the tray. The old GNOME indicator had root
+//! `vinoauthface-auth` never reports to the tray. The old GNOME indicator had root
 //! write a status file into `/run/user/<uid>` and follow a planted symlink;
 //! looking for the process instead means nothing root-owned writes anywhere
 //! the user controls.
 
 use std::path::Path;
 
-/// Is any process under `proc_root` named `face-auth`?
+/// The kernel truncates `comm` to 15 bytes, so `vinoauthface-auth` reads back
+/// as this.
+const COMM: &str = "vinoauthface-au";
+
+/// Is any process under `proc_root` named `vinoauthface-auth`?
 ///
 /// `comm` is world-readable, so this sees the root scan behind `sudo` or a
 /// polkit prompt. With `/proc` mounted `hidepid=1|2` other users' processes
@@ -20,7 +24,7 @@ pub fn face_auth_running(proc_root: &Path) -> bool {
         let is_pid = entry.file_name().to_str().is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()));
         is_pid
             && std::fs::read_to_string(entry.path().join("comm"))
-                .is_ok_and(|comm| comm.trim_end_matches('\n') == "face-auth")
+                .is_ok_and(|comm| comm.trim_end_matches('\n') == COMM)
     })
 }
 
@@ -44,7 +48,7 @@ mod tests {
 
     #[test]
     fn finds_a_running_scan() {
-        let root = fake_proc("present", &[("1", Some("systemd\n")), ("4242", Some("face-auth\n"))]);
+        let root = fake_proc("present", &[("1", Some("systemd\n")), ("4242", Some("vinoauthface-au\n"))]);
         assert!(face_auth_running(&root));
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -65,11 +69,11 @@ mod tests {
                 // Exited between readdir and read.
                 ("10", None),
                 // comm is truncated to 15 bytes.
-                ("11", Some("face-auth-tray\n")),
-                ("12", Some("face-auth-helpe\n")),
-                ("13", Some("face-enroll\n")),
+                ("11", Some("vinoauthface-tr\n")),
+                ("12", Some("vinoauthface-he\n")),
+                ("13", Some("vinoauthface\n")),
                 // Not a process directory.
-                ("self", Some("face-auth\n")),
+                ("self", Some("vinoauthface-au\n")),
             ],
         );
         assert!(!face_auth_running(&root));
@@ -78,7 +82,7 @@ mod tests {
 
     #[test]
     fn a_comm_without_its_trailing_newline_still_matches() {
-        let root = fake_proc("bare", &[("9", Some("face-auth"))]);
+        let root = fake_proc("bare", &[("9", Some("vinoauthface-au"))]);
         assert!(face_auth_running(&root));
         std::fs::remove_dir_all(&root).unwrap();
     }
