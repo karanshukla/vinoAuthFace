@@ -178,14 +178,17 @@ impl EmbeddingStore {
         // entries in the user directory itself.
         ensure_dir(&lockout_dir(&user_dir), LOCKOUT_DIR_MODE)?;
 
-        let tmp_path = user_dir.join("embeddings.bin.tmp");
+        // Unique and created exclusively, never followed: nothing pre-planted
+        // at a fixed name can redirect the write.
+        let tmp_path = user_dir.join(format!("embeddings.bin.{}.tmp", std::process::id()));
+        let _ = fs::remove_file(&tmp_path);
         let path = user_dir.join("embeddings.bin");
 
         {
             let file = OpenOptions::new()
                 .write(true)
-                .create(true)
-                .truncate(true)
+                .create_new(true)
+                .custom_flags(libc::O_NOFOLLOW)
                 .mode(EMBEDDINGS_FILE_MODE)
                 .open(&tmp_path)?;
             file.set_permissions(fs::Permissions::from_mode(EMBEDDINGS_FILE_MODE))?;
