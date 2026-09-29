@@ -379,6 +379,6 @@ fn main() {
         },
         Ok(true) => std::process::exit(0),
         Ok(false) => fail_auth(&format!("face not recognised for '{}'", info.name)),
-        Err(e) => fail_setup(&format!("face authentication error: {e}")),
+        Err(e) => fail_setup(&format!("face authentication error: {e:#}")),
     }
 }
