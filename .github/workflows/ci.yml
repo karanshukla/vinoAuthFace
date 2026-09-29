@@ -130,6 +130,18 @@ jobs:
           test "$(stat -c %U:%a /var/cache/face-auth)" = root:755
           test "$(stat -c %U:%a /usr/local/share/face-auth/uninstall.sh)" = root:755
 
+      # update.sh swaps only the binaries: same modes as deploy.sh, and a
+      # second run with nothing rebuilt changes nothing.
+      - name: update.sh keeps modes and is a no-op when unchanged
+        run: |
+          sudo ./update.sh 2>&1 | tee /tmp/update.log
+          test -g /usr/local/bin/vinoauthface-auth
+          test "$(stat -c %U:%G:%a /usr/local/bin/vinoauthface-auth)" = root:face-auth:2755
+          test "$(stat -c %U:%a /usr/local/bin/vinoauthface)" = root:755
+          test "$(stat -c %U:%a /usr/local/libexec/vinoauthface-helper)" = root:755
+          grep -q 'Nothing changed' /tmp/update.log
+          grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/sudo
+
       # The helper is the tray's only root entry point: it must refuse
       # anything that did not come through pkexec, and any named target.
       - name: Tray files and helper checks
@@ -272,6 +284,13 @@ jobs:
         run: |
           sudo ./deploy.sh | tee "$RUNNER_TEMP/redeploy.log"
           grep -q 'via ovfetch (installed, hashes verified)' "$RUNNER_TEMP/redeploy.log"
+
+      - name: update.sh rebuilds the NPU backend with the same rpath
+        run: |
+          sudo ./update.sh | tee "$RUNNER_TEMP/update.log"
+          grep -q 'NPU backend' "$RUNNER_TEMP/update.log"
+          readelf -d /usr/local/bin/vinoauthface-auth | grep -q 'RPATH.*/usr/local/lib/face-auth/openvino'
+          test "$(stat -c %G:%a /usr/local/bin/vinoauthface-auth)" = face-auth:2755
 
       - name: Compile the models on the CPU plugin
         run: |

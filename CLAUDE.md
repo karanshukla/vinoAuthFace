@@ -60,7 +60,10 @@ cargo deny check
   are built on.
 
 To actually exercise a change end-to-end (not just unit tests), deploy and test on real
-hardware: `sudo ./deploy.sh`, `sudo vinoauthface enroll --user $USER`, `sudo -k && sudo true`. Test a
+hardware: `sudo ./deploy.sh`, `sudo vinoauthface enroll --user $USER`, `sudo -k && sudo true`.
+After that, `sudo ./update.sh` rebuilds and swaps only the binaries (same backend as installed),
+which is the quick loop for code changes; anything touching models, config or PAM needs
+`deploy.sh` again. Keep its install modes and paths in step with `deploy.sh`. Test a
 stored face outside PAM with `sudo vinoauthface-auth --verify $USER` (add
 `RUST_LOG=face_auth_core=debug` for scores). Without enrolling, `vinoauthface-camera-diag list` and
 `cargo run --release --example bench` exercise capture, detection and encoding on the real

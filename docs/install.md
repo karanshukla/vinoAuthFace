@@ -141,6 +141,21 @@ sudo semodule -i face_auth.pp
 
 Remove it with `sudo semodule -r face_auth`.
 
+## Updating after a code change
+
+```bash
+sudo ./update.sh            # rebuild and replace the binaries only
+sudo ./update.sh --no-tray  # leave the tray alone
+```
+
+For iterating on the code. It rebuilds from source with the same backend as the installed
+`vinoauthface-auth` (an NPU build if it links OpenVINO, static musl if not), then replaces
+`vinoauthface-auth` (keeping it set-group-ID `face-auth`), `vinoauthface`, and the tray and its
+helper if they're installed. Unchanged binaries are left alone. Models, config, PAM, SELinux
+policy, the OpenVINO runtime, the NPU cache and the template store aren't touched, and it
+needs a Rust toolchain and an existing `deploy.sh` install. After pulling changes to any of
+those, run `sudo ./deploy.sh` instead.
+
 ## Uninstalling
 
 ```bash
