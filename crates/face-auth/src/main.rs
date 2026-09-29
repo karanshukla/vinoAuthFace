@@ -124,8 +124,16 @@ fn scrub_caller_environment() {
         return;
     }
     const KEEP: [&str; 4] = ["PAM_USER", "PAM_SERVICE", "PAM_RHOST", "PAM_TTY"];
+    // Root running `--verify` by hand (`sudo env RUST_LOG=... vinoauthface-auth
+    // --verify`) still counts as borrowed, since the set-group-ID bit leaves
+    // the real and effective group apart. Its log filter is root's own
+    // choice, so keep it. Under pam_exec the arguments come from the
+    // root-owned PAM line and are never `--verify`, and a lock screen's real
+    // uid isn't root.
+    let root_verify = unsafe { libc::getuid() } == 0 && env::args().nth(1).as_deref() == Some("--verify");
     let kept: Vec<(&str, std::ffi::OsString)> = KEEP
         .iter()
+        .chain(root_verify.then_some(&"RUST_LOG"))
         .filter_map(|k| env::var_os(k).map(|v| (*k, v)))
         .collect();
     let all: Vec<std::ffi::OsString> = env::vars_os().map(|(k, _)| k).collect();
