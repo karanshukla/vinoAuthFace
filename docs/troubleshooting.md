@@ -83,6 +83,14 @@ started, so a retry on the same lock screen doesn't wait again. `sudo`, polkit a
 aren't delayed. Set `start_delay_ms = 0` in `/etc/face-auth.toml` to disable it, or
 `start_delay_scope = "all"` to delay every prompt.
 
+## sudo says the face matched and waits for Enter
+
+After a match for `sudo`, `su` or polkit, face-auth asks for Enter on the terminal, so a process
+that runs `sudo` while you happen to sit at the camera can't get root unnoticed. Any other key, or
+20 seconds of silence, falls through to the password. Lock screens and login are never asked, nor
+is a caller with no terminal (`pkexec` from a GUI). Set `require_confirmation_elevation = false`
+in `/etc/face-auth.toml` to turn it off.
+
 ## Face auth stopped being tried after a few failures
 
 That's the lockout. After 5 failed matches (a face was seen and rejected) face-auth skips the

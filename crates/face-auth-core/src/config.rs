@@ -46,6 +46,7 @@ pub struct FaceAuthConfig {
     pub abort_if_lid_closed: Option<bool>,
     pub start_delay_ms: Option<u64>,
     pub start_delay_scope: Option<String>,
+    pub require_confirmation_elevation: Option<bool>,
 }
 
 impl Default for FaceAuthConfig {
@@ -74,6 +75,7 @@ impl Default for FaceAuthConfig {
             abort_if_lid_closed: None,
             start_delay_ms: None,
             start_delay_scope: None,
+            require_confirmation_elevation: None,
         }
     }
 }
@@ -404,6 +406,13 @@ impl FaceAuthConfig {
         std::time::Duration::from_millis(if applies { self.start_delay_ms() } else { 0 })
     }
 
+    /// Whether a face match for sudo, su or polkit must be confirmed with Enter
+    /// on the terminal before it counts. Default on.
+    pub fn require_confirmation_for(&self, surface: crate::environment::Surface) -> bool {
+        surface == crate::environment::Surface::Elevation
+            && self.require_confirmation_elevation.unwrap_or(true)
+    }
+
     /// If `pin-camera.sh` has pinned a camera, check that `device()` still
     /// resolves to that exact bus path and V4L2 index before trusting a frame.
     ///
@@ -598,6 +607,22 @@ mod tests {
         assert_eq!(off.start_delay_for(Surface::ScreenLock).as_millis(), 0);
         let huge = FaceAuthConfig { start_delay_ms: Some(999_999), ..FaceAuthConfig::default() };
         assert_eq!(huge.start_delay_ms(), 10_000);
+    }
+
+    #[test]
+    fn confirmation_applies_to_elevation_only_and_is_system_policy() {
+        use crate::environment::Surface;
+        let mut cfg = system_baseline();
+        assert!(cfg.require_confirmation_for(Surface::Elevation));
+        assert!(!cfg.require_confirmation_for(Surface::ScreenLock));
+        assert!(!cfg.require_confirmation_for(Surface::Login));
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            require_confirmation_elevation: Some(false),
+            ..FaceAuthConfig::default()
+        });
+        assert!(cfg.require_confirmation_for(Surface::Elevation));
+        let off = FaceAuthConfig { require_confirmation_elevation: Some(false), ..cfg };
+        assert!(!off.require_confirmation_for(Surface::Elevation));
     }
 
     #[test]
