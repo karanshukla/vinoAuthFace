@@ -107,6 +107,9 @@ mod tests {
     fn typeahead_does_not_confirm() {
         let (mut master, slave) = pty();
         master.write_all(b"\r").unwrap();
+        // The pty hands input to the line discipline asynchronously; let it
+        // land so the flush has something to discard.
+        std::thread::sleep(Duration::from_millis(200));
         assert!(!confirm_on(slave, "alice", 1));
     }
 }
