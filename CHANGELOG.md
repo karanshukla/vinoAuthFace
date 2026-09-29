@@ -14,6 +14,9 @@ replayed on top:
   `/var/lib/face-auth` and the `face-auth` group keep their names. `deploy.sh`
   removes the old binaries and rewrites the PAM lines; `uninstall.sh` removes
   both generations.
+- `vinoauthface doctor` (#18) checks the install in one command: PAM hooks and
+  their ordering, config and store ownership, model files, enrolment, camera
+  format, camera pin and TPM sealing. Exits 1 if anything fails.
 - Motion liveness gate, failed-match lockout (`lockout.bin` in the root-owned
   store), camera pinning (`pin-camera.sh`).
 - Detector box decode with face crop before encoding, and the detector's

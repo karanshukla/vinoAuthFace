@@ -3,6 +3,8 @@ use clap_complete::Shell;
 use face_auth_core::{user, EnrollProgress, FaceAuth, FaceAuthConfig};
 use tracing_subscriber::{fmt, EnvFilter};
 
+mod doctor;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "vinoauthface",
@@ -23,6 +25,8 @@ enum Command {
     Enroll(Capture),
     /// Capture more frames and append them to the existing templates
     Improve(Capture),
+    /// Check the whole install: PAM hooks, models, templates, camera, sealing
+    Doctor,
     #[command(hide = true, about = "Print a shell completion script and exit")]
     Completions {
         #[arg(value_name = "SHELL")]
@@ -68,6 +72,10 @@ fn main() -> anyhow::Result<()> {
         Command::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "vinoauthface", &mut std::io::stdout());
             Ok(())
+        }
+        Command::Doctor => {
+            let code = doctor::report(&doctor::run(std::path::Path::new("/etc/pam.d")));
+            std::process::exit(code);
         }
         Command::Enroll(args) => {
             fmt().with_env_filter(filter).with_writer(std::io::stderr).init();
