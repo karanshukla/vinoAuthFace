@@ -80,14 +80,15 @@ cargo_build() {
 }
 
 # ---- Options ----
-# --with-tray (or FACE_AUTH_TRAY=1): also install the tray icon, its root
-# helper and polkit actions (docs/tray.md). Off by default: it adds a
-# user-session app and a pkexec entry point.
-WITH_TRAY="${FACE_AUTH_TRAY:-0}"
+# The tray icon, its root helper and polkit actions (docs/tray.md) install by
+# default. --no-tray (or FACE_AUTH_TRAY=0) skips them; --with-tray is kept as a
+# no-op so existing invocations keep working.
+WITH_TRAY="${FACE_AUTH_TRAY:-1}"
 for arg in "$@"; do
     case "$arg" in
         --with-tray) WITH_TRAY=1 ;;
-        *) fail "Unknown option '$arg'" "Usage: sudo ./deploy.sh [--with-tray]"; exit 1 ;;
+        --no-tray) WITH_TRAY=0 ;;
+        *) fail "Unknown option '$arg'" "Usage: sudo ./deploy.sh [--no-tray]"; exit 1 ;;
     esac
 done
 
@@ -508,7 +509,7 @@ ok Binaries "face-auth, face-enroll in $BIN_DIR"
 # The tray's uninstall entry runs this copy; the repo may be long gone.
 install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"
 
-# ---- Tray (--with-tray) ----
+# ---- Tray (default; skipped by --no-tray) ----
 # The helper is what polkit authorises: root-owned, fixed path, one verb, no
 # flags (crates/face-auth-tray/src/helper.rs). The policy goes in /usr/share
 # where that is writable, since every polkit reads it; image-based distros

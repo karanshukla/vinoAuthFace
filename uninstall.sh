@@ -45,7 +45,7 @@ echo "Removing binaries..."
 rm -f "$BIN_DIR/face-auth"
 rm -f "$BIN_DIR/face-enroll"
 
-# The tray (deploy.sh --with-tray). A running tray exits on its own when its
+# The tray (installed by deploy.sh unless --no-tray). A running tray exits on its own when its
 # uninstall entry finishes; one started some other way keeps running until
 # logout, with nothing left for it to call.
 rm -f "$BIN_DIR/face-auth-tray" /usr/local/libexec/face-auth-helper

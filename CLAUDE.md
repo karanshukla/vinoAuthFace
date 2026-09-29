@@ -96,7 +96,7 @@ Six crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/d
   docs. `dump` captures one frame from a given device and writes it as a 16-bit PGM for visual
   inspection. Purely read-only against devices it's just listing; `dump` takes the target device
   the same way live face-auth would.
-- **`crates/face-auth-tray`**: The optional tray icon (`deploy.sh --with-tray`, see `docs/tray.md`),
+- **`crates/face-auth-tray`**: The tray icon (installed by default, `deploy.sh --no-tray` skips it, see `docs/tray.md`),
   which replaces upstream's GTK GUI. Two binaries: `face-auth-tray` (per-user, `ksni`
   StatusNotifierItem, never in the auth path; spots scans by `face-auth` in `/proc`, reads
   enrolment via `face-auth --enrolled`) and `face-auth-helper`, the only thing its polkit policy
