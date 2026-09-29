@@ -5,6 +5,8 @@
 //! reads from its environment is attacker-influenced except `PAM_USER`, which
 //! `pam_exec` sets from the PAM handle itself.
 
+mod confirm;
+
 use face_auth_core::environment::{self, SkipReason};
 use face_auth_core::error::FaceAuthError;
 use face_auth_core::storage::EmbeddingStore;
@@ -348,6 +350,8 @@ fn main() {
 
     let scan_duration = config.scan_duration_ms();
     let scan_interval = config.scan_interval_ms();
+    let surface = environment::classify_pam_service(env::var("PAM_SERVICE").ok().as_deref());
+    let confirm = config.require_confirmation_for(surface);
 
     let mut auth = match FaceAuth::new(config) {
         Ok(a) => a,
@@ -366,6 +370,10 @@ fn main() {
     tracing::debug!(total = ?t0.elapsed(), "scan finished");
 
     match result {
+        Ok(true) if confirm => match confirm::ask(&info.name) {
+            confirm::Outcome::Confirmed | confirm::Outcome::NoTerminal => std::process::exit(0),
+            confirm::Outcome::Declined => fail_auth("face matched but was not confirmed"),
+        },
         Ok(true) => std::process::exit(0),
         Ok(false) => fail_auth(&format!("face not recognised for '{}'", info.name)),
         Err(e) => fail_setup(&format!("face authentication error: {e}")),
