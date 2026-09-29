@@ -3,7 +3,7 @@ use crate::user::validate_username;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 /// v1: version, count, dim, embeddings. No model identity. Still readable so
@@ -26,6 +26,10 @@ const MAX_MODEL_TAG_LEN: u32 = 255;
 /// the process. Enrolment adds 30 at a time by default, leaving room for
 /// several `--improve` passes.
 const MAX_EMBEDDINGS: u32 = 256;
+
+/// Largest valid file: header, a full-length tag, and `MAX_EMBEDDINGS` vectors.
+const MAX_STORE_BYTES: u64 =
+    16 + MAX_MODEL_TAG_LEN as u64 + MAX_EMBEDDINGS as u64 * EMBEDDING_DIM as u64 * 4;
 
 /// Biometric templates: root-owned, readable by the `face-auth` group that the
 /// set-group-ID `face-auth` binary runs with, never writable by it. The
@@ -69,18 +73,42 @@ pub(crate) fn user_store_dir(user: &str, embeddings_dir: &Path) -> anyhow::Resul
     Ok(embeddings_dir.join(user))
 }
 
+/// The template file must be what enrolment wrote: a regular file owned like
+/// its directory (root, in production), with no group or other write access, a
+/// single link and a bounded size. A FIFO or a device would otherwise hang or
+/// mislead the PAM helper, which reads this as root.
+fn check_template_file(file: &File, dir_uid: u32) -> anyhow::Result<()> {
+    let meta = file.metadata()?;
+    anyhow::ensure!(
+        meta.is_file()
+            && meta.uid() == dir_uid
+            && meta.mode() & 0o022 == 0
+            && meta.nlink() == 1
+            && meta.len() <= MAX_STORE_BYTES,
+        FaceAuthError::InvalidEmbeddingFormat
+    );
+    Ok(())
+}
+
 impl EmbeddingStore {
     pub fn model_tag_matches(&self, current_tag: &str) -> bool {
         self.model_tag.as_deref().is_none_or(|t| t == current_tag)
     }
 
     pub fn load(user: &str, embeddings_dir: &Path) -> anyhow::Result<Self> {
-        let path = user_store_dir(user, embeddings_dir)?.join("embeddings.bin");
-        if !path.exists() {
-            return Err(FaceAuthError::NoEmbeddings.into());
-        }
-
-        let file = File::open(&path)?;
+        let user_dir = user_store_dir(user, embeddings_dir)?;
+        let file = match OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(user_dir.join("embeddings.bin"))
+        {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(FaceAuthError::NoEmbeddings.into());
+            }
+            Err(e) => return Err(e.into()),
+        };
+        check_template_file(&file, fs::metadata(&user_dir)?.uid())?;
         let mut reader = BufReader::new(file);
 
         let version = reader.read_u32::<LittleEndian>()?;
@@ -237,6 +265,31 @@ mod tests {
         assert_eq!(loaded.embeddings.len(), 2);
         assert_eq!(loaded.embeddings[1], sample(0.2));
         assert_eq!(loaded.model_tag.as_deref(), Some(TAG));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_planted_template_files() {
+        let dir = tmpdir("planted");
+        let mut store = EmbeddingStore::default();
+        store.add_embedding(sample(0.1));
+        store.save("alice", &dir, TAG).unwrap();
+        let path = dir.join("alice/embeddings.bin");
+
+        let link = dir.join("alice/second-link");
+        fs::hard_link(&path, &link).unwrap();
+        assert!(EmbeddingStore::load("alice", &dir).is_err(), "hard-linked file accepted");
+        fs::remove_file(&link).unwrap();
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o664)).unwrap();
+        assert!(EmbeddingStore::load("alice", &dir).is_err(), "group-writable file accepted");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(EmbeddingStore::load("alice", &dir).is_ok());
+
+        let target = dir.join("alice/target");
+        fs::rename(&path, &target).unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(EmbeddingStore::load("alice", &dir).is_err(), "symlink followed");
         fs::remove_dir_all(&dir).unwrap();
     }
 
