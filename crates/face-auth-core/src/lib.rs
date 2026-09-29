@@ -6,6 +6,7 @@ pub mod error;
 pub mod inference;
 pub mod lockout;
 pub mod preprocess;
+pub mod seal;
 pub mod seat;
 pub mod storage;
 pub mod user;
@@ -91,7 +92,11 @@ impl FaceAuth {
         }
 
         let t0 = Instant::now();
-        let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
+        let store = EmbeddingStore::load_with(
+            user,
+            &self.config.embeddings_dir(),
+            self.config.seal_embeddings(),
+        )?;
         self.check_model_tag(&store)?;
         tracing::debug!(elapsed = ?t0.elapsed(), "store loaded");
 
@@ -143,7 +148,11 @@ impl FaceAuth {
         }
 
         let t0 = Instant::now();
-        let store = EmbeddingStore::load(user, &self.config.embeddings_dir())?;
+        let store = EmbeddingStore::load_with(
+            user,
+            &self.config.embeddings_dir(),
+            self.config.seal_embeddings(),
+        )?;
         self.check_model_tag(&store)?;
         tracing::debug!(elapsed = ?t0.elapsed(), "store loaded");
 
@@ -348,7 +357,12 @@ impl FaceAuth {
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms, progress)?;
 
         let saved = store.embeddings.len();
-        store.save(user, &self.config.embeddings_dir(), &self.config.model_tag())?;
+        store.save_with(
+            user,
+            &self.config.embeddings_dir(),
+            &self.config.model_tag(),
+            self.config.seal_embeddings(),
+        )?;
         Ok(saved)
     }
 
@@ -382,7 +396,12 @@ impl FaceAuth {
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms, progress)?;
 
         let total = store.embeddings.len();
-        store.save(user, &self.config.embeddings_dir(), &self.config.model_tag())?;
+        store.save_with(
+            user,
+            &self.config.embeddings_dir(),
+            &self.config.model_tag(),
+            self.config.seal_embeddings(),
+        )?;
         Ok((total - existing, total))
     }
 }

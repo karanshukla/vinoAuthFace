@@ -77,6 +77,15 @@ scan_interval_ms = 0
 # lockout_base_delay_ms = 2000   # first cooldown, doubles per further failure
 # lockout_max_delay_ms = 300000  # cooldown ceiling
 
+# Seal stored face templates to this machine's TPM (systemd-creds, no PCR
+# policy, so firmware updates don't lose your enrolment). Protects a stolen or
+# imaged disk, not a running system. With it on, an unsealed template file is
+# refused, and a sealed one whose TPM was cleared needs re-enrolling. No TPM
+# means enrolment warns and stores unsealed. Existing templates are sealed by
+# `vinoauthface improve` (or a fresh enrol). See docs/security.md.
+# System policy only; ignored in a user's own config.
+# seal_embeddings = false
+
 # Only authenticate the account that owns the active session on seat0 (any
 # account while seat0 shows a login greeter). Stops a sudo in a background or
 # fast-switched session matching whoever is at the camera. Skipped on systems

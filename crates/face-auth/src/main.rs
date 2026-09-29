@@ -9,7 +9,6 @@ mod confirm;
 mod prompt;
 
 use face_auth_core::environment::{self, SkipReason};
-use face_auth_core::error::FaceAuthError;
 use face_auth_core::storage::EmbeddingStore;
 use face_auth_core::{capture, seat, user, FaceAuth, FaceAuthConfig};
 use std::env;
@@ -260,10 +259,9 @@ fn run_enrolled() -> ! {
         eprintln!("cannot read {}: {e}", dir.display());
         std::process::exit(2);
     }
-    match EmbeddingStore::load(&info.name, &dir) {
-        Ok(store) if !store.embeddings.is_empty() => std::process::exit(0),
-        Ok(_) => std::process::exit(1),
-        Err(e) if matches!(e.downcast_ref(), Some(FaceAuthError::NoEmbeddings)) => std::process::exit(1),
+    match EmbeddingStore::is_enrolled(&info.name, &dir) {
+        Ok(true) => std::process::exit(0),
+        Ok(false) => std::process::exit(1),
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(2);

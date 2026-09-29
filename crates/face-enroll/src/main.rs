@@ -125,6 +125,10 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
     println!("  camera:     {}", config.device());
     println!("  model:      {}", config.model_path());
     println!("  templates:  {}", config.embeddings_dir().display());
+    if config.seal_embeddings() {
+        let sealed = face_auth_core::seal::available();
+        println!("  sealing:    {}", if sealed { "TPM" } else { "requested, but no TPM found; NOT sealed" });
+    }
     println!();
 
     let pinned = config.pinned_camera_path.is_some();
