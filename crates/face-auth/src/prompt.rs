@@ -5,6 +5,8 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
+use std::path::Path;
 
 const MESSAGE: &str = "Looking for your face...";
 /// Carriage return, then erase the whole line.
@@ -16,12 +18,19 @@ pub struct ScanPrompt {
 }
 
 impl ScanPrompt {
-    /// Show the placeholder on the controlling terminal. With none (a lock
-    /// screen, a polkit agent) this is a no-op. `/dev/tty` rather than stdout:
-    /// under `pam_exec` stdout is not the terminal, and `PAM_TTY` is caller
-    /// supplied so is never opened.
-    pub fn show() -> Self {
-        Self::on(OpenOptions::new().write(true).open("/dev/tty").ok())
+    /// Show the placeholder on the caller's terminal. With none (a lock
+    /// screen, a polkit agent) this is a no-op. Not stdout: under `pam_exec`
+    /// that is not the terminal. The controlling terminal is tried first; if
+    /// the child has lost it, `PAM_TTY` is used, but only when it is a real
+    /// terminal node owned by the account being authenticated (see
+    /// `open_pam_tty`).
+    pub fn show(pam_tty: Option<&str>, uid: u32) -> Self {
+        let tty = OpenOptions::new()
+            .write(true)
+            .open("/dev/tty")
+            .ok()
+            .or_else(|| pam_tty.and_then(|p| open_pam_tty(p, uid)));
+        Self::on(tty)
     }
 
     fn on(mut tty: Option<File>) -> Self {
@@ -31,6 +40,24 @@ impl ScanPrompt {
         }
         Self { tty }
     }
+}
+
+/// `PAM_TTY` is caller supplied, so it is only opened when it names a terminal
+/// device, is not a symlink, and belongs to `uid`: the worst a caller can do
+/// is print a fixed line on their own terminal.
+fn open_pam_tty(path: &str, uid: u32) -> Option<File> {
+    let p = Path::new(path);
+    let in_dev = p.starts_with("/dev/pts/") || p.starts_with("/dev/tty");
+    if !in_dev || p.components().any(|c| c.as_os_str() == "..") {
+        return None;
+    }
+    let file = OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NOCTTY | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(p)
+        .ok()?;
+    let meta = file.metadata().ok()?;
+    (meta.file_type().is_char_device() && meta.uid() == uid).then_some(file)
 }
 
 impl Drop for ScanPrompt {
@@ -66,6 +93,14 @@ mod tests {
         let text = String::from_utf8_lossy(&out[..n]);
         assert!(text.starts_with(MESSAGE), "{text:?}");
         assert!(text.ends_with(CLEAR), "{text:?}");
+    }
+
+    #[test]
+    fn pam_tty_outside_dev_is_refused() {
+        let uid = unsafe { libc::getuid() };
+        assert!(open_pam_tty("/etc/passwd", uid).is_none());
+        assert!(open_pam_tty("/dev/pts/../null", uid).is_none());
+        assert!(open_pam_tty("/dev/null", uid).is_none());
     }
 
     #[test]
