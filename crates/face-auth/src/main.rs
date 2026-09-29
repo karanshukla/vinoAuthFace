@@ -98,7 +98,19 @@ fn fail_auth(msg: &str) -> ! {
 /// if silent — an admin has to be able to see them without setting RUST_LOG.
 fn fail_setup(msg: &str) -> ! {
     tracing::error!("{msg}");
+    audit(libc::LOG_ERR, msg);
     std::process::exit(1)
+}
+
+/// One line to syslog (authpriv, like pam_unix) per scan outcome. stderr
+/// is lost on a lock screen and `RUST_LOG` is scrubbed there, so this is the
+/// only record of what happened: `journalctl -t vinoauthface-auth`.
+fn audit(priority: libc::c_int, msg: &str) {
+    let Ok(msg) = std::ffi::CString::new(msg) else { return };
+    unsafe {
+        libc::openlog(c"vinoauthface-auth".as_ptr(), libc::LOG_PID, libc::LOG_AUTHPRIV);
+        libc::syslog(priority, c"%s".as_ptr(), msg.as_ptr());
+    }
 }
 
 /// Drop everything the caller put in the environment when running with
@@ -351,6 +363,12 @@ fn main() {
     let scan_interval = config.scan_interval_ms();
     let surface = environment::classify_pam_service(env::var("PAM_SERVICE").ok().as_deref());
     let confirm = config.require_confirmation_for(surface);
+    // With sealing on, plaintext stores are refused, so a match means an unseal.
+    let store_kind = if config.seal_embeddings() { "sealed" } else { "plaintext" };
+    let service = env::var("PAM_SERVICE").unwrap_or_else(|_| "?".into());
+    let outcome = |what: &str| {
+        format!("{what} for '{}' (service {service}, {store_kind} templates)", info.name)
+    };
 
     let mut auth = match FaceAuth::new(config) {
         Ok(a) => a,
@@ -372,11 +390,23 @@ fn main() {
 
     match result {
         Ok(true) if confirm => match confirm::ask(&info.name) {
-            confirm::Outcome::Confirmed | confirm::Outcome::NoTerminal => std::process::exit(0),
-            confirm::Outcome::Declined => fail_auth("face matched but was not confirmed"),
+            confirm::Outcome::Confirmed | confirm::Outcome::NoTerminal => {
+                audit(libc::LOG_INFO, &outcome("face match, confirmed"));
+                std::process::exit(0)
+            }
+            confirm::Outcome::Declined => {
+                audit(libc::LOG_NOTICE, &outcome("face matched but not confirmed"));
+                fail_auth("face matched but was not confirmed")
+            }
         },
-        Ok(true) => std::process::exit(0),
-        Ok(false) => fail_auth(&format!("face not recognised for '{}'", info.name)),
-        Err(e) => fail_setup(&format!("face authentication error: {e:#}")),
+        Ok(true) => {
+            audit(libc::LOG_INFO, &outcome("face match"));
+            std::process::exit(0)
+        }
+        Ok(false) => {
+            audit(libc::LOG_NOTICE, &outcome("no face match"));
+            fail_auth(&format!("face not recognised for '{}'", info.name))
+        }
+        Err(e) => fail_setup(&outcome(&format!("face authentication error: {e:#}"))),
     }
 }
