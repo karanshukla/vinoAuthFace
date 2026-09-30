@@ -7,6 +7,12 @@ use std::path::{Path, PathBuf};
 
 pub const SYSTEM_CONFIG_PATH: &str = "/etc/face-auth.toml";
 
+const MODEL_DIR: &str = "/usr/local/share/face-auth";
+/// SCRFD with landmarks, from InsightFace's buffalo_sc pack (#27).
+pub const DEFAULT_DETECTOR: &str = "det_500m.onnx";
+/// The box-only detector installs had before SCRFD.
+pub const LEGACY_DETECTOR: &str = "version-slim-320.onnx";
+
 /// Default embeddings location. Must stay root-owned and 0700 — see deploy.sh.
 pub const DEFAULT_EMBEDDINGS_DIR: &str = "/var/lib/face-auth";
 
@@ -338,12 +344,22 @@ impl FaceAuthConfig {
     /// re-enrolling is a clear error instead of comparisons across two
     /// incompatible embedding spaces. The file name only: the same model at a
     /// different path is the same model.
+    ///
+    /// The detector is part of the identity too, unless it is the original
+    /// `version-slim-320.onnx`: SCRFD's landmarks align the face before
+    /// encoding, so the same model gives different embeddings. Templates
+    /// enrolled with the old detector keep their plain tag and keep working
+    /// with it; switching detectors means re-enrolling.
     pub fn model_tag(&self) -> String {
-        let path = self.model_path();
-        Path::new(&path)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or(path)
+        let name = |path: String| {
+            Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(path)
+        };
+        let (model, detector) = (name(self.model_path()), name(self.detector_model_path()));
+        if detector == LEGACY_DETECTOR {
+            model
+        } else {
+            format!("{model}+{detector}")
+        }
     }
 
     pub fn capture_timeout_ms(&self) -> i32 {
@@ -359,10 +375,18 @@ impl FaceAuthConfig {
             .unwrap_or_else(|| PathBuf::from(DEFAULT_EMBEDDINGS_DIR))
     }
 
+    /// SCRFD (`det_500m.onnx`) when installed, otherwise the original
+    /// detector: an install that updated its binaries (`update.sh`) but not
+    /// its models (`deploy.sh`) keeps working, and keeps its templates.
     pub fn detector_model_path(&self) -> String {
-        self.detector_model_path
-            .clone()
-            .unwrap_or_else(|| "/usr/local/share/face-auth/version-slim-320.onnx".to_string())
+        self.detector_model_path.clone().unwrap_or_else(|| {
+            let scrfd = format!("{MODEL_DIR}/{DEFAULT_DETECTOR}");
+            if Path::new(&scrfd).exists() {
+                scrfd
+            } else {
+                format!("{MODEL_DIR}/{LEGACY_DETECTOR}")
+            }
+        })
     }
 
     pub fn detector_threshold(&self) -> f32 {
@@ -856,8 +880,18 @@ mod tests {
             model_path: Some("/opt/models/w600k_r50.onnx".to_string()),
             ..FaceAuthConfig::default()
         };
-        assert_eq!(cfg.model_tag(), "w600k_r50.onnx");
-        assert_eq!(FaceAuthConfig::default().model_tag(), "w600k_mbf.onnx");
+        let slim = |model: &str| FaceAuthConfig {
+            model_path: Some(model.to_string()),
+            detector_model_path: Some(format!("/opt/models/{LEGACY_DETECTOR}")),
+            ..FaceAuthConfig::default()
+        };
+        assert_eq!(slim("/opt/models/w600k_r50.onnx").model_tag(), "w600k_r50.onnx");
+        assert_eq!(slim("/usr/local/share/face-auth/w600k_mbf.onnx").model_tag(), "w600k_mbf.onnx");
+        let scrfd = FaceAuthConfig {
+            detector_model_path: Some(format!("/opt/models/{DEFAULT_DETECTOR}")),
+            ..cfg
+        };
+        assert_eq!(scrfd.model_tag(), "w600k_r50.onnx+det_500m.onnx", "aligned embeddings differ");
     }
 
     #[test]

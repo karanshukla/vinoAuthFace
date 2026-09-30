@@ -30,6 +30,13 @@ replayed on top:
 - A scan whose face matched but hasn't passed motion liveness yet runs up to
   `liveness_grace_ms` (default 4000) longer, once, instead of failing someone
   holding still. A scan that never matched still ends on time.
+- Faces are aligned before matching (#27). The detector is now InsightFace's
+  SCRFD (`det_500m.onnx`, from the same pack as `w600k_mbf`), whose five
+  landmarks let the face be warped onto the template the recognition model was
+  trained on. On recorded IR clips, same-person similarity rose from a median
+  of 0.66 to 0.86 (0.29 to 0.71 in glasses). **Re-enrol after `deploy.sh`**:
+  templates from the old detector no longer match, and are refused by model
+  tag. Without `det_500m.onnx` installed, the old detector is still used.
 - Camera binding (`bind_camera`, default on): enrolment records the camera's
   USB vendor:product ID, and a scan from any other camera is refused, so a
   swapped-in webcam or loopback can't stand in for the IR sensor. Existing

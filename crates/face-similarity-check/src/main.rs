@@ -16,7 +16,7 @@ use face_auth_core::capture::IrFrame;
 use face_auth_core::detector::FaceDetector;
 use face_auth_core::inference::FaceEncoder;
 use face_auth_core::storage::EmbeddingStore;
-use face_auth_core::{preprocess, verify, FaceAuthConfig, FACE_CROP_MARGIN};
+use face_auth_core::{preprocess, verify, FaceAuthConfig};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
@@ -138,8 +138,7 @@ fn main() -> anyhow::Result<()> {
         let Some(face_box) = detector.detect(&frame)? else {
             return Ok(Err("no face detected, skipped".into()));
         };
-        let face = preprocess::crop_to_face(&frame, &face_box, FACE_CROP_MARGIN)?;
-        let input = preprocess::preprocess_ir_frame(&face)?;
+        let input = face_auth_core::face_input(&frame, &face_box)?;
         let embedding = encoder.encode(input.view())?;
         Ok(Ok(verify::max_similarity(&embedding, &store)?))
     };

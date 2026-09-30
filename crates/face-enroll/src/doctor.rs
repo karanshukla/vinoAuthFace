@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn pins_cover_every_shipped_model() {
-        for name in ["w600k_mbf.onnx", "w600k_r50.onnx", "version-slim-320.onnx"] {
+        for name in ["w600k_mbf.onnx", "w600k_r50.onnx", "det_500m.onnx", "version-slim-320.onnx"] {
             let sha = pinned_sha(PINNED_MODELS, name).unwrap_or_else(|| panic!("{name} not pinned"));
             assert!(sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit()), "{name}: {sha}");
         }
