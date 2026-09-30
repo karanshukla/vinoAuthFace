@@ -15,8 +15,8 @@ vinoauthface-auth (static binary, set-group-ID face-auth)
   ├─ V4L2 capture (auto-detected node; GREY/YUYV/Y16), brighter of each frame pair
   │   └─ poll() with 5s timeout; exits cleanly if the camera hangs
   ├─ Reject dark/flat frames, CLAHE equalisation
-  ├─ Face detection (Ultra-Light-Fast-Generic-Face-Detector), anchor-decoded box
-  ├─ Crop to the face (+30% margin), resize to 112×112, normalise to [-1, 1]
+  ├─ Face detection (SCRFD det_500m): box and five landmarks
+  ├─ Align: similarity-warp the landmarks onto ArcFace's 112×112 template, normalise to [-1, 1]
   ├─ Encode (tract or OpenVINO; MobileFaceNet or ResNet50, 512-d embedding)
   ├─ Motion liveness across face frames up to 1 s apart
   ├─ Cosine similarity vs stored templates (default threshold 0.6)
@@ -28,17 +28,26 @@ vinoauthface-auth (static binary, set-group-ID face-auth)
 Recognition uses InsightFace **`w600k_mbf.onnx`** (MobileFaceNet @ WebFace600K, ~13 MB, 512-d
 output) from the `buffalo_sc` pack by default, or `w600k_r50.onnx` from `buffalo_l`
 ([configuration.md](configuration.md#recognition-model-mbf-default-vs-r50)). Detection uses
-**`version-slim-320.onnx`** from
-[Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB),
-a separate project.
+InsightFace **`det_500m.onnx`** (SCRFD, ~2.5 MB) from the same `buffalo_sc` pack: a box plus five
+landmarks (eyes, nose tip, mouth corners). The face is warped so those land on the fixed points
+the recognition models were trained on, instead of being cropped from the box, which on recorded
+IR clips raised same-person similarity from a median of 0.66 to 0.86, and from 0.29 to 0.71 for
+the same person in glasses ([#27](https://github.com/karanshukla/vinoAuthFace/issues/27)).
+Installs from before SCRFD used the box-only `version-slim-320.onnx`
+([Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB),
+MIT); vinoAuthFace falls back to it when `det_500m.onnx` isn't installed. The detector is part of
+the templates' model tag, so switching means re-enrolling.
 
-**Licensing differs.** The detector is MIT. The recognition weights are not: InsightFace's model
-zoo is licensed for non-commercial research use only (see `model_zoo/README.md` and
-`python-package/README.md` in the InsightFace repo). Only InsightFace's library *code* is MIT.
+tract 0.21 mis-evaluates SCRFD's upsampling (`Resize` given sizes and empty scales resizes
+nothing), so `detector.rs` rewires those nodes to explicit ×2 scales before loading.
 
-Neither model is bundled. `deploy.sh` downloads both and verifies a pinned SHA-256 before
-installing: the recognition model from InsightFace's GitHub releases, the detector from a specific
-commit of its own repo.
+**Licensing.** InsightFace's model zoo, recognition *and* SCRFD weights, is licensed for
+non-commercial research use only (see `model_zoo/README.md` and `python-package/README.md` in the
+InsightFace repo). Only InsightFace's library *code* is MIT
+([#83](https://github.com/karanshukla/vinoAuthFace/issues/83)).
+
+No model is bundled. `deploy.sh` downloads them from InsightFace's GitHub releases and verifies a
+pinned SHA-256 before installing.
 
 ## Relationship to upstream
 

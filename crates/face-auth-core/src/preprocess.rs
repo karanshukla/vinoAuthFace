@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn crop_is_square_and_inside_the_frame() {
         let f = frame((0..640 * 400).map(|i| (i % 65536) as u16).collect(), 640, 400);
-        let b = FaceBox { x1: 0.4, y1: 0.3, x2: 0.6, y2: 0.7 };
+        let b = FaceBox { x1: 0.4, y1: 0.3, x2: 0.6, y2: 0.7, landmarks: None };
         let c = crop_to_face(&f, &b, 0.3).unwrap();
         assert_eq!(c.width, c.height);
         assert_eq!(c.data.len(), (c.width * c.height) as usize);
@@ -487,15 +487,15 @@ mod tests {
     #[test]
     fn crop_near_an_edge_shifts_instead_of_shrinking() {
         let f = frame(vec![1; 640 * 400], 640, 400);
-        let centred = crop_to_face(&f, &FaceBox { x1: 0.4, y1: 0.4, x2: 0.5, y2: 0.6 }, 0.3).unwrap();
-        let edge = crop_to_face(&f, &FaceBox { x1: -0.05, y1: 0.4, x2: 0.05, y2: 0.6 }, 0.3).unwrap();
+        let centred = crop_to_face(&f, &FaceBox { x1: 0.4, y1: 0.4, x2: 0.5, y2: 0.6, landmarks: None }, 0.3).unwrap();
+        let edge = crop_to_face(&f, &FaceBox { x1: -0.05, y1: 0.4, x2: 0.05, y2: 0.6, landmarks: None }, 0.3).unwrap();
         assert_eq!(edge.width, centred.width);
     }
 
     #[test]
     fn crop_rejects_a_short_frame() {
         let f = frame(vec![0; 10], 32, 32);
-        let b = FaceBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let b = FaceBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0, landmarks: None };
         assert!(crop_to_face(&f, &b, 0.3).is_err());
     }
 
@@ -521,7 +521,7 @@ mod tests {
         frame(data, w, h)
     }
 
-    const MIDDLE: FaceBox = FaceBox { x1: 0.25, y1: 0.25, x2: 0.75, y2: 0.75 };
+    const MIDDLE: FaceBox = FaceBox { x1: 0.25, y1: 0.25, x2: 0.75, y2: 0.75, landmarks: None };
 
     fn profile(a: &IrFrame, b: &IrFrame, box_b: &FaceBox) -> MotionProfile {
         motion_profile(&face_patch(a, &MIDDLE).unwrap(), &face_patch(b, box_b).unwrap())

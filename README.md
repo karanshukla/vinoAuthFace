@@ -96,6 +96,6 @@ Changes: [CHANGELOG.md](CHANGELOG.md). Reporting a vulnerability: [SECURITY.md](
 
 ## License
 
-MIT, for this code. The face detector `version-slim-320.onnx` is MIT. The recognition models
-(`w600k_mbf.onnx`, `w600k_r50.onnx`) are InsightFace model-zoo weights, licensed for
-non-commercial research use only; see [docs/architecture.md](docs/architecture.md#models).
+MIT, for this code. The detector (`det_500m.onnx`) and recognition models (`w600k_mbf.onnx`,
+`w600k_r50.onnx`) are InsightFace model-zoo weights, licensed for non-commercial research use
+only; see [docs/architecture.md](docs/architecture.md#models).

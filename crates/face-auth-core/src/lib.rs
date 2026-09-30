@@ -6,6 +6,7 @@ pub mod error;
 pub mod inference;
 pub mod lockout;
 pub mod preprocess;
+pub mod scrfd;
 pub mod seal;
 pub mod seat;
 pub mod storage;
@@ -27,6 +28,19 @@ use std::time::{Duration, Instant};
 /// like its training crops rather than a razor-tight box. Public so offline
 /// tooling can reproduce the exact crop.
 pub const FACE_CROP_MARGIN: f32 = 0.3;
+
+/// The encoder input for a detected face: warped onto the ArcFace template
+/// when the detector found landmarks (SCRFD), otherwise the box crop with
+/// `FACE_CROP_MARGIN`. Public so offline tooling encodes exactly as auth does.
+pub fn face_input(
+    frame: &crate::capture::IrFrame,
+    face_box: &FaceBox,
+) -> Result<tract_onnx::prelude::tract_ndarray::Array3<f32>> {
+    match face_box.landmarks {
+        Some(_) => crate::scrfd::align(frame, face_box),
+        None => crate::preprocess::preprocess_ir_frame(&crate::preprocess::crop_to_face(frame, face_box, FACE_CROP_MARGIN)?),
+    }
+}
 
 /// Most face frames kept for `liveness_window_ms`, whatever the camera's
 /// frame rate: about 1 s at 15 pairs a second, and a bound on memory.
@@ -78,8 +92,8 @@ impl FaceAuth {
         let current = self.config.model_tag();
         if !store.model_tag_matches(&current) {
             anyhow::bail!(
-                "templates were enrolled with a different recognition model ({}) than the one \
-                 configured ({current}); re-run face-enroll for this model",
+                "templates were enrolled with a different recognition model or detector ({}) than \
+                 the one configured ({current}); re-enrol with `sudo vinoauthface enroll`",
                 store.model_tag.as_deref().unwrap_or("unknown")
             );
         }
@@ -128,8 +142,7 @@ impl FaceAuth {
             return Err(FaceAuthError::NoFaceDetected.into());
         }
 
-        let face = crate::preprocess::crop_to_face(&frame, &face_box, FACE_CROP_MARGIN)?;
-        let input = crate::preprocess::preprocess_ir_frame(&face)?;
+        let input = face_input(&frame, &face_box)?;
         let embedding = self.encoder.encode(input.view())?;
         tracing::debug!(elapsed = ?t0.elapsed(), "authenticate_once complete");
 
@@ -309,8 +322,15 @@ impl FaceAuth {
                 "liveness"
             );
 
-            let face = crate::preprocess::crop_to_face(&frame, &face_box, FACE_CROP_MARGIN)?;
-            let input = crate::preprocess::preprocess_ir_frame(&face)?;
+            // Degenerate landmarks are one bad frame, not a broken setup.
+            let input = match face_input(&frame, &face_box) {
+                Ok(input) => input,
+                Err(e) => {
+                    tracing::debug!(frame = frame_num, error = %e, "face skipped");
+                    nap(deadline);
+                    continue;
+                }
+            };
             let embedding = self.encoder.encode(input.view())?;
 
             if verify_embedding(&embedding, &store, self.config.threshold())? {
@@ -371,8 +391,14 @@ impl FaceAuth {
                 continue;
             }
 
-            let face = crate::preprocess::crop_to_face(&frame, &face_box, FACE_CROP_MARGIN)?;
-            let input = crate::preprocess::preprocess_ir_frame(&face)?;
+            let input = match face_input(&frame, &face_box) {
+                Ok(input) => input,
+                Err(e) => {
+                    tracing::debug!(error = %e, "face skipped");
+                    std::thread::sleep(Duration::from_millis(interval_ms));
+                    continue;
+                }
+            };
             let embedding = self.encoder.encode(input.view())?;
             store.add_embedding(embedding);
             captured += 1;

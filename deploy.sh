@@ -126,11 +126,15 @@ case "$RECOGNITION_MODEL" in
         ;;
 esac
 
-# Pinned to the commit that introduced the file, not to a moving branch: a
-# `master` URL silently changes what gets installed. The checksum is the real
-# gate; the pin keeps it from breaking on an unrelated upstream commit.
-DETECTOR_URL="https://raw.githubusercontent.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB/0f9ca4a9fc80170fd505168fd1132b837141f7df/models/onnx/version-slim-320.onnx"
-DETECTOR_CHECKSUM="e9adbd0f920ddcce9368434c4d34d72520dc0c19b526fd44b4ef49bde2c3b1a8"
+# SCRFD, whose five landmarks let the face be aligned before encoding (#27).
+# It ships in buffalo_sc, the same pack as w600k_mbf, so an mbf install
+# downloads one zip for both. Installs from before it keep version-slim-320
+# (face-auth falls back to it until this file exists), but their templates
+# need re-enrolling once this is installed: aligned embeddings differ.
+DETECTOR_NAME="det_500m.onnx"
+DETECTOR_ZIP="buffalo_sc.zip"
+DETECTOR_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
+DETECTOR_CHECKSUM="5e4447f50245bbd7966bd6c0fa52938c61474a04ec7def48753668a9d8b4ea3a"
 
 BIN_DIR="/usr/local/bin"
 SHARE_DIR="/usr/local/share/face-auth"
@@ -659,20 +663,27 @@ else
     MODELS_NEW+=("$MODEL_NAME")
 fi
 
-DETECTOR_NAME="version-slim-320.onnx"
+DETECTOR_NEW=0
 if [ -f "$SHARE_DIR/$DETECTOR_NAME" ]; then
     :
 elif [ -f "models/$DETECTOR_NAME" ]; then
     verify "models/$DETECTOR_NAME" "$DETECTOR_CHECKSUM" || exit 1
     install -Dm644 "models/$DETECTOR_NAME" "$SHARE_DIR/$DETECTOR_NAME"
     MODELS_NEW+=("$DETECTOR_NAME")
+    DETECTOR_NEW=1
 else
-    fetch "$DETECTOR_URL" "$WORK_DIR/$DETECTOR_NAME" \
-        "  mkdir -p models
-  curl -fL -o models/$DETECTOR_NAME '$DETECTOR_URL'" || exit 1
+    # Already unpacked when the recognition model came from the same zip.
+    if [ ! -f "$WORK_DIR/$DETECTOR_NAME" ]; then
+        fetch "$DETECTOR_URL" "$WORK_DIR/$DETECTOR_ZIP" \
+            "  mkdir -p models
+  curl -fL -o /tmp/$DETECTOR_ZIP '$DETECTOR_URL'
+  unzip -j /tmp/$DETECTOR_ZIP $DETECTOR_NAME -d models/" || exit 1
+        unzip -oq "$WORK_DIR/$DETECTOR_ZIP" "$DETECTOR_NAME" -d "$WORK_DIR/"
+    fi
     verify "$WORK_DIR/$DETECTOR_NAME" "$DETECTOR_CHECKSUM" || exit 1
     install -Dm644 "$WORK_DIR/$DETECTOR_NAME" "$SHARE_DIR/$DETECTOR_NAME"
     MODELS_NEW+=("$DETECTOR_NAME")
+    DETECTOR_NEW=1
 fi
 if [ "${#MODELS_NEW[@]}" -gt 0 ]; then
     ok Models "installed ${MODELS_NEW[*]} (checksums verified)"
@@ -959,6 +970,14 @@ if [ -n "$(find "$VAR_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ];
         install -d -o root -g face-auth -m 2770 "${user_dir}lockout"
         find "${user_dir}lockout" -mindepth 1 -type f -exec chmod 0660 {} +
     done
+
+    # Templates from the box-only detector don't match aligned faces; auth
+    # refuses them by their model tag and falls through to the password.
+    if [ "$DETECTOR_NEW" = 1 ] && find "$VAR_DIR" -mindepth 2 -maxdepth 2 -name embeddings.bin -print -quit | grep -q .; then
+        warn Store "The face detector changed to SCRFD, which aligns faces before matching." \
+            "Existing templates no longer match: re-enrol each account," \
+            "sudo vinoauthface enroll --user NAME. Until then, face unlock falls back to the password."
+    fi
 
     if [ "$VAR_MODE_BEFORE" = 1777 ] || [ -n "$STRAY" ]; then
         warn Store "This was the old world-writable store. To be sure no one planted a template:" \
