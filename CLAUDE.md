@@ -167,8 +167,8 @@ making the raw field required, so old config files without the new key keep work
 
 ### Recognition-model identity (`storage.rs`, `config.rs::model_tag()`)
 
-Two interchangeable recognition models are supported (`mbf` default / `r50` opt-in, selected at
-deploy time via `FACE_AUTH_RECOGNITION_MODEL`, see `docs/configuration.md`'s model table). They produce
+Two interchangeable recognition models are supported (`r50` default for NPU builds, `mbf` for CPU
+builds; override at deploy time via `FACE_AUTH_RECOGNITION_MODEL`, see `docs/configuration.md`'s model table). They produce
 numerically incompatible 512-d embedding spaces, so mixing them silently would corrupt matching.
 `EmbeddingStore` (v2 binary format) tags each saved embeddings file with `model_tag` (the
 `model_path` basename); `FaceAuth::check_model_tag` refuses to authenticate or `--improve`
