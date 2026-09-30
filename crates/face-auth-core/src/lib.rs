@@ -28,6 +28,10 @@ use std::time::{Duration, Instant};
 /// tooling can reproduce the exact crop.
 pub const FACE_CROP_MARGIN: f32 = 0.3;
 
+/// Most face frames kept for `liveness_window_ms`, whatever the camera's
+/// frame rate: about 1 s at 15 pairs a second, and a bound on memory.
+const MAX_LIVENESS_FRAMES: usize = 16;
+
 /// Progress reporting for the interactive enrolment paths.
 ///
 /// The library never writes to stdout itself — `face-auth` runs under
@@ -166,13 +170,18 @@ impl FaceAuth {
         // Only a scan that saw a face counts toward lockout: an unattended
         // `sudo` with nobody at the camera is not a failed attempt.
         let mut face_seen = false;
-        // Motion liveness: a match only counts once real motion has been seen
-        // between consecutive face frames. `total` defeats a static photo;
-        // `local` (motion a rigid shift can't explain, in the most-changed
-        // part of the face) defeats one moved by hand.
+        // Motion liveness: a match only counts once real motion has been seen.
+        // `total` defeats a static photo, and is measured against the oldest
+        // face frame within `liveness_window_ms`: a still face barely changes
+        // between consecutive frames but drifts over a second, while a photo
+        // never changes. `local` (motion a rigid shift can't explain, in the
+        // most-changed part of the face) defeats one moved by hand, and stays
+        // on consecutive frames, where it was calibrated.
         let motion_threshold = self.config.liveness_motion_threshold();
         let residual_threshold = self.config.liveness_residual_motion_threshold();
-        let mut prev_face: Option<(crate::capture::IrFrame, FaceBox)> = None;
+        let window = Duration::from_millis(self.config.liveness_window_ms());
+        let mut recent_faces: std::collections::VecDeque<(Instant, crate::capture::IrFrame, FaceBox)> =
+            std::collections::VecDeque::new();
         let mut motion_seen = motion_threshold <= 0.0 && residual_threshold <= 0.0;
         // A face held still can match well before it moves enough to pass.
         // Once that has happened, the window is extended once rather than
@@ -260,26 +269,40 @@ impl FaceAuth {
             // Both patches are cut with the earlier frame's box: the detector's
             // box wobbles in size from frame to frame, and two differently
             // scaled patches would differ everywhere.
-            let motion = match &prev_face {
-                Some((prev_raw, prev_box)) => Some(crate::preprocess::motion_profile(
-                    &crate::preprocess::face_patch(prev_raw, prev_box)?,
-                    &crate::preprocess::face_patch(&raw, prev_box)?,
-                )),
-                None => None,
+            let now = Instant::now();
+            while recent_faces.len() > 1
+                && (now.duration_since(recent_faces[0].0) > window || recent_faces.len() > MAX_LIVENESS_FRAMES)
+            {
+                recent_faces.pop_front();
+            }
+            let profile = |(_, old_raw, old_box): &(Instant, crate::capture::IrFrame, FaceBox)| {
+                anyhow::Ok(crate::preprocess::motion_profile(
+                    &crate::preprocess::face_patch(old_raw, old_box)?,
+                    &crate::preprocess::face_patch(&raw, old_box)?,
+                ))
             };
-            prev_face = Some((raw, face_box));
-            let Some(motion) = motion else {
+            let motion = match (recent_faces.front(), recent_faces.back()) {
+                (Some(oldest), Some(prev)) => {
+                    let across = profile(oldest)?;
+                    let consecutive = if recent_faces.len() > 1 { profile(prev)? } else { across };
+                    Some((across, consecutive))
+                }
+                _ => None,
+            };
+            recent_faces.push_back((now, raw, face_box));
+            let Some((across, consecutive)) = motion else {
                 tracing::debug!(frame = frame_num, "liveness baseline");
                 nap(deadline);
                 continue;
             };
-            motion_seen |= motion.total >= motion_threshold && motion.local >= residual_threshold;
+            motion_seen |= across.total >= motion_threshold && consecutive.local >= residual_threshold;
             tracing::debug!(
                 frame = frame_num,
-                motion = motion.total,
-                residual = motion.residual,
-                local = motion.local,
-                shift = ?motion.shift,
+                motion = across.total,
+                span_ms = now.duration_since(recent_faces[0].0).as_millis() as u64,
+                residual = consecutive.residual,
+                local = consecutive.local,
+                shift = ?consecutive.shift,
                 motion_threshold,
                 residual_threshold,
                 motion_seen,

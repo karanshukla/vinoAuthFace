@@ -28,6 +28,10 @@ replayed on top:
 - A scan whose face matched but hasn't passed motion liveness yet runs up to
   `liveness_grace_ms` (default 4000) longer, once, instead of failing someone
   holding still. A scan that never matched still ends on time.
+- Motion liveness compares each face frame with the oldest one up to
+  `liveness_window_ms` (default 1000) back, not just the previous one, so a
+  face held deliberately still passes: on a still clip, first pass went from
+  4.0 s to 0.9 s. The moved-photo check stays on consecutive frames (#96).
 - Motion liveness gate, failed-match lockout (`lockout.bin` in the root-owned
   store), camera pinning (`pin-camera.sh`).
 - Detector box decode with face crop before encoding, and the detector's

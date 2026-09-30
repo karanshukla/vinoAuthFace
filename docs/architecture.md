@@ -18,7 +18,7 @@ vinoauthface-auth (static binary, set-group-ID face-auth)
   ├─ Face detection (Ultra-Light-Fast-Generic-Face-Detector), anchor-decoded box
   ├─ Crop to the face (+30% margin), resize to 112×112, normalise to [-1, 1]
   ├─ Encode (tract or OpenVINO; MobileFaceNet or ResNet50, 512-d embedding)
-  ├─ Motion liveness across consecutive face frames
+  ├─ Motion liveness across face frames up to 1 s apart
   ├─ Cosine similarity vs stored templates (default threshold 0.6)
   └─ Exit 0 (match) or exit 1 (no match → password prompt)
 ```
@@ -47,7 +47,7 @@ with upstream. On top of upstream it adds:
 
 | Feature | Docs |
 |---|---|
-| Motion liveness: a match only counts after non-rigid motion of the face between consecutive frames | [security.md](security.md#presentation-attacks-something-held-up-to-the-real-camera) |
+| Motion liveness: a match only counts after motion of the face (non-rigid, opt-in) | [security.md](security.md#presentation-attacks-something-held-up-to-the-real-camera) |
 | Lockout: exponential backoff after repeated failed matches, never blocking the password | [troubleshooting.md](troubleshooting.md#face-auth-stopped-being-tried-after-a-few-failures) |
 | Camera pinning by physical USB port, against frame injection | [security.md](security.md#frame-injection-a-fake-camera) |
 | Face crop before encoding (detector boxes decoded) | above |

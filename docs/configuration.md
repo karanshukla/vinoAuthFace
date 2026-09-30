@@ -40,7 +40,7 @@ file they own, and is applied as a narrowing overlay:
 | `threshold`, `detector_threshold`, `liveness_motion_threshold`, `liveness_residual_motion_threshold`, `min_face_size_ratio` | Honoured only if **>= the system value**. A lower number is ignored |
 | `device` | Honoured only if the path is a real IR capture device on this machine (IR-looking sysfs name, or a physical greyscale sensor, and opens in a supported format) |
 | `scan_duration_ms`, `scan_interval_ms`, `capture_timeout_ms`, `liveness_grace_ms` | Honoured within built-in bounds |
-| `model_path`, `detector_model_path`, `embeddings_dir`, `pinned_camera_*`, `lockout_*`, `seal_embeddings`, `backend`, `npu_device`, `seat_check`, `abort_if_*`, `start_delay_*`, `require_confirmation_elevation` | **Ignored**: system policy only |
+| `model_path`, `detector_model_path`, `embeddings_dir`, `pinned_camera_*`, `lockout_*`, `seal_embeddings`, `backend`, `npu_device`, `liveness_window_ms`, `seat_check`, `abort_if_*`, `start_delay_*`, `require_confirmation_elevation` | **Ignored**: system policy only |
 
 This stops code running as you, which doesn't know your password, from writing a permissive
 `~/.config/face-auth.toml` and turning your next `sudo` into a root shell. To *loosen* matching,

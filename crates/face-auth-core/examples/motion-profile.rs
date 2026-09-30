@@ -7,7 +7,11 @@
 //! `liveness_residual_motion_threshold` from real captures and real prints.
 //!
 //!   ffmpeg -i clip.mkv -f rawvideo -pix_fmt gray clip.gray
-//!   cargo run --release --example motion-profile -- clip.gray 360 360
+//!   cargo run --release --example motion-profile -- clip.gray 360 360 [GAP]
+//!
+//! `GAP` compares each face frame against the oldest of the last `GAP` face
+//! frames (default 1, consecutive), the way `authenticate_scan` uses
+//! `liveness_baseline_ms`. At the laptop's ~7.5 face frames/s, 8 is about 1 s.
 use face_auth_core::capture::IrFrame;
 use face_auth_core::detector::{assess_frame, FaceDetector, FrameQuality};
 use face_auth_core::preprocess::{face_patch, histogram_equalize, motion_profile};
@@ -17,10 +21,13 @@ use std::time::{Duration, Instant};
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let [path, w, h] = args.as_slice() else {
-        anyhow::bail!("usage: motion-profile FILE.gray WIDTH HEIGHT");
+    let (path, w, h, gap) = match args.as_slice() {
+        [path, w, h] => (path, w, h, 1),
+        [path, w, h, gap] => (path, w, h, gap.parse()?),
+        _ => anyhow::bail!("usage: motion-profile FILE.gray WIDTH HEIGHT [GAP]"),
     };
     let (width, height): (u32, u32) = (w.parse()?, h.parse()?);
+    anyhow::ensure!(gap >= 1, "GAP must be at least 1");
 
     let config = FaceAuthConfig::load()?;
     let mut detector = FaceDetector::new(
@@ -32,7 +39,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut file = std::fs::File::open(path)?;
     let mut buf = vec![0u8; (width * height) as usize];
-    let mut prev = None;
+    let mut history: std::collections::VecDeque<(IrFrame, _)> = std::collections::VecDeque::new();
     let mut spent = Duration::ZERO;
     let mut pairs = 0u32;
     println!("{:>5} {:>7} {:>8} {:>7} {:>7}", "frame", "total", "residual", "local", "shift");
@@ -60,14 +67,17 @@ fn main() -> anyhow::Result<()> {
         // Same pairing as `authenticate_scan`: both patches cut with the
         // earlier frame's box.
         let t = Instant::now();
-        let profile = match &prev {
+        let profile = match history.front() {
             Some((prev_raw, prev_box)) => {
                 Some(motion_profile(&face_patch(prev_raw, prev_box)?, &face_patch(&raw, prev_box)?))
             }
             None => None,
         };
         let dt = t.elapsed();
-        prev = Some((raw, face_box));
+        if history.len() == gap {
+            history.pop_front();
+        }
+        history.push_back((raw, face_box));
 
         if let Some(m) = profile {
             spent += dt;

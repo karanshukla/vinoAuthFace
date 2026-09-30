@@ -17,6 +17,7 @@ const DETECTOR_THRESHOLD_RANGE: std::ops::RangeInclusive<f32> = 0.05..=1.0;
 const CAPTURE_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 100..=30_000;
 const SCAN_DURATION_RANGE: std::ops::RangeInclusive<u64> = 500..=30_000;
 const LIVENESS_GRACE_RANGE: std::ops::RangeInclusive<u64> = 0..=10_000;
+const LIVENESS_WINDOW_RANGE: std::ops::RangeInclusive<u64> = 0..=2_000;
 const SCAN_INTERVAL_RANGE: std::ops::RangeInclusive<u64> = 0..=5_000;
 const LIVENESS_MOTION_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 const START_DELAY_RANGE: std::ops::RangeInclusive<u64> = 0..=10_000;
@@ -33,6 +34,7 @@ pub struct FaceAuthConfig {
     pub detector_threshold: Option<f32>,
     pub scan_duration_ms: Option<u64>,
     pub liveness_grace_ms: Option<u64>,
+    pub liveness_window_ms: Option<u64>,
     pub scan_interval_ms: Option<u64>,
     pub backend: Option<String>,
     pub npu_device: Option<String>,
@@ -65,6 +67,7 @@ impl Default for FaceAuthConfig {
             detector_threshold: Some(0.5),
             scan_duration_ms: Some(5000),
             liveness_grace_ms: None,
+            liveness_window_ms: None,
             scan_interval_ms: Some(0),
             backend: None,
             npu_device: None,
@@ -380,6 +383,18 @@ impl FaceAuthConfig {
             .clamp(*LIVENESS_GRACE_RANGE.start(), *LIVENESS_GRACE_RANGE.end())
     }
 
+    /// How far back, at most, `liveness_motion_threshold` looks for the
+    /// frame it compares against: the oldest face frame of the scan within
+    /// this window. A face held still barely changes between consecutive
+    /// frames (~130 ms apart) but drifts measurably over a second; a mounted
+    /// photo doesn't change against any frame. Zero compares consecutive
+    /// frames only. System policy: a longer window is a looser gate.
+    pub fn liveness_window_ms(&self) -> u64 {
+        self.liveness_window_ms
+            .unwrap_or(1000)
+            .clamp(*LIVENESS_WINDOW_RANGE.start(), *LIVENESS_WINDOW_RANGE.end())
+    }
+
     /// Extra delay between scan attempts.
     ///
     /// Defaults to zero: the loop is already paced by the camera, which
@@ -407,16 +422,18 @@ impl FaceAuthConfig {
         self.npu_device.clone().unwrap_or_else(|| "NPU".to_string())
     }
 
-    /// Minimum fraction of face-patch pixels that must change between
-    /// consecutive face frames in a scan before a match is accepted. See
+    /// Minimum fraction of face-patch pixels that must change between a face
+    /// frame and the oldest one within `liveness_window_ms` before a match is
+    /// accepted. See
     /// `preprocess::motion_profile`'s `total`. Zero disables the check.
     pub fn liveness_motion_threshold(&self) -> f32 {
         self.liveness_motion_threshold.unwrap_or(0.01)
     }
 
     /// Minimum fraction of the most-changed block of the face patch (about an
-    /// eye's size) still changed after undoing the best rigid shift, required
-    /// in the same frame pair as `liveness_motion_threshold`. Stops a photo
+    /// eye's size) still changed after undoing the best rigid shift between
+    /// consecutive face frames, required on the same frame that passes
+    /// `liveness_motion_threshold`. Stops a photo
     /// moved by hand. See `preprocess::motion_profile`'s `local`. Zero
     /// disables the check, and is the default: a still face may not blink
     /// inside one scan, especially behind glasses glare.
@@ -730,6 +747,7 @@ mod tests {
             pinned_camera_path: Some("/sys/devices/evil".to_string()),
             pinned_camera_index: Some(9),
             seal_embeddings: Some(false),
+            liveness_window_ms: Some(2000),
             ..FaceAuthConfig::default()
         };
         cfg.seal_embeddings = Some(true);
@@ -740,6 +758,7 @@ mod tests {
         assert!(cfg.detector_model_path().starts_with("/usr/local/share"));
         assert_eq!(cfg.lockout_policy().threshold, 5);
         assert!(cfg.pinned_camera_path.is_none() && cfg.pinned_camera_index.is_none());
+        assert_eq!(cfg.liveness_window_ms(), 1000, "a longer window is a looser liveness gate");
     }
 
     #[test]
