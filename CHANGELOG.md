@@ -30,6 +30,10 @@ replayed on top:
 - A scan whose face matched but hasn't passed motion liveness yet runs up to
   `liveness_grace_ms` (default 4000) longer, once, instead of failing someone
   holding still. A scan that never matched still ends on time.
+- Camera binding (`bind_camera`, default on): enrolment records the camera's
+  USB vendor:product ID, and a scan from any other camera is refused, so a
+  swapped-in webcam or loopback can't stand in for the IR sensor. Existing
+  enrolments accept any camera until re-enrolled. `doctor` reports it.
 - Releases are consecutive numbers (`v2`, `v3`, ...), tagged with
   `scripts/release.sh`; `vinoauthface --version` and `doctor` show the tag
   (#98). `deploy.sh` without a Rust toolchain now finds the newest release:

@@ -1,3 +1,4 @@
+pub mod cameras;
 pub mod capture;
 pub mod config;
 pub mod detector;
@@ -86,10 +87,23 @@ impl FaceAuth {
         Ok(())
     }
 
+    /// Refuse a camera `user` didn't enrol on, before it is opened. An error,
+    /// not a failed attempt: nothing is recorded against the lockout, and PAM
+    /// falls through to the password. See `cameras`.
+    fn check_camera_binding(&self, user: &str) -> Result<()> {
+        if !self.config.bind_camera() {
+            return Ok(());
+        }
+        let enrolled = cameras::load(user, &self.config.embeddings_dir())?;
+        let device = self.config.device();
+        cameras::check(&enrolled, cameras::camera_id(&device).as_deref(), &device)
+    }
+
     /// Single-shot verification. The PAM path uses
     /// [`FaceAuth::authenticate_scan`].
     pub fn authenticate_once(&mut self, user: &str) -> Result<bool> {
         self.config.verify_pinned_camera()?;
+        self.check_camera_binding(user)?;
         let embeddings_dir = self.config.embeddings_dir();
         if lockout::check(user, &embeddings_dir, &self.config.lockout_policy()).is_some() {
             return Ok(false);
@@ -146,6 +160,7 @@ impl FaceAuth {
         interval_ms: u64,
     ) -> Result<bool> {
         self.config.verify_pinned_camera()?;
+        self.check_camera_binding(user)?;
         let embeddings_dir = self.config.embeddings_dir();
         if lockout::check(user, &embeddings_dir, &self.config.lockout_policy()).is_some() {
             return Ok(false);
@@ -415,7 +430,8 @@ impl FaceAuth {
     ) -> Result<usize> {
         self.config.verify_pinned_camera()?;
         let mut store = EmbeddingStore::default();
-        let mut cam = Camera::open(&self.config.device())?;
+        let device = self.config.device();
+        let mut cam = Camera::open(&device)?;
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms, progress)?;
 
         let saved = store.embeddings.len();
@@ -425,6 +441,9 @@ impl FaceAuth {
             &self.config.model_tag(),
             self.config.seal_embeddings(),
         )?;
+        // Recorded whether or not `bind_camera` is on, so turning it on later
+        // needs no re-enrolment.
+        cameras::record(user, &self.config.embeddings_dir(), cameras::camera_id(&device).as_deref(), true)?;
         Ok(saved)
     }
 
@@ -454,7 +473,8 @@ impl FaceAuth {
         self.check_model_tag(&store)?;
 
         let existing = store.embeddings.len();
-        let mut cam = Camera::open(&self.config.device())?;
+        let device = self.config.device();
+        let mut cam = Camera::open(&device)?;
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms, progress)?;
 
         let total = store.embeddings.len();
@@ -464,6 +484,7 @@ impl FaceAuth {
             &self.config.model_tag(),
             self.config.seal_embeddings(),
         )?;
+        cameras::record(user, &self.config.embeddings_dir(), cameras::camera_id(&device).as_deref(), false)?;
         Ok((total - existing, total))
     }
 }

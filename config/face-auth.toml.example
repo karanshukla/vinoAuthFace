@@ -17,7 +17,7 @@
 #   liveness_grace_ms               honoured within built-in bounds
 #   model_path, detector_model_path, embeddings_dir,
 #   pinned_camera_*, lockout_*, backend, npu_device,
-#   liveness_window_ms, seat_check, abort_if_*, start_delay_*,
+#   liveness_window_ms, bind_camera, seat_check, abort_if_*, start_delay_*,
 #   require_confirmation_elevation
 #                                   ignored — system policy only
 #
@@ -94,6 +94,15 @@ scan_interval_ms = 0
 # `vinoauthface improve` (or a fresh enrol). See docs/security.md.
 # System policy only; ignored in a user's own config.
 # seal_embeddings = false
+
+# Only accept frames from a camera the user enrolled on, by USB vendor:product
+# ID (recorded at every enrolment). Another camera plugged in to stand in for
+# the IR sensor is refused and PAM falls through to the password; re-enrol
+# after replacing the camera on purpose. Accounts enrolled before this setting
+# existed, or on a camera with no USB ID (MIPI), accept any camera until their
+# next enrolment. Not attestation: a programmable USB device can claim any ID,
+# which pin-camera.sh's port pin covers. System policy only.
+# bind_camera = true
 
 # Only authenticate the account that owns the active session on seat0 (any
 # account while seat0 shows a login greeter). Stops a sudo in a background or

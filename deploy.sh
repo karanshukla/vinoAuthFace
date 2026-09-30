@@ -954,6 +954,7 @@ fi
 #   $VAR_DIR/                        root:face-auth 2750
 #   $VAR_DIR/<user>/                 root:face-auth 2750
 #   $VAR_DIR/<user>/embeddings.bin   root:face-auth 0640
+#   $VAR_DIR/<user>/cameras          root:face-auth 0640
 #   $VAR_DIR/<user>/lockout/         root:face-auth 2770
 #
 # The set-group-ID bit on the directories makes new entries inherit the group. Earlier versions made this 1777 with
