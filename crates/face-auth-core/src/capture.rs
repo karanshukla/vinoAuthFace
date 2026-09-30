@@ -55,6 +55,25 @@ fn convert_frame_bytes(pixelformat: u32, bytes: &[u8]) -> Vec<u16> {
     }
 }
 
+/// Significant bits in a Y16 frame: the position of its highest set bit,
+/// never below 8. UVC doesn't say whether a 10- or 12-bit sensor's samples
+/// sit in the low or high bits of the 16-bit container (#109).
+fn y16_bits(samples: &[u16]) -> u32 {
+    let max = samples.iter().copied().max().unwrap_or(0);
+    (16 - max.leading_zeros()).max(8)
+}
+
+/// Scale low-aligned Y16 samples up to the full 16-bit range, so a 10-bit
+/// sensor doesn't read as `TooDark` on every frame. MSB-aligned data has a
+/// high bit set and passes through unchanged.
+fn widen_y16(samples: &mut [u16], bits: u32) {
+    if bits < 16 {
+        for s in samples {
+            *s <<= 16 - bits;
+        }
+    }
+}
+
 /// Refuse implausible geometry from `G_FMT` before it sizes an allocation.
 const MAX_DIMENSION: u32 = 8192;
 
@@ -162,6 +181,9 @@ pub struct Camera {
     height: u32,
     pixelformat: u32,
     stream_on: bool,
+    /// Y16 bit depth seen so far this session. Only ever rises, so an
+    /// emitter-dark frame can't be scaled up once a lit one has set the depth.
+    y16_bits: u32,
 }
 
 unsafe impl Send for Camera {}
@@ -247,7 +269,7 @@ impl Camera {
             buffers.push(MappedBuffer { ptr, length });
         }
 
-        Ok(Self { fd, buffers, width, height, pixelformat, stream_on: false })
+        Ok(Self { fd, buffers, width, height, pixelformat, stream_on: false, y16_bits: 8 })
     }
 
     pub fn capture_frame(&mut self, timeout_ms: i32) -> Result<IrFrame> {
@@ -312,7 +334,15 @@ impl Camera {
             );
         }
         let data_slice = unsafe { std::slice::from_raw_parts(mapped.ptr as *const u8, bytes_used) };
-        let data = convert_frame_bytes(self.pixelformat, data_slice);
+        let mut data = convert_frame_bytes(self.pixelformat, data_slice);
+        if self.pixelformat == V4L2_PIX_FMT_Y16 {
+            let bits = y16_bits(&data).max(self.y16_bits);
+            if bits != self.y16_bits {
+                tracing::debug!(bits, "Y16 bit depth");
+                self.y16_bits = bits;
+            }
+            widen_y16(&mut data, bits);
+        }
 
         // Hand the buffer straight back so the ring stays full.
         let _ = ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &mut buf as *mut _ as *mut c_void);
@@ -642,6 +672,26 @@ mod tests {
         // Y0 U Y1 V: chroma bytes are dropped.
         assert_eq!(convert_frame_bytes(V4L2_PIX_FMT_YUYV, &[10, 99, 20, 99]), vec![2570, 5140]);
         assert_eq!(convert_frame_bytes(V4L2_PIX_FMT_Y16, &[0x34, 0x12]), vec![0x1234]);
+    }
+
+    #[test]
+    fn y16_depth_comes_from_the_highest_set_bit() {
+        assert_eq!(y16_bits(&[0, 1023, 5]), 10);
+        assert_eq!(y16_bits(&[4095]), 12);
+        assert_eq!(y16_bits(&[0xff00]), 16);
+        // Dark or empty frames never read as deeper than 8-bit data.
+        assert_eq!(y16_bits(&[3, 20]), 8);
+        assert_eq!(y16_bits(&[]), 8);
+    }
+
+    #[test]
+    fn low_aligned_y16_is_widened_and_msb_aligned_is_left_alone() {
+        let mut ten = vec![0, 512, 1023];
+        widen_y16(&mut ten, 10);
+        assert_eq!(ten, vec![0, 512 << 6, 1023 << 6]);
+        let mut full = vec![0x1234, 0xffff];
+        widen_y16(&mut full, 16);
+        assert_eq!(full, vec![0x1234, 0xffff]);
     }
 
     #[test]
