@@ -59,10 +59,9 @@ jobs:
           name: vinoauthface-binaries
           path: dist/*
 
-      # prerelease: true until there's been independent review of the recognition/liveness logic
-      # and real-world validation beyond one developer's own hardware — this is security-critical
-      # (biometric auth gating sudo/lock-screen) and bleeding-edge, not something to badge as a
-      # GitHub "Latest" release yet. Flip this deliberately, not as a side effect of a version bump.
+      # Full releases (not pre-releases) since v2, so GitHub's "latest" and the repo sidebar
+      # point at them and releases/latest/download/... URLs resolve. Revert to prerelease: true
+      # deliberately if a release shouldn't be offered as the current one.
       - name: Publish release assets
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -70,5 +69,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: dist/*
-          prerelease: true
+          prerelease: false
           generate_release_notes: true
