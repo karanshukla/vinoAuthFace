@@ -41,6 +41,8 @@ replayed on top:
   USB vendor:product ID, and a scan from any other camera is refused, so a
   swapped-in webcam or loopback can't stand in for the IR sensor. Existing
   enrolments accept any camera until re-enrolled. `doctor` reports it.
+- The tray's camera, enrolment and backend lines are back, folded into a
+  Status submenu whose label names the problem when unlock isn't ready (#112).
 - Releases are consecutive numbers (`v2`, `v3`, ...), tagged with
   `scripts/release.sh`; `vinoauthface --version` and `doctor` show the tag
   (#98). `deploy.sh` without a Rust toolchain now finds the newest release:
