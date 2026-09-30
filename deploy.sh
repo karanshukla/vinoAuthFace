@@ -145,7 +145,7 @@ NPU_CACHE_DIR="/var/cache/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
 OPENVINO_INSTALL_DIR="/usr/local/lib/face-auth/openvino"
 
-PAM_LINE="auth       sufficient  pam_exec.so quiet /usr/local/bin/vinoauthface-auth"
+PAM_LINE="auth       sufficient  pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth"
 
 if [ "$(id -u)" -ne 0 ]; then
     fail "Run this with sudo" "It installs into /usr/local, /etc and /var/lib."

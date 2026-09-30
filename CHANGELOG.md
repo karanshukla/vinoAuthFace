@@ -28,6 +28,11 @@ replayed on top:
 - A scan whose face matched but hasn't passed motion liveness yet runs up to
   `liveness_grace_ms` (default 4000) longer, once, instead of failing someone
   holding still. A scan that never matched still ends on time.
+- Lock screens, login screens and polkit agents now show `Looking for your
+  face...` while scanning (#20). The PAM line gains `stdout`, which has
+  `pam_exec` relay it as a PAM info message; stderr is silenced in that mode
+  so errors (in syslog) don't reach the screen. Re-run `deploy.sh` to update
+  the line.
 - Motion liveness compares each face frame with the oldest one up to
   `liveness_window_ms` (default 1000) back, not just the previous one, so a
   face held deliberately still passes: on a still clip, first pass went from
