@@ -17,7 +17,7 @@
 #   liveness_grace_ms               honoured within built-in bounds
 #   model_path, detector_model_path, embeddings_dir,
 #   pinned_camera_*, lockout_*, backend, npu_device,
-#   seat_check, abort_if_*, start_delay_*,
+#   liveness_window_ms, seat_check, abort_if_*, start_delay_*,
 #   require_confirmation_elevation
 #                                   ignored — system policy only
 #
@@ -127,18 +127,26 @@ scan_interval_ms = 0
 # System policy only.
 # require_confirmation_elevation = false
 
-# Motion liveness. During a scan, a match is only accepted once one pair of
-# consecutive face frames shows both kinds of motion below. Only the face
+# Motion liveness. During a scan, a match is only accepted once one face frame
+# shows both kinds of motion below. Only the face
 # region is compared, after removing brightness and contrast differences, so
 # movement elsewhere in view and auto-exposure changes don't count.
 # A user's own config may only raise either value.
 #
-# Fraction of face pixels that changed (0.0 - 1.0, default 0.01). Defeats a
-# rigidly held photo. 0 disables it.
+# Fraction of face pixels that changed (0.0 - 1.0, default 0.01), against the
+# oldest face frame of the scan within liveness_window_ms. Defeats a rigidly
+# held photo. 0 disables it.
 # liveness_motion_threshold = 0.01
 #
-# Motion a rigid shift can't explain (0.0 - 1.0, default 0 = off): the
-# fraction still changed, after undoing the best shift, in the most-changed
+# How far back that comparison looks, in milliseconds (0 - 2000, default
+# 1000). A face held still barely changes between consecutive frames but drifts
+# measurably over a second; a photo doesn't change against any frame. 0
+# compares consecutive frames only. System policy only.
+# liveness_window_ms = 1000
+#
+# Motion a rigid shift can't explain between consecutive face frames (0.0 -
+# 1.0, default 0 = off): the fraction still changed, after undoing the best
+# shift, in the most-changed
 # eye-sized block of the face. A photo moved by hand moves as one piece; a
 # real face moves in parts (a blink, the mouth, the head turning). Moved-photo
 # tests peak around 0.2 and blinks reach 0.3-0.6, so 0.3 is the value to try.
