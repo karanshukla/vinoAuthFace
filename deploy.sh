@@ -161,8 +161,11 @@ ACTUAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 
 # The release this is: a tagged checkout, or the VERSION file in a release's
 # source bundle (vinoauthface-upgrade). Builds are stamped with it, so doctor
-# and the tray know what's installed; anything else builds as "dev".
+# and the tray know what's installed; anything else builds as "dev". Keep in
+# step with update.sh, or its builds differ from these and it never no-ops.
 RELEASE_TAG="$(git describe --tags --exact-match 2>/dev/null || cat VERSION 2>/dev/null || true)"
+STAMP=()
+[ -n "$RELEASE_TAG" ] && STAMP=(env VINOAUTHFACE_VERSION="$RELEASE_TAG")
 
 printf '%svinoAuthFace installer%s\n' "$BOLD" "$RESET"
 
@@ -200,9 +203,9 @@ find_cargo() {
 # build scripts, and root-owned files left in target/ break their next build.
 as_user() {
     if [ -n "${SUDO_USER:-}" ] && [ "$(id -u)" -eq 0 ]; then
-        sudo -u "$SUDO_USER" -H env VINOAUTHFACE_VERSION="${RELEASE_TAG:-dev}" "$@"
+        sudo -u "$SUDO_USER" -H "${STAMP[@]}" "$@"
     else
-        VINOAUTHFACE_VERSION="${RELEASE_TAG:-dev}" "$@"
+        "${STAMP[@]}" "$@"
     fi
 }
 

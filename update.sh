@@ -68,11 +68,15 @@ find_cargo() {
 }
 
 # Build as the invoking user: root-owned files in target/ break their next build.
+# Stamped the way deploy.sh stamps its builds.
+RELEASE_TAG="$(git describe --tags --exact-match 2>/dev/null || cat VERSION 2>/dev/null || true)"
+STAMP=()
+[ -n "$RELEASE_TAG" ] && STAMP=(env VINOAUTHFACE_VERSION="$RELEASE_TAG")
 as_user() {
     if [ -n "${SUDO_USER:-}" ]; then
-        sudo -u "$SUDO_USER" -H "$@"
+        sudo -u "$SUDO_USER" -H "${STAMP[@]}" "$@"
     else
-        "$@"
+        "${STAMP[@]}" "$@"
     fi
 }
 
