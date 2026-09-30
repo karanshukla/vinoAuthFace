@@ -42,6 +42,8 @@ replayed on top:
 - Detector box decode with face crop before encoding, and the detector's
   trained `(px - 127) / 128` input normalisation.
 - Model-tagged template format (v2, v1 still loads) with mbf/r50 selection.
+  `deploy.sh` defaults an NPU build to r50 (mbf stays the CPU default); an
+  install with a model already set or faces enrolled keeps its model.
 - Optional OpenVINO/NPU backend, YUYV/Y16 capture, IR auto-detect for sensors
   whose sysfs name does not say IR.
 - polkit-1 and Bitwarden unlock, release-binary download in `deploy.sh`, CI.
