@@ -198,7 +198,8 @@ the set-group-ID bit on directories makes entries inherit the `face-auth` group)
 lock-screen path must write goes under `lockout/`; anything else stays group read-only. Paths
 are built by `storage::user_store_dir` (which validates the username). Loads bound every length
 read from disk before allocating (`MAX_EMBEDDINGS`, `MAX_MODEL_TAG_LEN`) and reject trailing bytes and
-non-finite values. Follow this pattern for any new per-user state file.
+non-finite values. Follow this pattern for any new per-user state file; `cameras.rs` (the
+text `<user>/cameras` list of enrolled USB IDs) is the small example.
 
 `/var/lib/face-auth` itself is root:root `0700`. Never make it user-writable: whatever can write
 a template chooses whose face unlocks the account (upstream's privesc fix, issue #25).

@@ -5,7 +5,7 @@
 //! question (config, camera, pinning, sealing) doctor calls it, so the two can't
 //! drift apart.
 
-use face_auth_core::{capture, config::SYSTEM_CONFIG_PATH, seal, storage::EmbeddingStore, FaceAuthConfig};
+use face_auth_core::{cameras, capture, config::SYSTEM_CONFIG_PATH, seal, storage::EmbeddingStore, FaceAuthConfig};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -130,6 +130,36 @@ pub fn backend_verdict(backend: &str, npu_device: &str, npu_built: bool) -> Chec
     }
 }
 
+/// Would auth accept the current camera for each enrolled account? An
+/// account with no recorded camera accepts any (`cameras::check`).
+pub fn binding_verdict(on: bool, device: &str, live: Option<&str>, users: &[(String, Vec<String>)]) -> Check {
+    if !on {
+        return check(Status::Info, "camera binding", "off (bind_camera = false)");
+    }
+    let refused: Vec<&str> = users
+        .iter()
+        .filter(|(_, ids)| cameras::check(ids, live, device).is_err())
+        .map(|(user, _)| user.as_str())
+        .collect();
+    let unbound = users.iter().filter(|(_, ids)| ids.is_empty()).count();
+    let live = live.unwrap_or("no USB ID");
+    if !refused.is_empty() {
+        check(
+            Status::Fail,
+            "camera binding",
+            format!("{device} ({live}) isn't a camera {} enrolled on; re-enrol", refused.join(", ")),
+        )
+    } else if unbound > 0 {
+        check(
+            Status::Info,
+            "camera binding",
+            format!("{unbound} account(s) not bound to a camera yet (bound at next enrolment)"),
+        )
+    } else {
+        check(Status::Ok, "camera binding", format!("{device} ({live}) matches every enrolment"))
+    }
+}
+
 fn model_check(name: &str, path: &str) -> Check {
     match std::fs::metadata(path) {
         Ok(m) if m.len() > 0 => check(Status::Ok, name, format!("{path} ({} bytes)", m.len())),
@@ -180,6 +210,12 @@ pub fn run(pam_dir: &Path) -> Vec<Check> {
                 }
             }
             out.push(model_tag_verdict(&config.model_tag(), &stored));
+            let bound: Vec<(String, Vec<String>)> = stored
+                .iter()
+                .map(|(user, _)| (user.clone(), cameras::load(user, &dir).unwrap_or_default()))
+                .collect();
+            let device = config.device();
+            out.push(binding_verdict(config.bind_camera(), &device, cameras::camera_id(&device).as_deref(), &bound));
         }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && unsafe { libc::geteuid() } != 0 => {
             out.push(check(Status::Info, "enrolment", "store is root-only; re-run with sudo to count enrolled accounts"))
@@ -254,6 +290,20 @@ mod tests {
     use super::*;
 
     const OURS: &str = "auth sufficient pam_exec.so quiet /usr/local/bin/vinoauthface-auth";
+
+    #[test]
+    fn binding_refuses_a_camera_nobody_enrolled_on() {
+        let users = vec![
+            ("alice".to_string(), vec!["2b7e:55c0".to_string()]),
+            ("bob".to_string(), vec![]),
+        ];
+        assert_eq!(binding_verdict(true, "/dev/video2", Some("2b7e:55c0"), &users).status, Status::Info);
+        let v = binding_verdict(true, "/dev/video2", Some("046d:085e"), &users);
+        assert_eq!(v.status, Status::Fail);
+        assert!(v.detail.contains("alice") && !v.detail.contains("bob"));
+        assert_eq!(binding_verdict(false, "/dev/video2", None, &users).status, Status::Info);
+        assert_eq!(binding_verdict(true, "/dev/video2", Some("2b7e:55c0"), &users[..1]).status, Status::Ok);
+    }
 
     #[test]
     fn stale_model_tag_fails_and_unknown_passes() {

@@ -47,6 +47,7 @@ pub struct FaceAuthConfig {
     pub lockout_base_delay_ms: Option<u64>,
     pub lockout_max_delay_ms: Option<u64>,
     pub seal_embeddings: Option<bool>,
+    pub bind_camera: Option<bool>,
     pub seat_check: Option<bool>,
     pub abort_if_ssh: Option<bool>,
     pub abort_if_lid_closed: Option<bool>,
@@ -80,6 +81,7 @@ impl Default for FaceAuthConfig {
             lockout_base_delay_ms: None,
             lockout_max_delay_ms: None,
             seal_embeddings: None,
+            bind_camera: None,
             seat_check: None,
             abort_if_ssh: None,
             abort_if_lid_closed: None,
@@ -503,6 +505,13 @@ impl FaceAuthConfig {
         Ok(())
     }
 
+    /// Refuse to authenticate from a camera the user didn't enrol on, by USB
+    /// vendor:product ID. See `cameras`. System policy: a user must not be
+    /// able to switch it off.
+    pub fn bind_camera(&self) -> bool {
+        self.bind_camera.unwrap_or(true)
+    }
+
     /// Only authenticate the user who owns the active seat0 session. See
     /// `seat::check`.
     pub fn seat_check(&self) -> bool {
@@ -748,6 +757,7 @@ mod tests {
             pinned_camera_index: Some(9),
             seal_embeddings: Some(false),
             liveness_window_ms: Some(2000),
+            bind_camera: Some(false),
             ..FaceAuthConfig::default()
         };
         cfg.seal_embeddings = Some(true);
@@ -759,6 +769,7 @@ mod tests {
         assert_eq!(cfg.lockout_policy().threshold, 5);
         assert!(cfg.pinned_camera_path.is_none() && cfg.pinned_camera_index.is_none());
         assert_eq!(cfg.liveness_window_ms(), 1000, "a longer window is a looser liveness gate");
+        assert!(cfg.bind_camera(), "a user must not unbind their camera");
     }
 
     #[test]
