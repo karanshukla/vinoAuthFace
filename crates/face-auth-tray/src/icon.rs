@@ -102,7 +102,9 @@ const LARGE: Grid = Grid {
         (Shape::new(48.0, 40.0, 4.0, 12.0, 2.0), Part::Bracket),
         (Shape::new(23.0, 22.0, 5.0, 9.0, 2.5), Part::Feature),
         (Shape::new(36.0, 22.0, 5.0, 9.0, 2.5), Part::Feature),
-        (Shape::new(24.0, 39.0, 16.0, 5.0, 2.5), Part::Feature),
+        (Shape::new(22.0, 37.0, 5.0, 8.0, 2.5), Part::Feature),
+        (Shape::new(25.0, 41.0, 14.0, 5.0, 2.5), Part::Feature),
+        (Shape::new(37.0, 37.0, 5.0, 8.0, 2.5), Part::Feature),
         (Shape::new(18.0, 34.0, 28.0, 2.0, 1.0), Part::ScanLine),
     ],
     size: 64.0,
@@ -123,7 +125,9 @@ const SMALL: Grid = Grid {
         (Shape::new(12.0, 10.0, 1.0, 3.0, 0.0), Part::Bracket),
         (Shape::new(6.0, 5.0, 1.0, 2.0, 0.0), Part::Feature),
         (Shape::new(9.0, 5.0, 1.0, 2.0, 0.0), Part::Feature),
-        (Shape::new(6.0, 10.0, 4.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(6.0, 10.0, 1.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(7.0, 11.0, 2.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(9.0, 10.0, 1.0, 1.0, 0.0), Part::Feature),
         (Shape::new(5.0, 8.0, 6.0, 1.0, 0.0), Part::ScanLine),
     ],
     size: 16.0,
@@ -146,7 +150,9 @@ const SYMBOLIC: Grid = Grid {
         (Shape::new(13.0, 11.0, 1.0, 3.0, 0.0), Part::Bracket),
         (Shape::new(5.0, 5.0, 2.0, 2.0, 0.0), Part::Feature),
         (Shape::new(9.0, 5.0, 2.0, 2.0, 0.0), Part::Feature),
-        (Shape::new(5.0, 10.0, 6.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(5.0, 10.0, 1.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(6.0, 11.0, 4.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(10.0, 10.0, 1.0, 1.0, 0.0), Part::Feature),
         (Shape::new(4.0, 8.0, 8.0, 1.0, 0.0), Part::ScanLine),
     ],
     size: 16.0,
@@ -313,7 +319,11 @@ mod tests {
                 if *part == Part::Bracket {
                     continue;
                 }
-                for (j, (b, _)) in grid.marks.iter().enumerate() {
+                for (j, (b, other)) in grid.marks.iter().enumerate() {
+                    // The smile is several pieces of one mark.
+                    if *part == Part::Feature && *other == Part::Feature {
+                        continue;
+                    }
                     let apart = a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y;
                     assert!(i == j || apart, "{a:?} touches {b:?}");
                 }

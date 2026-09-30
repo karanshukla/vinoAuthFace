@@ -47,6 +47,7 @@ fi
 
 echo "Removing binaries..."
 rm -f "$BIN_DIR/vinoauthface-auth" "$BIN_DIR/face-auth"
+rm -f /usr/local/libexec/vinoauthface-unseal
 rm -f "$BIN_DIR/vinoauthface" "$BIN_DIR/vinoauthface-upgrade" "$COMPLETION_DIR/vinoauthface" "$BIN_DIR/face-enroll" "$COMPLETION_DIR/face-enroll"
 rm -f "$ZSH_COMPLETION_DIR/_vinoauthface" "$FISH_COMPLETION_DIR/vinoauthface.fish"
 

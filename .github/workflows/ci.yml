@@ -125,6 +125,7 @@ jobs:
           test -g /usr/local/bin/vinoauthface-auth
           test "$(stat -c %G /usr/local/bin/vinoauthface-auth)" = face-auth
           test -x /usr/local/bin/vinoauthface
+          test "$(stat -c %U:%G:%a /usr/local/libexec/vinoauthface-unseal)" = root:root:755
           grep -q improve /usr/local/share/bash-completion/completions/vinoauthface
           grep -q improve /usr/local/share/zsh/site-functions/_vinoauthface
           grep -q improve /usr/local/share/fish/vendor_completions.d/vinoauthface.fish
@@ -216,6 +217,7 @@ jobs:
           test ! -e /usr/local/share/bash-completion/completions/vinoauthface
           test ! -e /usr/local/share/zsh/site-functions/_vinoauthface
           test ! -e /usr/local/share/fish/vendor_completions.d/vinoauthface.fish
+          test ! -e /usr/local/libexec/vinoauthface-unseal
           test ! -e /usr/local/bin/vinoauthface-tray
           test ! -e /usr/local/libexec/vinoauthface-helper
           test ! -e /usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
@@ -236,11 +238,13 @@ jobs:
           mkdir -p /tmp/fake-release
           cp target/x86_64-unknown-linux-musl/release/vinoauthface-auth /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
           cp target/x86_64-unknown-linux-musl/release/vinoauthface /tmp/fake-release/vinoauthface-x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/vinoauthface-unseal /tmp/fake-release/vinoauthface-unseal-x86_64-unknown-linux-musl
           cp target/x86_64-unknown-linux-musl/release/vinoauthface-tray /tmp/fake-release/vinoauthface-tray-x86_64-unknown-linux-musl
           cp target/x86_64-unknown-linux-musl/release/vinoauthface-helper /tmp/fake-release/vinoauthface-helper-x86_64-unknown-linux-musl
           (cd /tmp/fake-release && sha256sum -- * > SHA256SUMS)
           # Remove the local prebuilt binaries so deploy.sh can't fall back to branch 2 instead.
-          rm -f target/x86_64-unknown-linux-musl/release/vinoauthface-auth target/x86_64-unknown-linux-musl/release/vinoauthface
+          rm -f target/x86_64-unknown-linux-musl/release/vinoauthface-auth target/x86_64-unknown-linux-musl/release/vinoauthface \
+            target/x86_64-unknown-linux-musl/release/vinoauthface-unseal
           rm -f target/x86_64-unknown-linux-musl/release/vinoauthface-tray target/x86_64-unknown-linux-musl/release/vinoauthface-helper
 
       - name: "Branch 3: no cargo, no local binaries -> checksum-verified download"
@@ -249,6 +253,7 @@ jobs:
           test -x /usr/local/bin/vinoauthface-auth
           cmp /usr/local/bin/vinoauthface-auth /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
           cmp /usr/local/libexec/vinoauthface-helper /tmp/fake-release/vinoauthface-helper-x86_64-unknown-linux-musl
+          cmp /usr/local/libexec/vinoauthface-unseal /tmp/fake-release/vinoauthface-unseal-x86_64-unknown-linux-musl
 
       # The same fake release, plus a source bundle built the way release.yml builds it.
       - name: vinoauthface-upgrade installs from the source bundle
@@ -335,6 +340,8 @@ jobs:
           test ! -e /etc/ld.so.conf.d/face-auth-openvino.conf
           readelf -d /usr/local/bin/vinoauthface-auth | grep -q 'RPATH.*/usr/local/lib/face-auth/openvino'
           ldd /usr/local/bin/vinoauthface-auth | grep -q 'libopenvino_c.*/usr/local/lib/face-auth/openvino/'
+          # Its SELinux domain can't read OpenVINO, so it must not link it.
+          ! ldd /usr/local/libexec/vinoauthface-unseal | grep -q openvino
 
       - name: Redeploy reuses the verified prefix
         run: |

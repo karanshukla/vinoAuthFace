@@ -77,11 +77,11 @@ GDM and COSMIC aren't covered: `gdm-password` and `cosmic-greeter` also run thei
 where they keep the face-or-password line.
 
 The greeter runs face-auth in SELinux's `xdm_t`, which needs `deploy.sh`'s policy (see
-[install.md](install.md#selinux)). With SELinux enforcing, sealed templates (`seal_embeddings =
-true`) don't work there yet: unsealing needs the TPM and systemd's host credential key, which the
-greeter's domain can't have without reading every systemd credential. `face` falls back to the
-password, and `login-mode.sh` refuses `both`, which nobody could get past. A confined domain for
-face-auth fixes this ([#122](https://github.com/karanshukla/vinoAuthFace/issues/122)).
+[install.md](install.md#selinux)). Sealed templates (`seal_embeddings = true`) are unsealed there
+by `vinoauthface-unseal` in its own domain, so the greeter never gets the TPM or systemd's host
+key. An install without the helper (a release from before it) can't unseal at the greeter:
+`face` falls back to the password, and `login-mode.sh` refuses `both`, which nobody could get
+past. Re-run `deploy.sh` to fix that.
 
 Plasma before 6.7 has a bug where a biometric unlock counts against `pam_faillock`
 (kscreenlocker 29d01bf7), so repeated face unlocks can lock the password out until it expires.
