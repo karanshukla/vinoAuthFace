@@ -6,6 +6,8 @@ vinoAuthFace only speaks V4L2 via `uvcvideo`. There's no libcamera integration, 
 different kernel stack (Intel IPU6, MIPI CSI) is unreachable whatever format it reports. Within
 `uvcvideo` it needs an IR capture node (`GREY`, `YUYV` or `Y16`) for the spoof resistance in
 [security.md](security.md) to hold. The pixel format is read from the driver, not assumed.
+`Y16` from a 10- or 12-bit sensor may sit in the low bits of each sample; capture scales it up
+from the highest bit seen during the scan, so either alignment works.
 
 | Camera stack | `vinoauthface-camera-diag list` output | Support |
 |---|---|---|

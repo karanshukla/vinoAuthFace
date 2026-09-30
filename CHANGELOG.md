@@ -63,6 +63,10 @@ replayed on top:
   install with a model already set or faces enrolled keeps its model.
 - Optional OpenVINO/NPU backend, YUYV/Y16 capture, IR auto-detect for sensors
   whose sysfs name does not say IR.
+- Y16 from a 10- or 12-bit sensor that fills only the low bits is scaled up
+  to the full range, so it no longer reads as too dark on every frame (#109).
+  The depth is the highest bit seen in the scan so far and never drops, so a
+  dark emitter frame isn't brightened once a lit one has been seen.
 - polkit-1 and Bitwarden unlock, release-binary download in `deploy.sh`, CI.
 - `face-camera-diag` and `face-similarity-check`; 30-frame enrolment default.
 
