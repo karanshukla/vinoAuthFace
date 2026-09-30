@@ -97,6 +97,7 @@ pub struct FaceAuthConfig {
     pub start_delay_ms: Option<u64>,
     pub start_delay_scope: Option<String>,
     pub require_confirmation_elevation: Option<bool>,
+    pub update_check: Option<bool>,
 }
 
 impl Default for FaceAuthConfig {
@@ -134,6 +135,7 @@ impl Default for FaceAuthConfig {
             start_delay_ms: None,
             start_delay_scope: None,
             require_confirmation_elevation: None,
+            update_check: None,
         }
     }
 }
@@ -633,6 +635,12 @@ impl FaceAuthConfig {
     /// able to switch it off.
     pub fn bind_camera(&self) -> bool {
         self.bind_camera.unwrap_or(true)
+    }
+
+    /// Whether `vinoauthface doctor` and the tray may ask GitHub for the newest
+    /// release. Default on; never consulted by the authentication path.
+    pub fn update_check(&self) -> bool {
+        self.update_check.unwrap_or(true)
     }
 
     /// Only authenticate the user who owns the active seat0 session. See

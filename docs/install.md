@@ -141,6 +141,24 @@ sudo semodule -i face_auth.pp
 
 Remove it with `sudo semodule -r face_auth`.
 
+## Updating
+
+Nothing updates itself. `vinoauthface doctor` prints an `update` line, and the tray adds an
+"Update available" entry plus one notification per new release, when a newer release exists. Both
+ask GitHub's public releases API through `curl` (tray: after a minute, then daily). Turn it off
+with `update_check = false` in `/etc/face-auth.toml`. Dev builds never check.
+
+To update, from your checkout:
+
+```bash
+git pull
+sudo ./deploy.sh
+```
+
+A checkout on a release tag installs that release's binaries (or builds them, with Rust
+installed). Your config, templates and PAM setup are kept. New settings are appended to
+`/etc/face-auth.toml` as commented defaults.
+
 ## Updating after a code change
 
 ```bash

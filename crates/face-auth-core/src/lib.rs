@@ -11,6 +11,7 @@ pub mod scrfd;
 pub mod seal;
 pub mod seat;
 pub mod storage;
+pub mod update;
 pub mod user;
 pub mod verify;
 
