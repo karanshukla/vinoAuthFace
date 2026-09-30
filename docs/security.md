@@ -102,8 +102,17 @@ of systemd, and the blobs live in `/var/lib/face-auth`, which survives image upd
 
 ## Frame injection (a fake camera)
 
-By default vinoAuthFace trusts frames from whatever `device` resolves to. A USB device claiming the
-real camera's VID/PID (just a string; any device can) could feed replayed frames.
+**Camera binding (default on).** Each enrolment records the camera's USB vendor:product ID in the
+user's store (`<user>/cameras`), and a scan from any other camera is refused before it opens:
+another webcam, or a camera with no USB identity such as a v4l2loopback node, can't stand in for
+the IR sensor. It's an error, not a failed attempt, so PAM falls through to the password and the
+lockout isn't touched. Accounts enrolled before this existed, or on a camera with no USB ID (MIPI),
+accept any camera until their next enrolment; `sudo vinoauthface doctor` says which. `bind_camera =
+false` turns it off. Adapted from [facelock](https://github.com/tyvsmith/facelock)'s device
+coupling.
+
+That ID is just a string, though: a programmable USB device can claim the real camera's VID/PID and
+feed replayed frames.
 `pin-camera.sh` closes this by pinning the camera's physical USB port path and V4L2 index, read
 from sysfs, which a spoofed device can't occupy at the same time as the real one. vinoAuthFace
 re-verifies that identity on every authentication and enrolment, independent of the udev rule.

@@ -5,7 +5,7 @@
 //! question (config, camera, pinning, sealing) doctor calls it, so the two can't
 //! drift apart.
 
-use face_auth_core::{capture, config::SYSTEM_CONFIG_PATH, seal, storage::EmbeddingStore, FaceAuthConfig};
+use face_auth_core::{cameras, capture, config::SYSTEM_CONFIG_PATH, seal, storage::EmbeddingStore, FaceAuthConfig};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -130,16 +130,74 @@ pub fn backend_verdict(backend: &str, npu_device: &str, npu_built: bool) -> Chec
     }
 }
 
-fn model_check(name: &str, path: &str) -> Check {
-    match std::fs::metadata(path) {
-        Ok(m) if m.len() > 0 => check(Status::Ok, name, format!("{path} ({} bytes)", m.len())),
-        Ok(_) => check(Status::Fail, name, format!("{path} is empty")),
-        Err(e) => check(Status::Fail, name, format!("{path}: {e}")),
+/// Would auth accept the current camera for each enrolled account? An
+/// account with no recorded camera accepts any (`cameras::check`).
+pub fn binding_verdict(on: bool, device: &str, live: Option<&str>, users: &[(String, Vec<String>)]) -> Check {
+    if !on {
+        return check(Status::Info, "camera binding", "off (bind_camera = false)");
+    }
+    let refused: Vec<&str> = users
+        .iter()
+        .filter(|(_, ids)| cameras::check(ids, live, device).is_err())
+        .map(|(user, _)| user.as_str())
+        .collect();
+    let unbound = users.iter().filter(|(_, ids)| ids.is_empty()).count();
+    let live = live.unwrap_or("no USB ID");
+    if !refused.is_empty() {
+        check(
+            Status::Fail,
+            "camera binding",
+            format!("{device} ({live}) isn't a camera {} enrolled on; re-enrol", refused.join(", ")),
+        )
+    } else if unbound > 0 {
+        check(
+            Status::Info,
+            "camera binding",
+            format!("{unbound} account(s) not bound to a camera yet (bound at next enrolment)"),
+        )
+    } else {
+        check(Status::Ok, "camera binding", format!("{device} ({live}) matches every enrolment"))
     }
 }
 
+/// The same pins `deploy.sh` verifies downloads against (`sha256sum` format).
+const PINNED_MODELS: &str = include_str!("../../../config/models.sha256");
+
+/// The pinned SHA-256 for a model file name, if it is one we ship.
+pub fn pinned_sha(pins: &str, file_name: &str) -> Option<String> {
+    pins.lines().find_map(|l| {
+        let (sha, name) = l.split_once("  ")?;
+        (name.trim() == file_name).then(|| sha.to_string())
+    })
+}
+
+pub fn model_verdict(name: &str, path: &str, pinned: Option<&str>, actual: std::io::Result<String>) -> Check {
+    match (actual, pinned) {
+        (Err(e), _) => check(Status::Fail, name, format!("{path}: {e}")),
+        (Ok(sha), Some(want)) if sha == want => check(Status::Ok, name, format!("{path} (checksum matches)")),
+        (Ok(sha), Some(want)) => check(
+            Status::Fail,
+            name,
+            format!("{path} doesn't match its pinned checksum ({sha}, want {want}); re-run deploy.sh"),
+        ),
+        (Ok(_), None) => check(Status::Info, name, format!("{path} isn't a model deploy.sh pins; not verified")),
+    }
+}
+
+fn sha256_file(path: &str) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut std::fs::File::open(path)?, &mut hasher)?;
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn model_check(name: &str, path: &str) -> Check {
+    let file_name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    model_verdict(name, path, pinned_sha(PINNED_MODELS, &file_name).as_deref(), sha256_file(path))
+}
+
 pub fn run(pam_dir: &Path) -> Vec<Check> {
-    let mut out = Vec::new();
+    let mut out = vec![check(Status::Info, "version", crate::VERSION)];
 
     for service in PAM_SERVICES {
         if let Ok(contents) = std::fs::read_to_string(pam_dir.join(service)) {
@@ -180,6 +238,12 @@ pub fn run(pam_dir: &Path) -> Vec<Check> {
                 }
             }
             out.push(model_tag_verdict(&config.model_tag(), &stored));
+            let bound: Vec<(String, Vec<String>)> = stored
+                .iter()
+                .map(|(user, _)| (user.clone(), cameras::load(user, &dir).unwrap_or_default()))
+                .collect();
+            let device = config.device();
+            out.push(binding_verdict(config.bind_camera(), &device, cameras::camera_id(&device).as_deref(), &bound));
         }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && unsafe { libc::geteuid() } != 0 => {
             out.push(check(Status::Info, "enrolment", "store is root-only; re-run with sudo to count enrolled accounts"))
@@ -253,7 +317,40 @@ pub fn report(checks: &[Check]) -> i32 {
 mod tests {
     use super::*;
 
-    const OURS: &str = "auth sufficient pam_exec.so quiet /usr/local/bin/vinoauthface-auth";
+    const OURS: &str = "auth sufficient pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth";
+
+    #[test]
+    fn binding_refuses_a_camera_nobody_enrolled_on() {
+        let users = vec![
+            ("alice".to_string(), vec!["2b7e:55c0".to_string()]),
+            ("bob".to_string(), vec![]),
+        ];
+        assert_eq!(binding_verdict(true, "/dev/video2", Some("2b7e:55c0"), &users).status, Status::Info);
+        let v = binding_verdict(true, "/dev/video2", Some("046d:085e"), &users);
+        assert_eq!(v.status, Status::Fail);
+        assert!(v.detail.contains("alice") && !v.detail.contains("bob"));
+        assert_eq!(binding_verdict(false, "/dev/video2", None, &users).status, Status::Info);
+        assert_eq!(binding_verdict(true, "/dev/video2", Some("2b7e:55c0"), &users[..1]).status, Status::Ok);
+    }
+
+    #[test]
+    fn pins_cover_every_shipped_model() {
+        for name in ["w600k_mbf.onnx", "w600k_r50.onnx", "det_500m.onnx", "version-slim-320.onnx"] {
+            let sha = pinned_sha(PINNED_MODELS, name).unwrap_or_else(|| panic!("{name} not pinned"));
+            assert!(sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit()), "{name}: {sha}");
+        }
+        assert_eq!(pinned_sha(PINNED_MODELS, "custom.onnx"), None);
+    }
+
+    #[test]
+    fn model_checksum_verdicts() {
+        let ok = || Ok("ab".to_string());
+        assert_eq!(model_verdict("m", "/p", Some("ab"), ok()).status, Status::Ok);
+        assert_eq!(model_verdict("m", "/p", Some("cd"), ok()).status, Status::Fail);
+        assert_eq!(model_verdict("m", "/p", None, ok()).status, Status::Info);
+        let missing = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(model_verdict("m", "/p", Some("ab"), Err(missing)).status, Status::Fail);
+    }
 
     #[test]
     fn stale_model_tag_fails_and_unknown_passes() {

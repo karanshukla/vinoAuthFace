@@ -967,6 +967,7 @@ dependencies = [
  "clap_complete",
  "face-auth-core",
  "libc",
+ "sha2",
  "tracing",
  "tracing-subscriber",
 ]

@@ -40,7 +40,7 @@ file they own, and is applied as a narrowing overlay:
 | `threshold`, `detector_threshold`, `liveness_motion_threshold`, `liveness_residual_motion_threshold`, `min_face_size_ratio` | Honoured only if **>= the system value**. A lower number is ignored |
 | `device` | Honoured only if the path is a real IR capture device on this machine (IR-looking sysfs name, or a physical greyscale sensor, and opens in a supported format) |
 | `scan_duration_ms`, `scan_interval_ms`, `capture_timeout_ms`, `liveness_grace_ms` | Honoured within built-in bounds |
-| `model_path`, `detector_model_path`, `embeddings_dir`, `pinned_camera_*`, `lockout_*`, `seal_embeddings`, `backend`, `npu_device`, `liveness_window_ms`, `seat_check`, `abort_if_*`, `start_delay_*`, `require_confirmation_elevation` | **Ignored**: system policy only |
+| `model_path`, `detector_model_path`, `embeddings_dir`, `pinned_camera_*`, `lockout_*`, `seal_embeddings`, `backend`, `npu_device`, `liveness_window_ms`, `bind_camera`, `seat_check`, `abort_if_*`, `start_delay_*`, `require_confirmation_elevation` | **Ignored**: system policy only |
 
 This stops code running as you, which doesn't know your password, from writing a permissive
 `~/.config/face-auth.toml` and turning your next `sudo` into a root shell. To *loosen* matching,
@@ -78,9 +78,9 @@ upstream may still match, but re-enrolling is the safer bet.
 Enrolment isn't user-writable on purpose: whatever can write a face template decides whose face
 unlocks that account. If your own login could rewrite it, so could anything running as you.
 
-## Recognition model: mbf (default) vs r50
+## Recognition model: mbf vs r50
 
-| | `mbf` (default) | `r50` |
+| | `mbf` | `r50` |
 |---|---|---|
 | Backbone | MobileFaceNet | ResNet50 |
 | Pack | `buffalo_sc` | `buffalo_l` |
@@ -89,10 +89,12 @@ unlocks that account. If your own login could rewrite it, so could anything runn
 | Genuine-match similarity (same benchmark) | mean 0.815, min 0.759 | mean 0.875, min 0.830 |
 
 `r50` gives a wider match margin for a few milliseconds per frame, which the camera-paced scan
-loop hides:
+loop hides. `deploy.sh` picks `r50` for an NPU (OpenVINO) build and `mbf` for a CPU (tract) build.
+An existing install keeps its model: the NPU default isn't applied when the config already sets
+`model_path` or someone is enrolled. Choose explicitly with:
 
 ```bash
-sudo FACE_AUTH_RECOGNITION_MODEL=r50 ./deploy.sh
+sudo FACE_AUTH_RECOGNITION_MODEL=r50 ./deploy.sh   # or mbf
 ```
 
 **Switching models requires re-enrolling.** The two produce incompatible embedding spaces with the

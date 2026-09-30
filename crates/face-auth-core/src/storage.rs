@@ -87,7 +87,7 @@ pub(crate) fn user_store_dir(user: &str, embeddings_dir: &Path) -> anyhow::Resul
 /// its directory (root, in production), with no group or other write access, a
 /// single link and a bounded size. A FIFO or a device would otherwise hang or
 /// mislead the PAM helper, which reads this as root.
-fn check_template_file(file: &File, dir_uid: u32) -> anyhow::Result<()> {
+pub(crate) fn check_template_file(file: &File, dir_uid: u32) -> anyhow::Result<()> {
     let meta = file.metadata()?;
     anyhow::ensure!(
         meta.is_file()

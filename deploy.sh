@@ -100,28 +100,25 @@ for arg in "$@"; do
     esac
 done
 
-# Recognition model. "mbf" (MobileFaceNet, buffalo_sc) is the default: ~14MB
-# and fast. "r50" (ResNet50, buffalo_l) is ~175MB and more accurate, at a few
-# ms more per frame. Select with:
+# Recognition model. "mbf" (MobileFaceNet, buffalo_sc) is ~14MB and fast;
+# "r50" (ResNet50, buffalo_l) is ~175MB with a wider match margin, at a few ms
+# more per frame. An NPU build defaults to r50, where those ms are ~3; a CPU
+# (tract) build defaults to mbf. Override either way with:
 #   sudo FACE_AUTH_RECOGNITION_MODEL=r50 ./deploy.sh
 # Switching models means re-enrolling: the two produce incompatible embedding
 # spaces, and face-auth refuses to compare across them (see storage.rs).
-RECOGNITION_MODEL="${FACE_AUTH_RECOGNITION_MODEL:-mbf}"
-case "$RECOGNITION_MODEL" in
-    mbf)
-        MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
-        MODEL_ZIP="buffalo_sc.zip"
-        MODEL_NAME="w600k_mbf.onnx"
-        MODEL_CHECKSUM="9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f"
-        ;;
-    r50)
-        MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
-        MODEL_ZIP="buffalo_l.zip"
-        MODEL_NAME="w600k_r50.onnx"
-        MODEL_CHECKSUM="4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
-        ;;
+# Every model's pinned SHA-256, shared with `vinoauthface doctor` (which
+# embeds the same file), so the two can't drift.
+pinned_sha() {
+    awk -v name="$1" '$2 == name { print $1 }' config/models.sha256
+}
+
+# Checked here so a typo fails before the build; resolved after it, once the
+# backend is known.
+case "${FACE_AUTH_RECOGNITION_MODEL:-}" in
+    ""|mbf|r50) ;;
     *)
-        fail "Unknown FACE_AUTH_RECOGNITION_MODEL '$RECOGNITION_MODEL'" "Expected 'mbf' or 'r50'."
+        fail "Unknown FACE_AUTH_RECOGNITION_MODEL '$FACE_AUTH_RECOGNITION_MODEL'" "Expected 'mbf' or 'r50'."
         exit 1
         ;;
 esac
@@ -134,7 +131,11 @@ esac
 DETECTOR_NAME="det_500m.onnx"
 DETECTOR_ZIP="buffalo_sc.zip"
 DETECTOR_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
-DETECTOR_CHECKSUM="5e4447f50245bbd7966bd6c0fa52938c61474a04ec7def48753668a9d8b4ea3a"
+DETECTOR_CHECKSUM="$(pinned_sha det_500m.onnx)"
+if [ -z "$DETECTOR_CHECKSUM" ]; then
+    fail "No pinned checksum for the detector in config/models.sha256"
+    exit 1
+fi
 
 BIN_DIR="/usr/local/bin"
 SHARE_DIR="/usr/local/share/face-auth"
@@ -149,7 +150,7 @@ NPU_CACHE_DIR="/var/cache/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
 OPENVINO_INSTALL_DIR="/usr/local/lib/face-auth/openvino"
 
-PAM_LINE="auth       sufficient  pam_exec.so quiet /usr/local/bin/vinoauthface-auth"
+PAM_LINE="auth       sufficient  pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth"
 
 if [ "$(id -u)" -ne 0 ]; then
     fail "Run this with sudo" "It installs into /usr/local, /etc and /var/lib."
@@ -393,7 +394,17 @@ else
         # the deploy logic running them.
         DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$GIT_TAG"
     else
-        DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/latest/download"
+        # Not releases/latest: GitHub's "latest" skips pre-releases, and every
+        # release is one (release.yml), so it 404s. Ask for the newest of any
+        # kind instead.
+        LATEST_TAG="$(curl -fsSL "https://api.github.com/repos/$RELEASE_REPO/releases?per_page=1" \
+            | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4 || true)"
+        if [ -z "$LATEST_TAG" ]; then
+            fail "Could not find the latest release of $RELEASE_REPO" \
+                "Install Rust (https://rustup.rs) to build from source instead."
+            exit 1
+        fi
+        DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$LATEST_TAG"
     fi
 
     skip Build "no Rust toolchain; downloading release binaries"
@@ -504,6 +515,45 @@ fi
 # unlock time with a confusing error, so check the linkage now.
 if [ "$NPU_ACTIVE" = 1 ] && ! ldd "$BIN_SRC/vinoauthface-auth" | grep -q libopenvino; then
     fail "NPU build requested, but $BIN_SRC/vinoauthface-auth has no OpenVINO linkage"
+    exit 1
+fi
+
+# ---- Recognition model ----
+# The NPU default applies only where it can't strand anyone: a config that
+# already names a model keeps it, and so does a store with enrolled templates,
+# which were made with mbf and would stop matching.
+ENROLLED="$(find "$VAR_DIR" -mindepth 2 -maxdepth 2 -name embeddings.bin -print -quit 2>/dev/null || true)"
+CONF_MODEL="$(sed -n 's@^model_path *= *".*/w600k_\(mbf\|r50\)\.onnx"@\1@p' "$CONFIG_DIR/face-auth.toml" 2>/dev/null | head -1 || true)"
+if [ -n "${FACE_AUTH_RECOGNITION_MODEL:-}" ]; then
+    RECOGNITION_MODEL="$FACE_AUTH_RECOGNITION_MODEL"
+elif [ -n "$CONF_MODEL" ]; then
+    RECOGNITION_MODEL="$CONF_MODEL"
+elif [ "$NPU_ACTIVE" = 1 ] && ! grep -qs '^model_path' "$CONFIG_DIR/face-auth.toml"; then
+    if [ -z "$ENROLLED" ]; then
+        RECOGNITION_MODEL="r50"
+    else
+        RECOGNITION_MODEL="mbf"
+        skip Model "keeping mbf: faces are enrolled with it (FACE_AUTH_RECOGNITION_MODEL=r50 to switch, then re-enrol)"
+    fi
+else
+    RECOGNITION_MODEL="mbf"
+fi
+case "$RECOGNITION_MODEL" in
+    mbf)
+        MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
+        MODEL_ZIP="buffalo_sc.zip"
+        MODEL_NAME="w600k_mbf.onnx"
+        MODEL_CHECKSUM="$(pinned_sha w600k_mbf.onnx)"
+        ;;
+    r50)
+        MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
+        MODEL_ZIP="buffalo_l.zip"
+        MODEL_NAME="w600k_r50.onnx"
+        MODEL_CHECKSUM="$(pinned_sha w600k_r50.onnx)"
+        ;;
+esac
+if [ -z "$MODEL_CHECKSUM" ]; then
+    fail "No pinned checksum for $MODEL_NAME in config/models.sha256"
     exit 1
 fi
 
@@ -644,7 +694,8 @@ fetch() {
     return 1
 }
 
-# Models already in place are not re-checked: this pass only installs.
+# Models already in place are not re-checked here: this pass only installs.
+# `vinoauthface doctor` checks installed models against the same pins.
 MODELS_NEW=()
 if [ -f "$SHARE_DIR/$MODEL_NAME" ]; then
     :
@@ -735,7 +786,11 @@ if [ "$RECOGNITION_MODEL" != "mbf" ]; then
         [ -s "$CONF" ] && [ "$(tail -c1 "$CONF" | wc -l)" -eq 0 ] && echo >> "$CONF"
         echo "model_path = \"$SHARE_DIR/$MODEL_NAME\"" >> "$CONF"
     fi
-    warn Config "model_path set to $MODEL_NAME. Switching models means re-enrolling."
+    if [ -n "$ENROLLED" ]; then
+        warn Config "model_path set to $MODEL_NAME. Switching models means re-enrolling."
+    else
+        ok Config "model_path = $MODEL_NAME"
+    fi
 fi
 
 # Keep the backend line in sync with what was actually built. A mismatch
@@ -910,6 +965,7 @@ fi
 #   $VAR_DIR/                        root:face-auth 2750
 #   $VAR_DIR/<user>/                 root:face-auth 2750
 #   $VAR_DIR/<user>/embeddings.bin   root:face-auth 0640
+#   $VAR_DIR/<user>/cameras          root:face-auth 0640
 #   $VAR_DIR/<user>/lockout/         root:face-auth 2770
 #
 # The set-group-ID bit on the directories makes new entries inherit the group. Earlier versions made this 1777 with

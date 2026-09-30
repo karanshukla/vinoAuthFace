@@ -43,7 +43,8 @@ cargo deny check
   allow-list, advisories), and `deploy-script`, which runs a real `sudo ./deploy.sh` /
   `./uninstall.sh` cycle through every build path, including the checksum-verified download via
   a `file://` override (`FACE_AUTH_DEPLOY_RELEASE_BASE`, deploy.sh-only, not a config option).
-- `release.yml` publishes static musl binaries as a GitHub pre-release on `v*` tags.
+- `release.yml` publishes static musl binaries as a GitHub pre-release on `v*` tags. Versions
+  are consecutive (`v2`, `v3`), cut with `scripts/release.sh`; see `docs/releasing.md`.
 - `ci.yml`'s `npu` job builds, lints and tests the `npu` feature against an OpenVINO that
   ovfetch provisions, then runs the ovfetch deploy path (compiling on OpenVINO's CPU plugin,
   since runners have no NPU). It isn't a required check. `release.yml` still ships musl only.
@@ -170,8 +171,8 @@ making the raw field required, so old config files without the new key keep work
 
 ### Recognition-model identity (`storage.rs`, `config.rs::model_tag()`)
 
-Two interchangeable recognition models are supported (`mbf` default / `r50` opt-in, selected at
-deploy time via `FACE_AUTH_RECOGNITION_MODEL`, see `docs/configuration.md`'s model table). They produce
+Two interchangeable recognition models are supported (`r50` default for NPU builds, `mbf` for CPU
+builds; override at deploy time via `FACE_AUTH_RECOGNITION_MODEL`, see `docs/configuration.md`'s model table). They produce
 numerically incompatible 512-d embedding spaces, so mixing them silently would corrupt matching.
 `EmbeddingStore` (v2 binary format) tags each saved embeddings file with `model_tag` (the
 `model_path` basename, plus `+<detector basename>` for any detector but the legacy
@@ -202,7 +203,8 @@ the set-group-ID bit on directories makes entries inherit the `face-auth` group)
 lock-screen path must write goes under `lockout/`; anything else stays group read-only. Paths
 are built by `storage::user_store_dir` (which validates the username). Loads bound every length
 read from disk before allocating (`MAX_EMBEDDINGS`, `MAX_MODEL_TAG_LEN`) and reject trailing bytes and
-non-finite values. Follow this pattern for any new per-user state file.
+non-finite values. Follow this pattern for any new per-user state file; `cameras.rs` (the
+text `<user>/cameras` list of enrolled USB IDs) is the small example.
 
 `/var/lib/face-auth` itself is root:root `0700`. Never make it user-writable: whatever can write
 a template chooses whose face unlocks the account (upstream's privesc fix, issue #25).

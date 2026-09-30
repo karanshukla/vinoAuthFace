@@ -90,6 +90,7 @@ sudo ./uninstall.sh --purge   # templates too
 | [Troubleshooting](docs/troubleshooting.md) | Debug output, common errors |
 | [Tray icon](docs/tray.md) | Optional tray: status, enrol, retrain, test scan, uninstall (installed by default, `--no-tray` to skip) |
 | [Security model](docs/security.md) | Trust model, spoofing, frame injection, limitations |
+| [Releasing](docs/releasing.md) | Consecutive version tags, `scripts/release.sh`, pre-releases |
 | [Architecture](docs/architecture.md) | Pipeline, models and licensing, project layout, upstream relationship |
 
 Changes: [CHANGELOG.md](CHANGELOG.md). Reporting a vulnerability: [SECURITY.md](SECURITY.md).
