@@ -9,6 +9,7 @@
 use face_auth_core::{capture, update, user, Camera, FaceAuthConfig};
 use face_auth_tray::helper::{Verb, FACE_AUTH, HELPER, SAFE_PATH};
 use face_auth_tray::icon::{self, State};
+use face_auth_tray::idle::{self, Idle};
 use face_auth_tray::{progress, scanning};
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{StandardItem, SubMenu};
@@ -58,6 +59,8 @@ enum Msg {
     Restart,
     /// An update check finished; `Some` is a newer release tag.
     Update(Option<String>),
+    /// A menu entry was clicked: the icon stays in view.
+    Touch,
     Quit,
 }
 
@@ -181,6 +184,8 @@ struct Tray {
     confirm: Option<Confirm>,
     /// A newer release than the one running, from the daily update check.
     update: Option<String>,
+    /// Idle long enough to tuck the icon away (see `idle.rs`).
+    hidden: bool,
 }
 
 impl Tray {
@@ -226,7 +231,10 @@ fn item(label: &str, icon: &str, enabled: bool, activate: impl Fn(&mut Tray) + S
         label: label.into(),
         icon_name: icon.into(),
         enabled,
-        activate: Box::new(activate),
+        activate: Box::new(move |t: &mut Tray| {
+            let _ = t.tx.send(Msg::Touch);
+            activate(t)
+        }),
         ..Default::default()
     }
     .into()
@@ -262,6 +270,9 @@ impl ksni::Tray for Tray {
     fn status(&self) -> ksni::Status {
         if self.scanning || self.busy.is_some() {
             ksni::Status::NeedsAttention
+        } else if self.hidden {
+            // Plasma moves Passive items behind the panel's arrow.
+            ksni::Status::Passive
         } else {
             ksni::Status::Active
         }
@@ -526,6 +537,10 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
     let mut scanning = false;
     let mut next_update_check = Instant::now() + UPDATE_FIRST_CHECK;
     let mut notified_update: Option<String> = None;
+    let minutes = FaceAuthConfig::load().map_or(30, |c| c.tray_idle_minutes());
+    let mut idle = Idle::new(minutes, idle::boottime());
+    let mut hidden = false;
+    let mut state = handle.update(|t| t.state());
     loop {
         match rx.recv_timeout(SCAN_POLL) {
             Ok(Msg::Quit) => return,
@@ -534,8 +549,10 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
                 eprintln!("vinoauthface-tray: cannot restart {TRAY}: {err}");
                 return;
             }
+            Ok(Msg::Touch) => idle.touch(idle::boottime()),
             Ok(Msg::Update(latest)) => {
                 if latest.is_some() && latest != notified_update {
+                    idle.touch(idle::boottime());
                     if let Some(tag) = &latest {
                         Notifier::new().send(
                             0,
@@ -548,6 +565,7 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
                 handle.update(|t| t.update = latest);
             }
             Ok(Msg::Run(action)) => {
+                idle.touch(idle::boottime());
                 let (handle, tx, user) = (handle.clone(), tx.clone(), user.clone());
                 handle.clone().update(|t| t.busy = Some("Starting…".into()));
                 std::thread::spawn(move || {
@@ -593,6 +611,19 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
             handle.update(|t| t.status.enrolled = enrolled);
             last_status = Instant::now();
         }
+
+        // A scan, an action or a status change shows the icon again; so does
+        // a busy action that outlasts the delay, until it finishes.
+        let (now_state, busy) = handle.update(|t| (t.state(), t.busy.is_some())).unzip();
+        if now_state != state || busy == Some(true) {
+            state = now_state;
+            idle.touch(idle::boottime());
+        }
+        let hide = idle.hidden(idle::boottime());
+        if hide != hidden {
+            hidden = hide;
+            handle.update(|t| t.hidden = hide);
+        }
     }
 }
 
@@ -634,6 +665,7 @@ fn main() -> anyhow::Result<()> {
         busy: None,
         confirm: None,
         update: None,
+        hidden: false,
     };
     // Assumed, not checked: at login this can start before Plasma's tray does.
     let handle = tray.assume_sni_available(true).spawn()?;
