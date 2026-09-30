@@ -1,16 +1,40 @@
-module face_auth 1.1;
+module face_auth 1.2;
 
 require {
     type xdm_t;
+    type local_login_t;
     type unconfined_t;
     type v4l_device_t;
     type games_exec_t;
+    type tpm_device_t;
+    type device_t;
+    type init_var_lib_t;
+    type var_t;
+    type var_lib_t;
+    type root_t;
+    type usr_t;
+    type bin_t;
+    type lib_t;
+    type ld_so_t;
+    type ld_so_cache_t;
+    type etc_t;
+    type machineid_t;
+    type proc_t;
+    type sysfs_t;
+    type security_t;
+    role system_r;
+    attribute domain;
+    attribute exec_type;
     attribute file_type;
     attribute non_security_file_type;
     attribute non_auth_file_type;
-    class chr_file map;
+    class process { transition sigchld };
+    class fd use;
+    class fifo_file { getattr read write ioctl };
+    class chr_file { getattr open read write ioctl map };
+    class lnk_file read;
     class dir { getattr search open read write add_name remove_name };
-    class file { getattr open read map lock create write setattr rename unlink };
+    class file { getattr open read map lock create write setattr rename unlink execute execute_no_trans entrypoint };
 }
 
 # Labels come from face-auth.fc. /dev/accel gets the GPU's dri_device_t there,
@@ -47,3 +71,58 @@ allow xdm_t face_auth_cache_t:file { getattr open read map lock };
 # A cold cache compiles in the NPU driver, which stats every directory in
 # /usr/lib64 and gives up on the first it can't.
 allow xdm_t games_exec_t:dir getattr;
+
+# ---- Unsealing (#122) ----
+# Sealed templates need the TPM and systemd's host credential key
+# (/var/lib/systemd/credential.secret), which decrypts every systemd credential
+# on the machine. The greeters don't get either: they exec
+# /usr/local/libexec/vinoauthface-unseal, which runs in face_auth_unseal_t and
+# only ever becomes `systemd-creds decrypt` for one of our credential names
+# (crates/face-auth/src/unseal.rs). Nothing else can enter this domain.
+type face_auth_unseal_t;
+typeattribute face_auth_unseal_t domain;
+role system_r types face_auth_unseal_t;
+
+type face_auth_unseal_exec_t;
+typeattribute face_auth_unseal_exec_t exec_type, file_type, non_security_file_type, non_auth_file_type;
+
+allow face_auth_unseal_t face_auth_unseal_exec_t:file { entrypoint getattr open read execute map };
+
+# pam_exec runs vinoauthface-auth in the greeter's domain (xdm_t; local_login_t
+# for a TTY login), which execs the helper with pipes on stdin/out/err.
+type_transition xdm_t face_auth_unseal_exec_t:process face_auth_unseal_t;
+allow xdm_t face_auth_unseal_exec_t:file { getattr open read execute map };
+allow xdm_t face_auth_unseal_t:process transition;
+allow face_auth_unseal_t xdm_t:fd use;
+allow face_auth_unseal_t xdm_t:fifo_file { getattr read write ioctl };
+allow face_auth_unseal_t xdm_t:process sigchld;
+
+type_transition local_login_t face_auth_unseal_exec_t:process face_auth_unseal_t;
+allow local_login_t face_auth_unseal_exec_t:file { getattr open read execute map };
+allow local_login_t face_auth_unseal_t:process transition;
+allow face_auth_unseal_t local_login_t:fd use;
+allow face_auth_unseal_t local_login_t:fifo_file { getattr read write ioctl };
+allow face_auth_unseal_t local_login_t:process sigchld;
+
+# The helper execs /usr/bin/systemd-creds, which stays in this domain.
+allow face_auth_unseal_t { root_t usr_t bin_t etc_t var_t var_lib_t device_t }:dir { getattr search };
+allow face_auth_unseal_t bin_t:lnk_file read;
+allow face_auth_unseal_t bin_t:file { getattr open read execute execute_no_trans map };
+allow face_auth_unseal_t lib_t:dir { getattr search open read };
+allow face_auth_unseal_t lib_t:lnk_file read;
+allow face_auth_unseal_t lib_t:file { getattr open read execute map };
+allow face_auth_unseal_t ld_so_t:file { getattr open read execute map };
+allow face_auth_unseal_t ld_so_cache_t:file { getattr open read map };
+allow face_auth_unseal_t machineid_t:file { getattr open read };
+allow face_auth_unseal_t proc_t:dir { getattr search };
+allow face_auth_unseal_t proc_t:lnk_file read;
+allow face_auth_unseal_t proc_t:file { getattr open read };
+allow face_auth_unseal_t sysfs_t:dir { getattr search open read };
+allow face_auth_unseal_t sysfs_t:lnk_file read;
+allow face_auth_unseal_t sysfs_t:file { getattr open read };
+allow face_auth_unseal_t security_t:dir { getattr search };
+
+# What only this domain gets.
+allow face_auth_unseal_t tpm_device_t:chr_file { getattr open read write ioctl };
+allow face_auth_unseal_t init_var_lib_t:dir { getattr search open read };
+allow face_auth_unseal_t init_var_lib_t:file { getattr open read };

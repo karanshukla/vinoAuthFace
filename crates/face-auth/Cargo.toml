@@ -9,6 +9,13 @@ publish.workspace = true
 name = "vinoauthface-auth"
 path = "src/main.rs"
 
+# Std only, and not linked against face-auth-core: it runs in its own SELinux
+# domain, which should load nothing but libc (and, for npu builds, OpenVINO
+# must not come along).
+[[bin]]
+name = "vinoauthface-unseal"
+path = "src/unseal.rs"
+
 [dependencies]
 face-auth-core = { path = "../face-auth-core" }
 anyhow = { workspace = true }

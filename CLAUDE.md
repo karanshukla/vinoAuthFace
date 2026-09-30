@@ -88,6 +88,9 @@ Six crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/d
   `authenticate_scan`. Exit 0 = matched, exit 1 = anything else (PAM's `sufficient` line falls
   through to password). `vinoauthface-auth --verify USER` (root only) runs the same scan outside PAM;
   `vinoauthface-auth --enrolled` (tray status) answers for the caller's own user ID only.
+  The crate also builds `vinoauthface-unseal` (`src/unseal.rs`, std only): `seal::unseal` runs it
+  so sealed templates unseal in its own SELinux domain rather than the greeter's. Keep it free of
+  `face-auth-core` so an npu build never links OpenVINO into it.
 - **`crates/face-enroll`** (`src/main.rs`): The enrollment CLI (`clap`-based).
 - **`crates/face-similarity-check`** (`src/main.rs`): Offline debug tool, not deployed by
   `deploy.sh`. Runs the same CLAHE → detect → crop → encode → cosine-similarity pipeline as a

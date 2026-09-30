@@ -451,6 +451,15 @@ else
         mv "$DL_DIR/vinoauthface-$MUSL_TARGET" "$DL_DIR/bin/vinoauthface"
         BIN_SRC="$DL_DIR/bin"
         ok Download "release binaries, checksums verified"
+        # Optional: releases before it have none, and without it sealed
+        # templates still unseal everywhere but an SELinux-confined greeter.
+        asset="vinoauthface-unseal-$MUSL_TARGET"
+        if curl "${CURL_FLAGS[@]}" --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+                -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" \
+           && (cd "$DL_DIR" && grep -E "[ *]$asset\$" SHA256SUMS > want-unseal \
+                && [ "$(wc -l < want-unseal)" -eq 1 ] && sha256sum -c --strict --quiet want-unseal); then
+            mv "$DL_DIR/$asset" "$DL_DIR/bin/vinoauthface-unseal"
+        fi
         # Separately, so a release without the tray still installs the rest.
         if [ "$WITH_TRAY" = 1 ]; then
             TRAY_DL_OK=1
@@ -592,6 +601,11 @@ if findmnt -no OPTIONS --target "$BIN_DIR" 2>/dev/null | tr ',' '\n' | grep -qx 
 fi
 install -Dm755 "$BIN_SRC/vinoauthface" "$BIN_DIR/vinoauthface"
 ok Binaries "vinoauthface-auth, vinoauthface in $BIN_DIR"
+# Unseals TPM-sealed templates in its own SELinux domain (face-auth.te), so
+# the greeters never get the TPM or the host credential key.
+if [ -f "$BIN_SRC/vinoauthface-unseal" ]; then
+    install -D -o root -g root -m 0755 "$BIN_SRC/vinoauthface-unseal" /usr/local/libexec/vinoauthface-unseal
+fi
 # Names from before the rename. The old set-group-ID binary in particular must
 # not be left behind, still runnable.
 rm -f "$BIN_DIR/face-auth" "$BIN_DIR/face-enroll" "$BIN_DIR/face-auth-tray" \
@@ -1003,6 +1017,7 @@ elif command -v checkmodule &>/dev/null && command -v semodule_package &>/dev/nu
     semodule -i "$SELINUX_DIR/face_auth.pp"
     # udev labels the NPU node from here on; this covers the one already there.
     [ -d /dev/accel ] && restorecon -R /dev/accel 2>/dev/null || true
+    [ -f /usr/local/libexec/vinoauthface-unseal ] && restorecon /usr/local/libexec/vinoauthface-unseal
     ok SELinux "greeter policy loaded"
 else
     warn SELinux "Tools not found, so the lock screen can't reach the camera." \

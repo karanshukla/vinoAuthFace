@@ -68,7 +68,8 @@ of systemd, and the blobs live in `/var/lib/face-auth`, which survives image upd
   check `RUST_LOG=face_auth_core=debug` "store loaded" timing on your hardware.
 - **Needs both the TPM and `/var/lib/systemd/credential.secret`.** Scoped credentials can't use
   the TPM alone (`host+tpm2`). The host secret is root-only, and a disk without this machine's
-  TPM still can't unseal.
+  TPM still can't unseal. Under SELinux only `vinoauthface-unseal`'s domain gets them, never the
+  greeter's (see [install.md](install.md#selinux)).
 
 ## Presentation attacks (something held up to the real camera)
 

@@ -141,9 +141,13 @@ don't need it. `deploy.sh` installs a module, `selinux/face-auth.te` plus the la
 `deploy.sh` relabels the NPU node, the cache and the store after loading it, and the OpenVINO
 runtime after copying it in.
 
-Not covered yet: unsealing TPM-sealed templates from `xdm_t`
-([#122](https://github.com/karanshukla/vinoAuthFace/issues/122)). See
-[pam.md](pam.md#login-screen).
+Sealed templates (`seal_embeddings = true`) need the TPM and systemd's host credential key, which
+decrypts every systemd credential on the machine, so `xdm_t` gets neither. The greeter instead
+execs `/usr/local/libexec/vinoauthface-unseal`, labelled `face_auth_unseal_exec_t`, which moves
+into its own domain, `face_auth_unseal_t`, the only one with `/dev/tpmrm0` and
+`credential.secret`. It takes a UID and one of face-auth's credential names, and only ever runs
+`systemd-creds decrypt` on them. `xdm_t` (and `local_login_t`, for a TTY login) gains nothing but
+the right to exec it.
 
 If `deploy.sh` reported missing SELinux tools, install the module by hand:
 

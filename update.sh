@@ -158,6 +158,7 @@ printf '\n'
 # Set-group-ID face-auth, as deploy.sh installs it (see docs/security.md).
 put "$BIN_SRC/vinoauthface-auth" "$BIN_DIR/vinoauthface-auth" root:face-auth 2755
 put "$BIN_SRC/vinoauthface" "$BIN_DIR/vinoauthface" root:root 0755
+put "$BIN_SRC/vinoauthface-unseal" /usr/local/libexec/vinoauthface-unseal root:root 0755
 if [ "$TRAY" = 1 ]; then
     put "target/$MUSL_TARGET/release/vinoauthface-tray" "$BIN_DIR/vinoauthface-tray" root:root 0755
     put "target/$MUSL_TARGET/release/vinoauthface-helper" "$HELPER" root:root 0755
