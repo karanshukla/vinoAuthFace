@@ -100,7 +100,7 @@ jobs:
             'auth       requisite    pam_nologin.so' \
             'auth       required     pam_faillock.so preauth' \
             'auth       include      login' | sudo tee /etc/pam.d/swaylock
-          echo 'auth sufficient pam_exec.so quiet /usr/local/bin/vinoauthface-auth' | sudo tee /etc/pam.d/face-auth-ci-stack
+          echo 'auth sufficient pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth' | sudo tee /etc/pam.d/face-auth-ci-stack
           printf '%s\n' '#%PAM-1.0' '@include face-auth-ci-stack' | sudo tee /etc/pam.d/gdm-password
           sudo cp /etc/pam.d/gdm-password /tmp/gdm-password.orig
           # A vendor-only service: deploy.sh must copy it to /etc/pam.d to patch it.

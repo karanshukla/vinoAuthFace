@@ -39,7 +39,8 @@
 threshold = 0.6
 
 # Recognition model path (default: /usr/local/share/face-auth/w600k_mbf.onnx).
-# deploy.sh sets this when installed with FACE_AUTH_RECOGNITION_MODEL=r50.
+# deploy.sh sets this to w600k_r50.onnx for an NPU build, or with
+# FACE_AUTH_RECOGNITION_MODEL=r50.
 # Changing models requires re-enrolling; vinoAuthFace refuses templates made
 # with a different model.
 # model_path = "/usr/local/share/face-auth/w600k_mbf.onnx"

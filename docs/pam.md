@@ -1,6 +1,6 @@
 # PAM integration
 
-`deploy.sh` adds `auth sufficient pam_exec.so quiet /usr/local/bin/vinoauthface-auth` to:
+`deploy.sh` adds `auth sufficient pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth` to:
 
 | Service | File | Covers |
 |---------|------|--------|
@@ -25,10 +25,18 @@ an older install), `deploy.sh` skips the service rather than scan the camera twi
 camera, timeout, lockout) falls through to the password prompt. `quiet` keeps `pam_exec` chatter
 out of the unlock UI.
 
-While scanning, `vinoauthface-auth` writes `Looking for your face...` to the caller's controlling
-terminal (`/dev/tty`) and erases it when the scan ends, so `sudo` in a terminal or on a VT isn't
-silent. Lock screens and polkit agents have no terminal, so they show nothing. Auth either
-succeeds within the scan window or falls through to the password prompt.
+While scanning, `vinoauthface-auth` shows `Looking for your face...`:
+
+- **With a terminal** (`sudo` in a terminal or on a VT), it's written to the controlling terminal
+  and erased when the scan ends.
+- **Without one** (lock screens, login screens, polkit agents), it's written once to stdout, which
+  `stdout` has `pam_exec` relay to the application as a PAM info message, as it arrives. The
+  application decides how to show it and replaces it with its own prompt if the scan falls
+  through. `pam_exec` relays stderr the same way, so in this mode `vinoauthface-auth` sends its
+  stderr to `/dev/null`: errors are in `journalctl -t vinoauthface-auth` either way.
+
+Installs from before this change have the line without `stdout` and stay silent on lock screens
+until `deploy.sh` is re-run (`update.sh` doesn't touch PAM).
 
 ## KDE
 
