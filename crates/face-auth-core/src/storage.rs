@@ -259,6 +259,18 @@ impl EmbeddingStore {
         Ok(!Self::load(user, embeddings_dir)?.embeddings.is_empty())
     }
 
+    /// The model a user's templates were enrolled with, from the header only
+    /// (a sealed store needs no TPM). `None` for a legacy v1 file, which
+    /// `model_tag_matches` treats as unknown.
+    pub fn stored_model_tag(user: &str, embeddings_dir: &Path) -> anyhow::Result<Option<String>> {
+        let mut reader = Self::open(&user_store_dir(user, embeddings_dir)?)?;
+        match reader.read_u32::<LittleEndian>()? {
+            EMBEDDING_VERSION_LEGACY => Ok(None),
+            EMBEDDING_VERSION | EMBEDDING_VERSION_SEALED => Ok(Some(read_tag(&mut reader)?)),
+            _ => Err(FaceAuthError::InvalidEmbeddingFormat.into()),
+        }
+    }
+
     pub fn save(&self, user: &str, embeddings_dir: &Path, model_tag: &str) -> anyhow::Result<()> {
         self.save_with(user, embeddings_dir, model_tag, false)
     }
@@ -541,6 +553,19 @@ mod tests {
         assert_eq!(loaded.embeddings.len(), 1);
         assert_eq!(loaded.model_tag, None);
         assert!(loaded.model_tag_matches("w600k_r50.onnx"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn stored_model_tag_reads_the_header_only() {
+        let dir = tmpdir("storedtag");
+        let store = EmbeddingStore { embeddings: vec![sample(0.1)], model_tag: None };
+        store.save("alice", &dir, TAG).unwrap();
+        assert_eq!(EmbeddingStore::stored_model_tag("alice", &dir).unwrap().as_deref(), Some(TAG));
+
+        // A sealed store answers without unsealing.
+        plant_sealed(&dir, "bob", b"not a credential");
+        assert_eq!(EmbeddingStore::stored_model_tag("bob", &dir).unwrap().as_deref(), Some(TAG));
         fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -5,7 +5,7 @@
 //! question (config, camera, pinning, sealing) doctor calls it, so the two can't
 //! drift apart.
 
-use face_auth_core::{capture, config::SYSTEM_CONFIG_PATH, seal, FaceAuthConfig};
+use face_auth_core::{capture, config::SYSTEM_CONFIG_PATH, seal, storage::EmbeddingStore, FaceAuthConfig};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -94,6 +94,42 @@ pub fn enrolled_users(dir: &Path) -> std::io::Result<Vec<String>> {
     Ok(users)
 }
 
+/// Templates enrolled with another recognition model are refused at auth, so
+/// every scan for that account falls through to the password. An unknown tag
+/// (a v1 file) passes, as it does at auth.
+pub fn model_tag_verdict(current: &str, stored: &[(String, Option<String>)]) -> Check {
+    let stale: Vec<String> = stored
+        .iter()
+        .filter_map(|(user, tag)| match tag {
+            Some(t) if t != current => Some(format!("{user} ({t})")),
+            _ => None,
+        })
+        .collect();
+    if stale.is_empty() {
+        check(Status::Ok, "model tag", format!("templates match {current}"))
+    } else {
+        check(
+            Status::Fail,
+            "model tag",
+            format!("enrolled with another model than {current}: {}; re-enrol them", stale.join(", ")),
+        )
+    }
+}
+
+/// Auth builds the encoder with `config.backend()` before any scan; one this
+/// binary can't run fails every attempt before the camera opens.
+pub fn backend_verdict(backend: &str, npu_device: &str, npu_built: bool) -> Check {
+    match backend {
+        "openvino" if !npu_built => check(
+            Status::Fail,
+            "backend",
+            "openvino configured, but this build has no `npu` feature; every scan falls to the password",
+        ),
+        "openvino" => check(Status::Ok, "backend", format!("openvino on {npu_device}")),
+        other => check(Status::Ok, "backend", format!("{other} (CPU)")),
+    }
+}
+
 fn model_check(name: &str, path: &str) -> Check {
     match std::fs::metadata(path) {
         Ok(m) if m.len() > 0 => check(Status::Ok, name, format!("{path} ({} bytes)", m.len())),
@@ -126,6 +162,7 @@ pub fn run(pam_dir: &Path) -> Vec<Check> {
 
     out.push(model_check("recognition model", &config.model_path()));
     out.push(model_check("detector model", &config.detector_model_path()));
+    out.push(backend_verdict(&config.backend(), &config.npu_device(), cfg!(feature = "npu")));
 
     let dir = config.embeddings_dir();
     out.push(ownership_verdict("template store", &dir));
@@ -133,14 +170,33 @@ pub fn run(pam_dir: &Path) -> Vec<Check> {
         Ok(u) if u.is_empty() => {
             out.push(check(Status::Fail, "enrolment", "no one enrolled; run `sudo vinoauthface enroll --user NAME`"))
         }
-        Ok(u) => out.push(check(Status::Ok, "enrolment", format!("{} account(s) enrolled", u.len()))),
+        Ok(u) => {
+            out.push(check(Status::Ok, "enrolment", format!("{} account(s) enrolled", u.len())));
+            let mut stored = Vec::new();
+            for user in u {
+                match EmbeddingStore::stored_model_tag(&user, &dir) {
+                    Ok(tag) => stored.push((user, tag)),
+                    Err(e) => out.push(check(Status::Fail, "templates", format!("{user}: {e:#}"))),
+                }
+            }
+            out.push(model_tag_verdict(&config.model_tag(), &stored));
+        }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && unsafe { libc::geteuid() } != 0 => {
             out.push(check(Status::Info, "enrolment", "store is root-only; re-run with sudo to count enrolled accounts"))
         }
         Err(e) => out.push(check(Status::Fail, "enrolment", format!("{}: {e}", dir.display()))),
     }
 
-    let device = config.device();
+    // `config.device()` falls back to /dev/video0 when detection finds
+    // nothing, which reads as a missing node rather than a missing camera.
+    let Some(device) = config.device.clone().or_else(capture::detect_ir_camera) else {
+        out.push(check(
+            Status::Fail,
+            "camera",
+            "no IR camera detected; see `vinoauthface-camera-diag list`, or set `device`",
+        ));
+        return pin_and_seal(&config, out);
+    };
     match capture::query_format(&device) {
         Ok((w, h, fourcc)) => {
             let fmt = capture::fourcc_to_string(fourcc);
@@ -150,6 +206,10 @@ pub fn run(pam_dir: &Path) -> Vec<Check> {
         Err(e) => out.push(check(Status::Fail, "camera", format!("{device}: {e:#}"))),
     }
 
+    pin_and_seal(&config, out)
+}
+
+fn pin_and_seal(config: &FaceAuthConfig, mut out: Vec<Check>) -> Vec<Check> {
     if config.pinned_camera_path.is_some() {
         match config.verify_pinned_camera() {
             Ok(()) => out.push(check(Status::Ok, "camera pin", "matches current sysfs")),
@@ -194,6 +254,25 @@ mod tests {
     use super::*;
 
     const OURS: &str = "auth sufficient pam_exec.so quiet /usr/local/bin/vinoauthface-auth";
+
+    #[test]
+    fn stale_model_tag_fails_and_unknown_passes() {
+        let stored = vec![
+            ("alice".to_string(), Some("w600k_mbf.onnx".to_string())),
+            ("bob".to_string(), None),
+        ];
+        assert_eq!(model_tag_verdict("w600k_mbf.onnx", &stored).status, Status::Ok);
+        let v = model_tag_verdict("w600k_r50.onnx", &stored);
+        assert_eq!(v.status, Status::Fail);
+        assert!(v.detail.contains("alice") && !v.detail.contains("bob"));
+    }
+
+    #[test]
+    fn openvino_without_npu_build_fails() {
+        assert_eq!(backend_verdict("openvino", "NPU", false).status, Status::Fail);
+        assert_eq!(backend_verdict("openvino", "NPU", true).status, Status::Ok);
+        assert_eq!(backend_verdict("tract", "NPU", false).status, Status::Ok);
+    }
 
     #[test]
     fn missing_is_info() {
