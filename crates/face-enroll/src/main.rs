@@ -5,9 +5,16 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 mod doctor;
 
+/// The release tag CI builds with (`VINOAUTHFACE_VERSION`), or "dev".
+pub const VERSION: &str = match option_env!("VINOAUTHFACE_VERSION") {
+    Some(v) => v,
+    None => "dev",
+};
+
 #[derive(Parser, Debug)]
 #[command(
     name = "vinoauthface",
+    version = VERSION,
     about = "vinoAuthFace: IR camera face unlock",
     after_help = "Templates live under a root-owned directory, so enrol and improve must be run with sudo."
 )]

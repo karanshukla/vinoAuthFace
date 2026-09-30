@@ -139,7 +139,7 @@ fn model_check(name: &str, path: &str) -> Check {
 }
 
 pub fn run(pam_dir: &Path) -> Vec<Check> {
-    let mut out = Vec::new();
+    let mut out = vec![check(Status::Info, "version", crate::VERSION)];
 
     for service in PAM_SERVICES {
         if let Ok(contents) = std::fs::read_to_string(pam_dir.join(service)) {

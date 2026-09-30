@@ -28,6 +28,10 @@ replayed on top:
 - A scan whose face matched but hasn't passed motion liveness yet runs up to
   `liveness_grace_ms` (default 4000) longer, once, instead of failing someone
   holding still. A scan that never matched still ends on time.
+- Releases are consecutive numbers (`v2`, `v3`, ...), tagged with
+  `scripts/release.sh`; `vinoauthface --version` and `doctor` show the tag
+  (#98). `deploy.sh` without a Rust toolchain now finds the newest release:
+  it asked for GitHub's "latest", which skips pre-releases, and 404'd.
 - Motion liveness compares each face frame with the oldest one up to
   `liveness_window_ms` (default 1000) back, not just the previous one, so a
   face held deliberately still passes: on a still clip, first pass went from

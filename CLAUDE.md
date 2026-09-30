@@ -43,7 +43,8 @@ cargo deny check
   allow-list, advisories), and `deploy-script`, which runs a real `sudo ./deploy.sh` /
   `./uninstall.sh` cycle through every build path, including the checksum-verified download via
   a `file://` override (`FACE_AUTH_DEPLOY_RELEASE_BASE`, deploy.sh-only, not a config option).
-- `release.yml` publishes static musl binaries as a GitHub pre-release on `v*` tags.
+- `release.yml` publishes static musl binaries as a GitHub pre-release on `v*` tags. Versions
+  are consecutive (`v2`, `v3`), cut with `scripts/release.sh`; see `docs/releasing.md`.
 - `ci.yml`'s `npu` job builds, lints and tests the `npu` feature against an OpenVINO that
   ovfetch provisions, then runs the ovfetch deploy path (compiling on OpenVINO's CPU plugin,
   since runners have no NPU). It isn't a required check. `release.yml` still ships musl only.
