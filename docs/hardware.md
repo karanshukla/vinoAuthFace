@@ -23,7 +23,8 @@ x86_64 only: V4L2 ioctl numbers and struct layouts are hardcoded.
 
 If vinoAuthFace works (or doesn't) on yours, please
 [open an issue](https://github.com/karanshukla/vinoAuthFace/issues/new) with your
-`vinoauthface-camera-diag list` output. Table format borrowed from
+`sudo vinoauthface doctor --report` output (it leaves out usernames, paths and hostnames), or
+`vinoauthface-camera-diag list` if it isn't installed. Table format borrowed from
 [Visage](https://github.com/sovren-software/visage)'s hardware docs.
 
 ## vinoauthface-camera-diag

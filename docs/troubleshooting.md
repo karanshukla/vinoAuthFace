@@ -2,9 +2,13 @@
 
 ```bash
 # Check the whole install in one go: PAM hooks, model checksums, backend, ownership,
-# templates, camera, pin and sealing. Run it with sudo to include enrolment and
-# whether templates match the configured recognition model.
+# templates, camera, pin, sealing, lockout, sudo's targetpw, SELinux and (npu builds)
+# the NPU driver. Run it with sudo to include enrolment, lockout, sudoers and the
+# SELinux module.
 sudo vinoauthface doctor
+
+# The same as Markdown for a GitHub issue: no usernames, paths or hostnames
+sudo vinoauthface doctor --report
 
 # Which camera will it use?
 vinoauthface-camera-diag list

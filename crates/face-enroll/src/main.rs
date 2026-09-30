@@ -33,7 +33,14 @@ enum Command {
     /// Capture more frames and append them to the existing templates
     Improve(Capture),
     /// Check the whole install: PAM hooks, models, templates, camera, sealing
-    Doctor,
+    Doctor {
+        /// Print a Markdown summary for a GitHub issue instead: distro, kernel,
+        /// camera, models, backend and each check's status. Leaves out
+        /// usernames, home paths, hostnames, enrolment counts and the camera's
+        /// USB bus path.
+        #[arg(long)]
+        report: bool,
+    },
     #[command(hide = true, about = "Print a shell completion script and exit")]
     Completions {
         #[arg(value_name = "SHELL")]
@@ -80,9 +87,13 @@ fn main() -> anyhow::Result<()> {
             clap_complete::generate(shell, &mut Cli::command(), "vinoauthface", &mut std::io::stdout());
             Ok(())
         }
-        Command::Doctor => {
-            let code = doctor::report(&doctor::run(std::path::Path::new("/etc/pam.d")));
-            std::process::exit(code);
+        Command::Doctor { report } => {
+            let checks = doctor::run(std::path::Path::new("/etc/pam.d"), std::path::Path::new("/etc"));
+            if report {
+                print!("{}", doctor::markdown(&doctor::facts(), &checks));
+                return Ok(());
+            }
+            std::process::exit(doctor::report(&checks));
         }
         Command::Enroll(args) => {
             fmt().with_env_filter(filter).with_writer(std::io::stderr).init();

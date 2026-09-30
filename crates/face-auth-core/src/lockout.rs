@@ -146,6 +146,13 @@ pub fn check(user: &str, embeddings_dir: &Path, policy: &LockoutPolicy) -> Optio
     Some(remaining)
 }
 
+/// Failure count and remaining cooldown, read without sleeping or writing.
+/// For `vinoauthface doctor`.
+pub fn peek(user: &str, embeddings_dir: &Path, policy: &LockoutPolicy) -> (u32, Option<Duration>) {
+    let state = LockoutState::load(user, embeddings_dir);
+    (state.failures, remaining_cooldown(&state, policy))
+}
+
 /// Record a completed scan that saw a face and did not match.
 pub fn record_failure(user: &str, embeddings_dir: &Path) -> anyhow::Result<()> {
     let mut state = LockoutState::load(user, embeddings_dir);
@@ -222,6 +229,22 @@ mod tests {
 
         record_success("alice", &dir).unwrap();
         assert_eq!(LockoutState::load("alice", &dir).failures, 0);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn peek_reports_without_changing_state() {
+        let dir = tmpdir("peek");
+        fs::create_dir_all(dir.join("alice")).unwrap();
+        let policy = LockoutPolicy::default();
+        assert_eq!(peek("alice", &dir, &policy), (0, None));
+        for _ in 0..policy.threshold {
+            record_failure("alice", &dir).unwrap();
+        }
+        let (failures, remaining) = peek("alice", &dir, &policy);
+        assert_eq!(failures, policy.threshold);
+        assert!(remaining.is_some());
+        assert_eq!(LockoutState::load("alice", &dir).failures, policy.threshold);
         fs::remove_dir_all(&dir).unwrap();
     }
 
