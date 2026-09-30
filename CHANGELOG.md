@@ -15,8 +15,9 @@ replayed on top:
   removes the old binaries and rewrites the PAM lines; `uninstall.sh` removes
   both generations.
 - `vinoauthface doctor` (#18) checks the install in one command: PAM hooks and
-  their ordering, config and store ownership, model files, enrolment, camera
-  format, camera pin and TPM sealing. Exits 1 if anything fails.
+  their ordering, config and store ownership, model files, a backend this
+  build can run, enrolment and templates' model tag, camera format, camera pin
+  and TPM sealing. Exits 1 if anything fails.
 - Motion liveness now compares a normalised patch of the face, not the whole
   frame, so a hand moving beside a photo or an exposure change no longer
   passes it (#17, #28). An opt-in check for motion a rigid shift can't explain
