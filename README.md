@@ -20,7 +20,7 @@ see [what this fork adds](docs/architecture.md#relationship-to-upstream).
 
 ## Why this exists
 
-**Built for immutable distros.** One static musl binary, no daemon, no systemd unit, no D-Bus, no
+**Built for immutable distros and devices equipped with Intel NPUs.** One static musl binary, no daemon, no systemd unit, no D-Bus, no
 system packages. The other Linux face-auth projects are a daemon plus D-Bus
 ([gaze](https://github.com/gundulabs/gaze), Visage, Biopass) or a Python runtime (Howdy), and all
 of them install through the distro package manager. On Bazzite, Bluefin, Silverblue or Kinoite
@@ -29,8 +29,7 @@ that means layering packages and rebooting, or not installing at all. gaze's ins
 systems.
 
 **IR only, on purpose.** There is no RGB path, no hybrid mode, no fallback to a normal webcam.
-The screen-spoof defense is a property of active near-infrared sensing, and it stops being true
-the moment an RGB path exists. Narrower scope, stronger guarantee.
+The screen-spoof defense is a property of active near-infrared sensing. The use of an NPU allows for more powerful models, which improves face recognition accuracy. Windows Hello was IR only as well so it could be used in the dark, this project aims to bring it back with some additional security measures.
 
 If you don't have an IR camera, or you want a GUI, an enrolment wizard or GNOME lock screen
 integration, check out Gaze, Facelock or Howdy.
