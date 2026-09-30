@@ -35,6 +35,10 @@ While scanning, `vinoauthface-auth` shows `Looking for your face...`:
   through. `pam_exec` relays stderr the same way, so in this mode `vinoauthface-auth` sends its
   stderr to `/dev/null`: errors are in `journalctl -t vinoauthface-auth` either way.
 
+Only `sudo` (and `sudo -i`, `sudo su -`, which authenticate through it) is covered on a text
+console. `su` isn't: it authenticates the *target* account, so a face can only ever match the
+caller's own account. Console `login` isn't wired up either.
+
 Installs from before this change have the line without `stdout` and stay silent on lock screens
 until `deploy.sh` is re-run (`update.sh` doesn't touch PAM).
 
