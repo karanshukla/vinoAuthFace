@@ -85,9 +85,9 @@ off.
 
 On purpose. A screen locker runs vinoAuthFace the moment it starts, so if you lock the screen while
 still looking at the camera it would unlock straight away. vinoAuthFace waits until the locker has
-been running `start_delay_ms` (default 2000) before it scans, measured from when the locker
+been running `guards.start_delay_ms` (default 2000) before it scans, measured from when the locker
 started, so a retry on the same lock screen doesn't wait again. `sudo`, polkit and login prompts
-aren't delayed. Set `start_delay_ms = 0` in `/etc/face-auth.toml` to disable it, or
+aren't delayed. Set `guards.start_delay_ms = 0` in `/etc/face-auth.toml` to disable it, or
 `start_delay_scope = "all"` to delay every prompt.
 
 ## sudo says the face matched and waits for Enter
@@ -102,7 +102,7 @@ is a caller with no terminal (`pkexec` from a GUI). Set it back to `false` to tu
 
 That's the lockout. After 5 failed matches (a face was seen and rejected) vinoAuthFace skips the
 camera with a doubling cooldown, up to 5 minutes, and PAM goes straight to the password. The next
-successful face match resets it. Tune it with `lockout_*` in `/etc/face-auth.toml`.
+successful face match resets it. Tune it with `lockout.*` in `/etc/face-auth.toml`.
 
 ## My threshold change did nothing
 

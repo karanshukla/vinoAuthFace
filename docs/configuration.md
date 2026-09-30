@@ -1,8 +1,8 @@
 # Configuration and enrolment
 
-Every key is documented in [`config/face-auth.toml.example`](../config/face-auth.toml.example).
-This page covers which config sources are trusted where, enrolment, and choosing a recognition
-model.
+Every key is documented in [`config/face-auth.toml.example`](../config/face-auth.toml.example),
+which is grouped: everyday settings, liveness, lockout, guards, install/hardware, advanced. This
+page covers which config sources are trusted where, enrolment, and choosing a recognition model.
 
 ## Config sources
 
@@ -18,17 +18,38 @@ The authentication path and the unprivileged tools trust different things.
 
 **For `vinoauthface enroll` and the offline tools**, the usual layering applies: environment variables,
 then `~/.config/face-auth.toml`, then `/etc/face-auth.toml`. Environment variable names follow the
-field names, so the capture timeout is `FACE_AUTH_CAPTURE_TIMEOUT_MS`.
+flat field names, so the capture timeout is `FACE_AUTH_CAPTURE_TIMEOUT_MS` and the liveness motion
+threshold is `FACE_AUTH_LIVENESS_MOTION_THRESHOLD`.
 
 Example `/etc/face-auth.toml`:
 
 ```toml
 threshold = 0.6
-capture_timeout_ms = 5000
 scan_duration_ms = 5000
-liveness_motion_threshold = 0.01
-liveness_residual_motion_threshold = 0.0
+liveness.preset = "standard"
+guards.start_delay_ms = 100
 ```
+
+### Grouped keys
+
+Related settings share a prefix: `liveness.*`, `lockout.*` and `guards.*` (when a scan runs at all:
+`seat_check`, `abort_if_ssh`, `abort_if_lid_closed`, `start_delay_ms`, `start_delay_scope`,
+`require_confirmation_elevation`). Write them dotted, as the example does, rather than as `[liveness]`
+headers: `deploy.sh` and `pin-camera.sh` append plain keys to the end of the file, and after a
+table header those would land inside the table.
+
+The old flat names (`liveness_motion_threshold`, `lockout_threshold`, `seat_check`, ...) still work.
+If both are set, the flat key wins.
+
+`liveness.preset` is the quick way to set motion liveness:
+
+| Preset | Motion threshold | Residual threshold | Use |
+|--------|------------------|--------------------|-----|
+| `off` | 0 | 0 | No motion check. A photo or screen replay can unlock |
+| `standard` | 0.01 | 0 | The default. Still faces pass by drifting over the window |
+| `strict` | 0.01 | 0.3 | Also rejects a photo moved by hand; may fail if you sit very still |
+
+An individual `liveness.*` value overrides the preset for that value.
 
 ### What a user may override at the login prompt
 
@@ -37,10 +58,10 @@ file they own, and is applied as a narrowing overlay:
 
 | Key | At the login prompt |
 |-----|--------------------|
-| `threshold`, `detector_threshold`, `liveness_motion_threshold`, `liveness_residual_motion_threshold`, `min_face_size_ratio` | Honoured only if **>= the system value**. A lower number is ignored |
+| `threshold`, `detector_threshold`, `liveness.motion_threshold`, `liveness.residual_motion_threshold`, `liveness.preset`, `min_face_size_ratio` | Honoured only if **>= the system value**. A lower number is ignored, so `preset = "off"` in a user file does nothing |
 | `device` | Honoured only if the path is a real IR capture device on this machine (IR-looking sysfs name, or a physical greyscale sensor, and opens in a supported format) |
-| `scan_duration_ms`, `scan_interval_ms`, `capture_timeout_ms`, `liveness_grace_ms` | Honoured within built-in bounds |
-| `model_path`, `detector_model_path`, `embeddings_dir`, `pinned_camera_*`, `lockout_*`, `seal_embeddings`, `backend`, `npu_device`, `liveness_window_ms`, `bind_camera`, `seat_check`, `abort_if_*`, `start_delay_*`, `require_confirmation_elevation` | **Ignored**: system policy only |
+| `scan_duration_ms`, `scan_interval_ms`, `capture_timeout_ms`, `liveness.grace_ms` | Honoured within built-in bounds |
+| `model_path`, `detector_model_path`, `embeddings_dir`, `pinned_camera_*`, `lockout.*`, `seal_embeddings`, `backend`, `npu_device`, `liveness.window_ms`, `bind_camera`, `guards.*` | **Ignored**: system policy only |
 
 This stops code running as you, which doesn't know your password, from writing a permissive
 `~/.config/face-auth.toml` and turning your next `sudo` into a root shell. To *loosen* matching,
