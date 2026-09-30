@@ -11,7 +11,7 @@ use face_auth_tray::helper::{Verb, FACE_AUTH, HELPER, SAFE_PATH};
 use face_auth_tray::icon::{self, State};
 use face_auth_tray::{progress, scanning};
 use ksni::blocking::{Handle, TrayMethods};
-use ksni::menu::StandardItem;
+use ksni::menu::{StandardItem, SubMenu};
 use ksni::{Category, MenuItem, ToolTip};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
@@ -55,6 +55,7 @@ struct Status {
     camera: Option<String>,
     /// `None` when vinoauthface-auth is missing or could not answer.
     enrolled: Option<bool>,
+    backend: String,
 }
 
 impl Status {
@@ -67,11 +68,37 @@ impl Status {
             Some(device) => Camera::open(device).is_ok().then(|| device.clone()),
             None => capture::detect_ir_camera(),
         });
-        Status { camera, enrolled: enrolled() }
+        let backend = match config.as_ref().map(|c| (c.backend(), c.npu_device())) {
+            Some((b, device)) if b == "openvino" => format!("OpenVINO ({device})"),
+            Some(_) => "tract (CPU)".into(),
+            None => "unknown (cannot read /etc/face-auth.toml)".into(),
+        };
+        Status { camera, enrolled: enrolled(), backend }
     }
 
     fn ready(&self) -> bool {
         self.camera.is_some() && self.enrolled == Some(true)
+    }
+
+    /// The Status submenu's read-only lines.
+    fn lines(&self) -> Vec<String> {
+        vec![
+            match &self.camera {
+                Some(device) => format!("Camera: {device}"),
+                None => "Camera: no IR camera found".into(),
+            },
+            format!(
+                "Face: {}",
+                match self.enrolled {
+                    Some(true) => "enrolled",
+                    Some(false) => "not enrolled",
+                    None => "unknown (is vinoauthface installed?)",
+                }
+            ),
+            format!("Backend: {}", self.backend),
+            format!("Version: {}", update::CURRENT),
+            "Full check: sudo vinoauthface doctor".into(),
+        ]
     }
 }
 
@@ -260,6 +287,19 @@ impl ksni::Tray for Tray {
             menu.push(info(format!("Installed: {}. Update with git pull, then sudo ./deploy.sh", update::CURRENT)));
             menu.push(MenuItem::Separator);
         }
+
+        // Collapsed so the menu stays short; the warning icon says when to
+        // open it, as the tray icon's colour does.
+        menu.push(
+            SubMenu {
+                label: if s.ready() { "Status".into() } else { format!("Status: {}", self.summary()) },
+                icon_name: if s.ready() { "dialog-information" } else { "dialog-warning" }.into(),
+                submenu: s.lines().into_iter().map(info).collect(),
+                ..Default::default()
+            }
+            .into(),
+        );
+        menu.push(MenuItem::Separator);
 
         if s.enrolled == Some(false) {
             menu.push(item("Enrol face…", "list-add-user", idle, |t| t.run(Action::Enrol)));
@@ -544,4 +584,24 @@ fn main() -> anyhow::Result<()> {
     event_loop(handle.clone(), rx, tx, me.name);
     handle.shutdown().wait();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_lines_name_what_is_missing() {
+        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into() };
+        let lines = s.lines();
+        assert_eq!(lines[0], "Camera: no IR camera found");
+        assert_eq!(lines[1], "Face: unknown (is vinoauthface installed?)");
+        assert_eq!(lines[2], "Backend: tract (CPU)");
+        // ksni reads "_" as an access-key marker.
+        assert!(lines.iter().all(|l| !l.contains('_')), "{lines:?}");
+
+        let s = Status { camera: Some("/dev/video2".into()), enrolled: Some(true), backend: "OpenVINO (NPU)".into() };
+        assert!(s.ready());
+        assert_eq!(s.lines()[..2], ["Camera: /dev/video2", "Face: enrolled"]);
+    }
 }

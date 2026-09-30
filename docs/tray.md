@@ -30,6 +30,7 @@ It starts at the next login, or run `vinoauthface-tray` now (it detaches from th
 | Entry | Does | Runs as |
 |---|---|---|
 | Update available | Shown at the top only when a newer release exists (checked a minute after start, then daily; `update_check = false` disables it). Opens that release's page. A notification appears once per new release | you |
+| Status | A submenu: the camera it would use, whether you're enrolled, the backend and the installed version. When something is wrong its label says what ("Status: No IR camera found") with a warning icon. For the full picture, run `sudo vinoauthface doctor` | you |
 | Enrol face | `vinoauthface enroll --user <you>`. Once you're enrolled it becomes "Enrol again from scratch" and takes a second click, since it replaces your templates | root, via pkexec |
 | Retrain face | `vinoauthface improve --user <you>`: captures more frames (new lighting, glasses) and keeps the old ones | root, via pkexec |
 | Test scan | One live scan, the same way the lock screen runs it. The result is a notification | you |
