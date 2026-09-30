@@ -19,7 +19,11 @@ replayed on top:
   build can run, enrolment and templates' model tag, camera format, camera pin
   and TPM sealing. Exits 1 if anything fails. Installed models are checked
   against the SHA-256 pins in `config/models.sha256`, which `deploy.sh` reads
-  too.
+  too. It also reports accounts in a face cooldown, sudo's `targetpw`/`rootpw`
+  (sudo then matches root's face, not yours), an enforcing SELinux without the
+  `face_auth` module, and on npu builds a missing `/dev/accel` node or driver
+  compiler. `doctor --report` prints a Markdown summary for issues, without
+  usernames, paths or hostnames.
 - Motion liveness now compares a normalised patch of the face, not the whole
   frame, so a hand moving beside a photo or an exposure change no longer
   passes it (#17, #28). An opt-in check for motion a rigid shift can't explain

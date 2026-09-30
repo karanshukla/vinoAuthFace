@@ -6,7 +6,7 @@
 //! drift apart.
 
 use face_auth_core::{
-    cameras, capture, config::SYSTEM_CONFIG_PATH, seal, storage::EmbeddingStore, update, FaceAuthConfig,
+    cameras, capture, config::SYSTEM_CONFIG_PATH, lockout, seal, storage::EmbeddingStore, update, FaceAuthConfig,
 };
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
@@ -182,6 +182,145 @@ pub fn binding_verdict(on: bool, device: &str, live: Option<&str>, users: &[(Str
     }
 }
 
+/// Accounts in a face cooldown right now. Not a failure: the password still
+/// works, and the cooldown ends on its own.
+pub fn lockout_verdict(locked: &[(String, u32, std::time::Duration)]) -> Check {
+    if locked.is_empty() {
+        return check(Status::Ok, "lockout", "no account is cooling down");
+    }
+    let list: Vec<String> = locked
+        .iter()
+        .map(|(user, failures, left)| format!("{user} ({failures} failures, {}s left)", left.as_secs().max(1)))
+        .collect();
+    check(
+        Status::Warn,
+        "lockout",
+        format!("face unlock paused after failed scans: {}; the password still works", list.join(", ")),
+    )
+}
+
+/// `enforce` is `/sys/fs/selinux/enforce`'s contents (`None`: no SELinux),
+/// `modules` the output of `semodule -l` (`None`: couldn't run it). Without the
+/// module, lock screens can't reach the camera; sudo still works.
+pub fn selinux_verdict(enforce: Option<&str>, modules: Option<&str>) -> Check {
+    let name = "SELinux";
+    match enforce.map(str::trim) {
+        None => check(Status::Info, name, "not enabled; no policy needed"),
+        Some("1") => match modules {
+            None => check(Status::Info, name, "enforcing; re-run with sudo to check the face_auth module"),
+            Some(m) if m.lines().any(|l| l.split_whitespace().next() == Some("face_auth")) => {
+                check(Status::Ok, name, "enforcing, face_auth module loaded")
+            }
+            Some(_) => check(
+                Status::Warn,
+                name,
+                "enforcing without the face_auth module: lock screens can't reach the camera (sudo still works); re-run deploy.sh",
+            ),
+        },
+        Some(_) => check(Status::Info, name, "permissive; lock screens work without the module"),
+    }
+}
+
+/// Whether sudo asks for the target's password rather than the caller's
+/// (`targetpw`, `rootpw`, `runaspw`), across sudoers files in the order sudo
+/// reads them. Then `PAM_USER` is root, who usually has no face enrolled.
+pub fn sudo_prompts_for_target(files: &[String]) -> Option<String> {
+    let mut on: Option<String> = None;
+    for contents in files {
+        for line in contents.lines() {
+            let line = line.split('#').next().unwrap_or("").trim();
+            let Some(rest) = line.strip_prefix("Defaults") else { continue };
+            // `Defaults:user`, `Defaults>runas` and friends scope it; a scoped
+            // setting still changes whose password some sudo calls ask for.
+            let rest = rest.trim_start_matches(|c: char| c != ' ' && c != '\t');
+            for opt in rest.split(',').map(str::trim) {
+                match opt {
+                    "targetpw" | "rootpw" | "runaspw" => on = Some(opt.to_string()),
+                    "!targetpw" | "!rootpw" | "!runaspw" if on.as_deref() == Some(&opt[1..]) => on = None,
+                    _ => {}
+                }
+            }
+        }
+    }
+    on
+}
+
+pub fn sudo_verdict(flag: Option<&str>, root_enrolled: bool) -> Check {
+    match flag {
+        Some(f) if !root_enrolled => check(
+            Status::Warn,
+            "sudo",
+            format!("`Defaults {f}`: sudo authenticates root, who has no face enrolled, so sudo always asks for the password"),
+        ),
+        Some(f) => check(Status::Info, "sudo", format!("`Defaults {f}`: sudo matches root's face")),
+        None => check(Status::Ok, "sudo", "authenticates the calling user"),
+    }
+}
+
+/// sudoers and its drop-ins, in the order sudo reads them. `includedir` skips
+/// names with a `.` or ending in `~`.
+fn read_sudoers(etc: &Path) -> std::io::Result<Vec<String>> {
+    let mut files = vec![std::fs::read_to_string(etc.join("sudoers"))?];
+    if let Ok(dir) = std::fs::read_dir(etc.join("sudoers.d")) {
+        let mut names: Vec<_> = dir
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| !n.contains('.') && !n.ends_with('~'))
+            .collect();
+        names.sort();
+        for n in names {
+            if let Ok(c) = std::fs::read_to_string(etc.join("sudoers.d").join(n)) {
+                files.push(c);
+            }
+        }
+    }
+    Ok(files)
+}
+
+/// Where the Intel NPU driver installs its compiler library.
+const NPU_LIB_DIRS: &[&str] = &["/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/usr/lib", "/usr/local/lib"];
+
+/// With `npu_device = "NPU"`, OpenVINO needs the kernel driver's
+/// `/dev/accel` node and the user-space driver's compiler library; without
+/// either, every model compile fails and every scan falls to the password.
+pub fn npu_verdict(accel_nodes: usize, compiler: bool) -> Check {
+    match (accel_nodes, compiler) {
+        (0, _) => check(
+            Status::Fail,
+            "NPU",
+            "no /dev/accel node (intel_vpu driver not loaded?); set npu_device = \"CPU\" or fix the driver",
+        ),
+        (_, false) => check(
+            Status::Warn,
+            "NPU",
+            "no libnpu_driver_compiler.so found; if the driver ships no compiler, nothing compiles for the NPU (`ovfetch detect`)",
+        ),
+        _ => check(Status::Ok, "NPU", "/dev/accel present, driver compiler found"),
+    }
+}
+
+fn npu_check() -> Check {
+    let accel = std::fs::read_dir("/dev/accel")
+        .map(|d| d.filter_map(Result::ok).filter(|e| e.file_name().to_string_lossy().starts_with("accel")).count())
+        .unwrap_or(0);
+    let compiler = NPU_LIB_DIRS.iter().any(|d| {
+        std::fs::read_dir(d).is_ok_and(|mut e| {
+            e.any(|f| f.is_ok_and(|f| f.file_name().to_string_lossy().starts_with("libnpu_driver_compiler.so")))
+        })
+    });
+    npu_verdict(accel, compiler)
+}
+
+fn selinux_check() -> Check {
+    let enforce = std::fs::read_to_string("/sys/fs/selinux/enforce").ok();
+    let modules = (enforce.as_deref().map(str::trim) == Some("1"))
+        .then(|| std::process::Command::new("semodule").arg("-l").output().ok())
+        .flatten()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    selinux_verdict(enforce.as_deref(), modules.as_deref())
+}
+
 /// The same pins `deploy.sh` verifies downloads against (`sha256sum` format).
 const PINNED_MODELS: &str = include_str!("../../../config/models.sha256");
 
@@ -214,11 +353,11 @@ fn sha256_file(path: &str) -> std::io::Result<String> {
 }
 
 fn model_check(name: &str, path: &str) -> Check {
-    let file_name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    model_verdict(name, path, pinned_sha(PINNED_MODELS, &file_name).as_deref(), sha256_file(path))
+    model_verdict(name, path, pinned_sha(PINNED_MODELS, &file_name(path)).as_deref(), sha256_file(path))
 }
 
-pub fn run(pam_dir: &Path) -> Vec<Check> {
+/// `etc` is where sudoers lives (`/etc` outside tests).
+pub fn run(pam_dir: &Path, etc: &Path) -> Vec<Check> {
     let mut out = vec![check(Status::Info, "version", crate::VERSION)];
 
     for service in PAM_SERVICES {
@@ -250,9 +389,13 @@ pub fn run(pam_dir: &Path) -> Vec<Check> {
     out.push(model_check("recognition model", &config.model_path()));
     out.push(model_check("detector model", &config.detector_model_path()));
     out.push(backend_verdict(&config.backend(), &config.npu_device(), cfg!(feature = "npu")));
+    if cfg!(feature = "npu") && config.backend() == "openvino" && config.npu_device() == "NPU" {
+        out.push(npu_check());
+    }
 
     let dir = config.embeddings_dir();
     out.push(ownership_verdict("template store", &dir));
+    let mut root_enrolled = None;
     match enrolled_users(&dir) {
         Ok(u) if u.is_empty() => {
             out.push(check(Status::Fail, "enrolment", "no one enrolled; run `sudo vinoauthface enroll --user NAME`"))
@@ -273,12 +416,37 @@ pub fn run(pam_dir: &Path) -> Vec<Check> {
                 .collect();
             let device = config.device();
             out.push(binding_verdict(config.bind_camera(), &device, cameras::camera_id(&device).as_deref(), &bound));
+            let policy = config.lockout_policy();
+            let locked: Vec<(String, u32, std::time::Duration)> = stored
+                .iter()
+                .filter_map(|(user, _)| match lockout::peek(user, &dir, &policy) {
+                    (failures, Some(left)) => Some((user.clone(), failures, left)),
+                    _ => None,
+                })
+                .collect();
+            out.push(lockout_verdict(&locked));
+            root_enrolled = Some(stored.iter().any(|(user, _)| user == "root"));
         }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && unsafe { libc::geteuid() } != 0 => {
             out.push(check(Status::Info, "enrolment", "store is root-only; re-run with sudo to count enrolled accounts"))
         }
         Err(e) => out.push(check(Status::Fail, "enrolment", format!("{}: {e}", dir.display()))),
     }
+
+    if pam_dir.join("sudo").exists() {
+        match read_sudoers(etc) {
+            Ok(files) => {
+                let flag = sudo_prompts_for_target(&files);
+                // Unknown enrolment (not root) only matters when the flag is set.
+                out.push(sudo_verdict(flag.as_deref(), root_enrolled.unwrap_or(false)));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                out.push(check(Status::Info, "sudo", "sudoers is root-only; re-run with sudo to check targetpw"))
+            }
+            Err(_) => {}
+        }
+    }
+    out.push(selinux_check());
 
     // `config.device()` falls back to /dev/video0 when detection finds
     // nothing, which reads as a missing node rather than a missing camera.
@@ -322,6 +490,77 @@ fn pin_and_seal(config: &FaceAuthConfig, mut out: Vec<Check>) -> Vec<Check> {
         out.push(check(Status::Info, "sealing", "off"));
     }
 
+    out
+}
+
+/// What `--report` says about the machine. Nothing here may identify the
+/// person or the machine: no usernames, home paths, hostnames, enrolment
+/// counts or sysfs bus paths.
+pub struct Facts {
+    pub rows: Vec<(&'static str, String)>,
+}
+
+pub fn facts() -> Facts {
+    let mut rows = vec![("version", crate::VERSION.to_string())];
+    let os = std::fs::read_to_string("/etc/os-release").ok().and_then(|s| os_pretty_name(&s));
+    rows.push(("distro", os.unwrap_or_else(|| "unknown".into())));
+    let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").map(|s| s.trim().to_string());
+    rows.push(("kernel", kernel.unwrap_or_else(|_| "unknown".into())));
+    rows.push(("build", if cfg!(feature = "npu") { "npu (OpenVINO)" } else { "tract (CPU)" }.into()));
+
+    let Ok(config) = FaceAuthConfig::load_system() else {
+        return Facts { rows };
+    };
+    let backend = match config.backend().as_str() {
+        "openvino" => format!("openvino on {}", config.npu_device()),
+        other => other.to_string(),
+    };
+    rows.push(("backend", backend));
+    for (label, path) in [("recognition model", config.model_path()), ("detector model", config.detector_model_path())] {
+        rows.push((label, file_name(&path)));
+    }
+    if let Some(device) = config.device.clone().or_else(capture::detect_ir_camera) {
+        if let Ok(caps) = capture::query_caps(&device) {
+            rows.push(("camera", format!("{} ({})", caps.card, caps.driver)));
+        }
+        rows.push(("USB ID", cameras::camera_id(&device).unwrap_or_else(|| "none".into())));
+        if let Ok((w, h, fourcc)) = capture::query_format(&device) {
+            rows.push(("format", format!("{w}x{h} {}", capture::fourcc_to_string(fourcc).trim())));
+        }
+    } else {
+        rows.push(("camera", "no IR camera detected".into()));
+    }
+    Facts { rows }
+}
+
+fn file_name(path: &str) -> String {
+    Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+fn os_pretty_name(os_release: &str) -> Option<String> {
+    os_release
+        .lines()
+        .find_map(|l| l.strip_prefix("PRETTY_NAME="))
+        .map(|v| v.trim().trim_matches('"').to_string())
+}
+
+/// Markdown for pasting into an issue: the facts, then each check's status by
+/// name. Check details are left out, since they name accounts and paths.
+pub fn markdown(facts: &Facts, checks: &[Check]) -> String {
+    let mut out = String::from("### vinoauthface doctor report\n\n| | |\n|---|---|\n");
+    for (k, v) in &facts.rows {
+        out.push_str(&format!("| {k} | {} |\n", v.replace('|', "/")));
+    }
+    out.push_str("\n| Check | Status |\n|---|---|\n");
+    for c in checks.iter().filter(|c| c.name != "version") {
+        let status = match c.status {
+            Status::Ok => "ok",
+            Status::Warn => "warn",
+            Status::Fail => "**FAIL**",
+            Status::Info => "info",
+        };
+        out.push_str(&format!("| {} | {status} |\n", c.name));
+    }
     out
 }
 
@@ -408,6 +647,68 @@ mod tests {
         assert_eq!(backend_verdict("openvino", "NPU", false).status, Status::Fail);
         assert_eq!(backend_verdict("openvino", "NPU", true).status, Status::Ok);
         assert_eq!(backend_verdict("tract", "NPU", false).status, Status::Ok);
+    }
+
+    #[test]
+    fn lockout_warns_with_time_left() {
+        assert_eq!(lockout_verdict(&[]).status, Status::Ok);
+        let v = lockout_verdict(&[("alice".into(), 7, std::time::Duration::from_millis(30_500))]);
+        assert_eq!(v.status, Status::Warn);
+        assert!(v.detail.contains("alice (7 failures, 30s left)"), "{}", v.detail);
+    }
+
+    #[test]
+    fn selinux_verdicts() {
+        assert_eq!(selinux_verdict(None, None).status, Status::Info);
+        assert_eq!(selinux_verdict(Some("0\n"), None).status, Status::Info);
+        assert_eq!(selinux_verdict(Some("1\n"), None).status, Status::Info);
+        let loaded = "abrt\nface_auth\nzoneminder\n";
+        assert_eq!(selinux_verdict(Some("1\n"), Some(loaded)).status, Status::Ok);
+        // Older semodule prints a version column.
+        assert_eq!(selinux_verdict(Some("1"), Some("face_auth\t1.0\n")).status, Status::Ok);
+        assert_eq!(selinux_verdict(Some("1"), Some("face_auth_other\n")).status, Status::Warn);
+    }
+
+    #[test]
+    fn sudoers_targetpw() {
+        let suse = "Defaults targetpw   # ask for the password of the target user\nALL ALL=(ALL) ALL\n";
+        assert_eq!(sudo_prompts_for_target(&[suse.into()]).as_deref(), Some("targetpw"));
+        assert_eq!(sudo_prompts_for_target(&["Defaults env_reset, rootpw\n".into()]).as_deref(), Some("rootpw"));
+        assert_eq!(sudo_prompts_for_target(&["Defaults:alice runaspw\n".into()]).as_deref(), Some("runaspw"));
+        // A later drop-in turns it off again.
+        assert_eq!(sudo_prompts_for_target(&[suse.into(), "Defaults !targetpw\n".into()]), None);
+        assert_eq!(sudo_prompts_for_target(&["# Defaults targetpw\n".into()]), None);
+        assert_eq!(sudo_prompts_for_target(&["Defaults env_reset,mail_badpass\n".into()]), None);
+        assert_eq!(sudo_verdict(Some("targetpw"), false).status, Status::Warn);
+        assert_eq!(sudo_verdict(Some("targetpw"), true).status, Status::Info);
+        assert_eq!(sudo_verdict(None, false).status, Status::Ok);
+    }
+
+    #[test]
+    fn npu_needs_node_and_compiler() {
+        assert_eq!(npu_verdict(0, true).status, Status::Fail);
+        assert_eq!(npu_verdict(1, false).status, Status::Warn);
+        assert_eq!(npu_verdict(1, true).status, Status::Ok);
+    }
+
+    #[test]
+    fn report_has_status_but_no_details() {
+        let facts = Facts { rows: vec![("camera", "Integrated IR | Camera (uvcvideo)".into())] };
+        let checks = vec![
+            check(Status::Ok, "enrolment", "2 account(s) enrolled"),
+            check(Status::Fail, "model tag", "enrolled with another model: alice (w600k_mbf.onnx)"),
+        ];
+        let md = markdown(&facts, &checks);
+        assert!(md.contains("| camera | Integrated IR / Camera (uvcvideo) |"), "{md}");
+        assert!(md.contains("| model tag | **FAIL** |"), "{md}");
+        assert!(!md.contains("alice") && !md.contains("2 account"), "{md}");
+    }
+
+    #[test]
+    fn pretty_name_from_os_release() {
+        let os = "NAME=\"Ubuntu\"\nPRETTY_NAME=\"Ubuntu 24.04.1 LTS\"\nID=ubuntu\n";
+        assert_eq!(os_pretty_name(os).as_deref(), Some("Ubuntu 24.04.1 LTS"));
+        assert_eq!(os_pretty_name("ID=x\n"), None);
     }
 
     #[test]
