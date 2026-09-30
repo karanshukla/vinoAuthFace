@@ -25,8 +25,9 @@ the release's `SHA256SUMS`. Build from source for an unreleased change or the NP
 | Config | Installs default config | `/etc/face-auth.toml`, kept if it already exists; the deploy appends any settings from `config/face-auth.toml.example` it lacks, commented out at their defaults |
 | PAM | Patches PAM service files | See [pam.md](pam.md). Each file is backed up with a `.face-auth.bak` suffix |
 | Bitwarden | Only if installed | Adds Bitwarden's polkit unlock action |
-| SELinux | Compiles and loads policy | Allows `xdm_t` to mmap the camera for lock-screen auth |
+| SELinux | Compiles and loads policy | Lets the greeters (`xdm_t`) use the camera, NPU, template store and lockout state. See [SELinux](#selinux) |
 | NPU cache | Empties and refills it | `/var/cache/face-auth`, root-owned. Emptied because a new model or driver leaves stale entries, then refilled with `vinoauthface-auth --warm-cache` (NPU builds only) |
+| Login screen | `--login=off\|both\|face` | The Plasma login screen's mode, off on a fresh install and kept on re-deploy. See [pam.md](pam.md#login-screen) |
 | Tray | Unless `--no-tray` | Tray binary, root helper, polkit actions, autostart and launchers. See [tray.md](tray.md). Every deploy also installs `uninstall.sh` to `/usr/local/share/face-auth/` |
 | Storage | Secures the template store | `/var/lib/face-auth`, `root:face-auth` `2750`, templates `0640`, per-user `lockout/` `2770`. An existing store is re-secured in place |
 
@@ -123,20 +124,35 @@ Re-run it if you replace the hardware on purpose. What this defends against:
 
 ## SELinux
 
-With SELinux enforcing, the GNOME lock screen runs in the `xdm_t` domain, which can't `mmap`
-video devices by default. `deploy.sh` installs a minimal module:
+With SELinux enforcing, the greeters (GDM, SDDM, Plasma Login) run face-auth in the confined
+`xdm_t` domain. sudo, the KDE lock screen and polkit agents run in your unconfined session and
+don't need it. `deploy.sh` installs a module, `selinux/face-auth.te` plus the labels in
+`selinux/face-auth.fc`, that:
 
-```
-allow xdm_t v4l_device_t:chr_file map;
-```
+| Grants `xdm_t` | Why |
+|---|---|
+| `map` on the camera (`v4l_device_t`) | Frame capture |
+| `/dev/accel/*` labelled `dri_device_t`, the GPU's type | Stock policy leaves the NPU unlabelled (`device_t`), so OpenVINO can't open it |
+| Read on `/var/lib/face-auth` (`face_auth_var_lib_t`) | Templates |
+| Write on `<user>/lockout` (`face_auth_lockout_t`) | Without it the lockout never advances at the greeter |
+| Read and `map` on `/var/cache/face-auth` (`face_auth_cache_t`) | The compiled NPU models |
+| `getattr` on `/usr/lib64/games` | A cold NPU cache recompiles, and the driver's compiler stats every directory there |
+
+`deploy.sh` relabels the NPU node, the cache and the store after loading it, and the OpenVINO
+runtime after copying it in.
+
+Not covered yet: unsealing TPM-sealed templates from `xdm_t`
+([#122](https://github.com/karanshukla/vinoAuthFace/issues/122)). See
+[pam.md](pam.md#login-screen).
 
 If `deploy.sh` reported missing SELinux tools, install the module by hand:
 
 ```bash
-sudo dnf install -y policycoreutils
+sudo dnf install -y policycoreutils checkpolicy
 sudo checkmodule -M -m -o face_auth.mod selinux/face-auth.te
-sudo semodule_package -o face_auth.pp -m face_auth.mod
+sudo semodule_package -o face_auth.pp -m face_auth.mod -f selinux/face-auth.fc
 sudo semodule -i face_auth.pp
+sudo restorecon -R /dev/accel /var/lib/face-auth /var/cache/face-auth /usr/local/lib/face-auth
 ```
 
 Remove it with `sudo semodule -r face_auth`.

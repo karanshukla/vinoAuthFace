@@ -108,7 +108,7 @@ Six crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/d
   which replaces upstream's GTK GUI. Two binaries: `vinoauthface-tray` (per-user, `ksni`
   StatusNotifierItem, never in the auth path; spots scans by `vinoauthface-auth` in `/proc`, reads
   enrolment via `vinoauthface-auth --enrolled`) and `vinoauthface-helper`, the only thing its polkit policy
-  lets pkexec run. The helper takes one verb (`enrol|retrain|uninstall|upgrade`), no flags, and the
+  lets pkexec run. The helper takes one verb (`enrol|retrain|uninstall|upgrade|login-off|login-both|login-face`), no flags, and the
   target user from `PKEXEC_UID` only; keep it that way, and keep ksni/zbus out of it. `data/` holds the
   policy, desktop files and the generated icon (`FACE_AUTH_BLESS_ICONS=1 cargo test -p
   face-auth-tray` after changing `icon.rs`).

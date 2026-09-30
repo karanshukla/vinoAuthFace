@@ -64,7 +64,7 @@ your normal password prompt, so a broken camera can't lock you out.
 | `sudo` | `sudo` |
 | GNOME lock screen | `gdm-password` |
 | KDE lock screen (hands-free, next to the password field) | `kde-fingerprint` |
-| Plasma login screen | `plasmalogin-fingerprint` |
+| Plasma login screen (opt-in: [off, password + face, or face](docs/pam.md#login-screen)) | `plasmalogin-fingerprint`, or `plasmalogin` without it |
 | COSMIC lock screen and greeter | `cosmic-greeter` |
 | swaylock | `swaylock` |
 | polkit prompts (`pkexec`, settings, Bitwarden unlock) | `polkit-1` |
@@ -87,7 +87,7 @@ sudo ./uninstall.sh --purge   # templates too
 | [PAM integration](docs/pam.md) | Services, KDE, polkit, Bitwarden, keyrings |
 | [Hardware and diagnostics](docs/hardware.md) | Supported cameras, `vinoauthface-camera-diag`, hardware reports |
 | [Troubleshooting](docs/troubleshooting.md) | Debug output, common errors |
-| [Tray icon](docs/tray.md) | Optional tray: status, enrol, retrain, test scan, uninstall (installed by default, `--no-tray` to skip) |
+| [Tray icon](docs/tray.md) | Optional tray: status, enrol, retrain, test scan, login screen, uninstall (installed by default, `--no-tray` to skip) |
 | [Security model](docs/security.md) | Trust model, spoofing, frame injection, limitations |
 | [Releasing](docs/releasing.md) | Consecutive version tags, `scripts/release.sh`, releases |
 | [Architecture](docs/architecture.md) | Pipeline, models and licensing, project layout, upstream relationship |

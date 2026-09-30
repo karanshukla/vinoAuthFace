@@ -130,8 +130,10 @@ Auto-detect only ever considers IR-named nodes or physical greyscale sensors, an
   authentication outright, so the strength of the stack becomes the strength of the face match.
   The vinoAuthFace line currently sits above `pam_nologin` and `pam_faillock`
   ([#31](https://github.com/karanshukla/vinoAuthFace/issues/31)).
-- **SELinux policy scope:** the lock-screen policy grants `xdm_t` mmap access to all V4L2
-  devices. Narrowing it requires custom udev device types.
+- **SELinux policy scope:** the greeter policy grants `xdm_t` mmap access to all V4L2
+  devices, and labels the NPU as a GPU (`dri_device_t`), so every domain allowed the GPU can
+  open it. Narrowing either requires custom udev device types. Only `xdm_t` is covered: TTY
+  `login` (`local_login_t`) isn't wired by `deploy.sh`, and confined users' `sudo_t` is untested.
 - **Model integrity:** both models are pinned by SHA-256 and the detector URL is pinned to a
   commit. `deploy.sh` aborts on mismatch. Release binaries, and the source bundle `vinoauthface-upgrade` installs from, are verified
   against the release's `SHA256SUMS`. That catches a corrupted or truncated download, not a

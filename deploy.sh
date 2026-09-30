@@ -91,14 +91,25 @@ cargo_build() {
 # The tray icon, its root helper and polkit actions (docs/tray.md) install by
 # default. --no-tray (or FACE_AUTH_TRAY=0) skips them; --with-tray is kept as a
 # no-op so existing invocations keep working.
+#
+# --login=off|both|face sets face unlock at the Plasma login screen
+# (login-mode.sh). Without it a re-deploy or upgrade keeps what's installed,
+# and a fresh install gets off.
 WITH_TRAY="${FACE_AUTH_TRAY:-1}"
+LOGIN_MODE="${FACE_AUTH_LOGIN:-}"
+USAGE="Usage: sudo ./deploy.sh [--no-tray] [--login=off|both|face]"
 for arg in "$@"; do
     case "$arg" in
         --with-tray) WITH_TRAY=1 ;;
         --no-tray) WITH_TRAY=0 ;;
-        *) fail "Unknown option '$arg'" "Usage: sudo ./deploy.sh [--no-tray]"; exit 1 ;;
+        --login=off|--login=both|--login=face) LOGIN_MODE="${arg#--login=}" ;;
+        *) fail "Unknown option '$arg'" "$USAGE"; exit 1 ;;
     esac
 done
+case "$LOGIN_MODE" in
+    ""|off|both|face) ;;
+    *) fail "FACE_AUTH_LOGIN must be off, both or face" "$USAGE"; exit 1 ;;
+esac
 
 # Recognition model. "mbf" (MobileFaceNet, buffalo_sc) is ~14MB and fast;
 # "r50" (ResNet50, buffalo_l) is ~175MB with a wider match margin, at a few ms
@@ -144,7 +155,8 @@ ZSH_COMPLETION_DIR="/usr/local/share/zsh/site-functions"
 FISH_COMPLETION_DIR="/usr/local/share/fish/vendor_completions.d"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
-PAM_SERVICES="sudo swaylock gdm-password polkit-1 kde-fingerprint plasmalogin-fingerprint cosmic-greeter"
+# The Plasma login screen's services are login-mode.sh's, not this list's.
+PAM_SERVICES="sudo swaylock gdm-password polkit-1 kde-fingerprint cosmic-greeter"
 VAR_DIR="/var/lib/face-auth"
 NPU_CACHE_DIR="/var/cache/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
@@ -586,6 +598,8 @@ rm -f "$BIN_DIR/face-auth" "$BIN_DIR/face-enroll" "$BIN_DIR/face-auth-tray" \
     /usr/local/libexec/face-auth-helper /usr/local/share/bash-completion/completions/face-enroll
 # The tray's uninstall entry runs this copy; the repo may be long gone.
 install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"
+# The same for the tray's login-screen entries.
+install -D -o root -g root -m 0755 login-mode.sh "$SHARE_DIR/login-mode.sh"
 # Upgrades without a checkout (docs/install.md).
 install -D -o root -g root -m 0755 upgrade.sh "$BIN_DIR/vinoauthface-upgrade"
 
@@ -635,6 +649,9 @@ if [ -n "$OV_STAGE" ]; then
     rm -rf "$OV_STAGE"
     chown -hR root:root "$OPENVINO_INSTALL_DIR"
     chmod -R go-w "$OPENVINO_INSTALL_DIR"
+    # cp -a keeps the staging dir's user_tmp_t label, which confined PAM
+    # callers (local_login_t, xdm_t) can't map.
+    command -v restorecon &>/dev/null && restorecon -R "$OPENVINO_INSTALL_DIR" 2>/dev/null || true
     if ! (cd "$OPENVINO_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS); then
         fail "$OPENVINO_INSTALL_DIR does not match its SHA256SUMS after copying"
         exit 1
@@ -656,6 +673,7 @@ if [ "$NPU_ACTIVE" = 1 ] && [ "$OPENVINO_MODE" = "archive" ]; then
     cp -a "$OPENVINO_SRC/runtime/3rdparty/tbb/lib/." "$OPENVINO_INSTALL_DIR/tbb/"
     printf '%s\n' "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb" \
         > /etc/ld.so.conf.d/face-auth-openvino.conf
+    command -v restorecon &>/dev/null && restorecon -R "$OPENVINO_INSTALL_DIR" 2>/dev/null || true
     ldconfig
     ok OpenVINO "runtime in $OPENVINO_INSTALL_DIR"
 fi
@@ -837,7 +855,7 @@ PAM_DONE=() PAM_ABSENT=() PAM_COVERED=()
 # image-based distros). Materialise the vendor file as an override so there is
 # something to patch, and mark it so uninstall.sh deletes it rather than
 # "restoring" a file that never was.
-for service in polkit-1 kde-fingerprint plasmalogin-fingerprint cosmic-greeter; do
+for service in polkit-1 kde-fingerprint cosmic-greeter; do
     if [ ! -f "$PAM_DIR/$service" ] && [ -f "/usr/lib/pam.d/$service" ]; then
         cp "/usr/lib/pam.d/$service" "$PAM_DIR/$service"
         touch "$PAM_DIR/.face-auth-$service-created"
@@ -898,6 +916,25 @@ join() { local IFS=,; echo "$*" | sed 's/,/, /g'; }
 [ "${#PAM_DONE[@]}" -gt 0 ] && ok PAM "$(join "${PAM_DONE[@]}") (backups: *.face-auth.bak)"
 [ "${#PAM_COVERED[@]}" -gt 0 ] && ok PAM "$(join "${PAM_COVERED[@]}")"
 [ "${#PAM_ABSENT[@]}" -gt 0 ] && skip PAM "not on this system: $(join "${PAM_ABSENT[@]}")"
+
+# The Plasma login screen: off unless asked for, kept across re-deploys.
+LOGIN_NOW="$(bash login-mode.sh status)"
+if [ "$LOGIN_NOW" = none ]; then
+    if [ "${LOGIN_MODE:-off}" != off ]; then
+        warn PAM "--login=$LOGIN_MODE does nothing here: Plasma Login isn't installed."
+    fi
+else
+    LOGIN_MODE="${LOGIN_MODE:-$LOGIN_NOW}"
+    if LOGIN_OUT="$(bash login-mode.sh "$LOGIN_MODE" 2>&1)"; then
+        case "$LOGIN_MODE" in
+            off) ok PAM "Plasma login screen: password only (--login=both or --login=face to change)" ;;
+            both) ok PAM "Plasma login screen: password, then face" ;;
+            face) ok PAM "Plasma login screen: face, or the password" ;;
+        esac
+    else
+        warn PAM "Could not set the Plasma login screen to $LOGIN_MODE." "$LOGIN_OUT"
+    fi
+fi
 
 # ---- Bitwarden polkit action (only if Bitwarden is installed) ----
 # Bitwarden's "Unlock with system authentication" is a polkit action that
@@ -960,10 +997,13 @@ elif command -v checkmodule &>/dev/null && command -v semodule_package &>/dev/nu
     step "loading the SELinux policy (semodule can take 10-30 seconds)"
     mkdir -p "$SELINUX_DIR"
     cp selinux/face-auth.te "$SELINUX_DIR/face_auth.te"
+    cp selinux/face-auth.fc "$SELINUX_DIR/face_auth.fc"
     checkmodule -M -m -o "$SELINUX_DIR/face_auth.mod" "$SELINUX_DIR/face_auth.te"
-    semodule_package -o "$SELINUX_DIR/face_auth.pp" -m "$SELINUX_DIR/face_auth.mod"
+    semodule_package -o "$SELINUX_DIR/face_auth.pp" -m "$SELINUX_DIR/face_auth.mod" -f "$SELINUX_DIR/face_auth.fc"
     semodule -i "$SELINUX_DIR/face_auth.pp"
-    ok SELinux "lock-screen camera policy loaded"
+    # udev labels the NPU node from here on; this covers the one already there.
+    [ -d /dev/accel ] && restorecon -R /dev/accel 2>/dev/null || true
+    ok SELinux "greeter policy loaded"
 else
     warn SELinux "Tools not found, so the lock screen can't reach the camera." \
         "Install policycoreutils and checkpolicy (dnf install, or rpm-ostree install on Silverblue/Bazzite), then re-run this script."
@@ -994,6 +1034,8 @@ fi
 # new models or a new driver leave stale entries.
 rm -rf "$NPU_CACHE_DIR"
 install -d -o root -g root -m 0755 "$NPU_CACHE_DIR"
+# Before the warm-up below, so the blobs inherit the cache's label.
+command -v restorecon &>/dev/null && restorecon -R "$NPU_CACHE_DIR" 2>/dev/null || true
 # Refill it now, as root. Left empty, every lock-screen unlock would compile
 # both models on the CPU until the next sudo or polkit prompt.
 if [ "$NPU_ACTIVE" = 1 ]; then
@@ -1055,6 +1097,9 @@ if [ -n "$(find "$VAR_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ];
             "sudo rm -rf $VAR_DIR && sudo ./deploy.sh, then re-enrol"
     fi
 fi
+# The store and its lockout/ directories have their own SELinux types, so the
+# greeters can write the lockout state and nothing else.
+command -v restorecon &>/dev/null && restorecon -R "$VAR_DIR" 2>/dev/null || true
 ok Store "$STORE_STATE"
 
 section "Done"

@@ -33,7 +33,7 @@ FISH_COMPLETION_DIR="/usr/local/share/fish/vendor_completions.d"
 NPU_CACHE_DIR="/var/cache/face-auth"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
-PAM_SERVICES="sudo swaylock gdm-password polkit-1 kde-fingerprint plasmalogin-fingerprint cosmic-greeter"
+PAM_SERVICES="sudo swaylock gdm-password polkit-1 kde-fingerprint plasmalogin-fingerprint plasmalogin cosmic-greeter"
 
 if [ "$USR_WRITABLE" = true ]; then
     ICON_DIR="/usr/share/icons/hicolor/scalable/apps"
@@ -155,6 +155,11 @@ done
 
 echo "Removing SELinux policy module..."
 semodule -r face_auth 2>/dev/null || true
+# The kept store's types went with the module; back to the stock labels.
+if command -v restorecon &>/dev/null; then
+    [ -d /var/lib/face-auth ] && restorecon -R /var/lib/face-auth 2>/dev/null || true
+    [ -d /dev/accel ] && restorecon -R /dev/accel 2>/dev/null || true
+fi
 
 echo ""
 if [ "$PURGE" = true ]; then

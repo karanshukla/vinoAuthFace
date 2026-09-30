@@ -9,8 +9,9 @@
 | `swaylock` | `/etc/pam.d/swaylock` | swaylock |
 | `polkit-1` | `/etc/pam.d/polkit-1` | polkit prompts |
 | `kde-fingerprint` | `/etc/pam.d/kde-fingerprint` | KDE lock screen |
-| `plasmalogin-fingerprint` | `/etc/pam.d/plasmalogin-fingerprint` | Plasma login screen |
 | `cosmic-greeter` | `/etc/pam.d/cosmic-greeter` | COSMIC lock screen and greeter |
+
+The Plasma login screen is opt-in and set separately: see [Login screen](#login-screen).
 
 The line goes just above the first `auth` line that actually authenticates: `pam_unix`,
 `pam_sss`, `pam_fprintd`, `pam_u2f`, or an `include`/`substack`/`@include` of another stack.
@@ -46,7 +47,41 @@ until `deploy.sh` is re-run (`update.sh` doesn't touch PAM).
 
 KScreenLocker starts the `kde-fingerprint` service up front, alongside the password field, so the
 KDE lock screen unlocks hands-free: look at the camera and it opens, or type your password as
-usual. `plasmalogin-fingerprint` is the same pattern for the Plasma login manager.
+usual.
+
+## Login screen
+
+Face unlock at the Plasma login screen has three modes, off by default:
+
+| Mode | PAM | At the login screen |
+|---|---|---|
+| `off` | Nothing | Password only |
+| `both` | `required` line below `plasmalogin`'s password stack | Type your password, then look at the camera. Both must pass. The password still unlocks KWallet |
+| `face` | `sufficient` line above the password, in `plasmalogin-fingerprint` if the system has it, `plasmalogin` if not | A match logs you in; anything else falls back to the password. KWallet stays locked (see [Keyrings](#keyrings)) |
+
+Set it with `sudo ./deploy.sh --login=off|both|face` (or `FACE_AUTH_LOGIN`), the tray's "Login
+screen" submenu, or `sudo /usr/local/share/face-auth/login-mode.sh off|both|face` directly.
+`login-mode.sh status` prints the current one. A deploy or upgrade without `--login` keeps
+whatever is set.
+
+`plasmalogin-fingerprint` runs hands-free beside the password field. Fedora 45 ships only
+`plasmalogin`, so there `face` needs you to select your account and press Enter with the password
+field empty. Only one of the two is ever wired, or the greeter would scan twice.
+
+In `both`, the camera is a hard requirement. A covered camera, a closed lid, an active face
+lockout or a broken NPU driver means no graphical login until it's fixed; log in on a text console
+(Ctrl+Alt+F3) and run `sudo /usr/local/share/face-auth/login-mode.sh off`. A wrong password still
+starts a scan, since PAM runs the rest of the stack either way; the login fails regardless.
+
+GDM and COSMIC aren't covered: `gdm-password` and `cosmic-greeter` also run their lock screens,
+where they keep the face-or-password line.
+
+The greeter runs face-auth in SELinux's `xdm_t`, which needs `deploy.sh`'s policy (see
+[install.md](install.md#selinux)). With SELinux enforcing, sealed templates (`seal_embeddings =
+true`) don't work there yet: unsealing needs the TPM and systemd's host credential key, which the
+greeter's domain can't have without reading every systemd credential. `face` falls back to the
+password, and `login-mode.sh` refuses `both`, which nobody could get past. A confined domain for
+face-auth fixes this ([#122](https://github.com/karanshukla/vinoAuthFace/issues/122)).
 
 Plasma before 6.7 has a bug where a biometric unlock counts against `pam_faillock`
 (kscreenlocker 29d01bf7), so repeated face unlocks can lock the password out until it expires.

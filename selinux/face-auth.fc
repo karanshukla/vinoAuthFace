@@ -1,0 +1,4 @@
+/dev/accel/accel[0-9]+	-c	system_u:object_r:dri_device_t:s0
+/var/lib/face-auth(/.*)?	system_u:object_r:face_auth_var_lib_t:s0
+/var/lib/face-auth/[^/]+/lockout(/.*)?	system_u:object_r:face_auth_lockout_t:s0
+/var/cache/face-auth(/.*)?	system_u:object_r:face_auth_cache_t:s0
