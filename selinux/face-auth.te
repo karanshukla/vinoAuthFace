@@ -22,6 +22,8 @@ require {
     type proc_t;
     type sysfs_t;
     type security_t;
+    type passwd_file_t;
+    type cert_t;
     role system_r;
     attribute domain;
     attribute exec_type;
@@ -121,6 +123,12 @@ allow face_auth_unseal_t sysfs_t:dir { getattr search open read };
 allow face_auth_unseal_t sysfs_t:lnk_file read;
 allow face_auth_unseal_t sysfs_t:file { getattr open read };
 allow face_auth_unseal_t security_t:dir { getattr search };
+# A scoped credential's key mixes in the user name, which systemd-creds reads
+# from /etc/passwd even when given a UID; libcrypto reads its config.
+allow face_auth_unseal_t passwd_file_t:file { getattr open read };
+allow face_auth_unseal_t cert_t:dir { getattr search open read };
+allow face_auth_unseal_t cert_t:lnk_file read;
+allow face_auth_unseal_t cert_t:file { getattr open read };
 
 # What only this domain gets.
 allow face_auth_unseal_t tpm_device_t:chr_file { getattr open read write ioctl };
