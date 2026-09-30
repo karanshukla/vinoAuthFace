@@ -34,6 +34,10 @@ replayed on top:
   USB vendor:product ID, and a scan from any other camera is refused, so a
   swapped-in webcam or loopback can't stand in for the IR sensor. Existing
   enrolments accept any camera until re-enrolled. `doctor` reports it.
+- Releases are consecutive numbers (`v2`, `v3`, ...), tagged with
+  `scripts/release.sh`; `vinoauthface --version` and `doctor` show the tag
+  (#98). `deploy.sh` without a Rust toolchain now finds the newest release:
+  it asked for GitHub's "latest", which skips pre-releases, and 404'd.
 - Lock screens, login screens and polkit agents now show `Looking for your
   face...` while scanning (#20). The PAM line gains `stdout`, which has
   `pam_exec` relay it as a PAM info message; stderr is silenced in that mode
