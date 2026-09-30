@@ -4,6 +4,7 @@
 
 pub mod helper;
 pub mod icon;
+pub mod idle;
 pub mod progress;
 mod raster;
 pub mod scanning;

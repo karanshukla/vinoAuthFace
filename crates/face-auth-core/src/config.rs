@@ -98,6 +98,7 @@ pub struct FaceAuthConfig {
     pub start_delay_scope: Option<String>,
     pub require_confirmation_elevation: Option<bool>,
     pub update_check: Option<bool>,
+    pub tray_idle_minutes: Option<u64>,
 }
 
 impl Default for FaceAuthConfig {
@@ -136,6 +137,7 @@ impl Default for FaceAuthConfig {
             start_delay_scope: None,
             require_confirmation_elevation: None,
             update_check: None,
+            tray_idle_minutes: None,
         }
     }
 }
@@ -641,6 +643,13 @@ impl FaceAuthConfig {
     /// release. Default on; never consulted by the authentication path.
     pub fn update_check(&self) -> bool {
         self.update_check.unwrap_or(true)
+    }
+
+    /// Minutes with nothing happening before the tray icon hides itself;
+    /// 0 keeps it in view. Default 30. Read by the tray only, from the merged
+    /// system and user config.
+    pub fn tray_idle_minutes(&self) -> u64 {
+        self.tray_idle_minutes.unwrap_or(30)
     }
 
     /// Only authenticate the user who owns the active seat0 session. See

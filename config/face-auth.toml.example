@@ -229,3 +229,9 @@ scan_interval_ms = 0
 # GitHub; the tray asks once a day. Never part of authentication. Dev builds
 # (VINOAUTHFACE_VERSION unset) never check. System policy only.
 # update_check = true
+
+# Tray icon idle delay, in minutes (default 30). After this long with no scan,
+# action or status change, the tray icon reports itself Passive and Plasma
+# tucks it behind the panel's arrow. 0 keeps it in view. Also honoured from
+# ~/.config/face-auth.toml; never part of authentication.
+# tray_idle_minutes = 30

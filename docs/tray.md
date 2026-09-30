@@ -48,6 +48,14 @@ checks for a running `vinoauthface-auth` process in `/proc` every 200 ms. It can
 screen, which has no tray. With `/proc` mounted `hidepid=1` or `2`, root's scans are invisible and
 the icon doesn't change.
 
+After 30 minutes with nothing happening, the icon reports itself Passive, which Plasma moves into
+the hidden icons behind the panel's arrow. The tray keeps running. A scan, a change of status (ready,
+not enrolled, no camera), a new release or a click on a menu entry brings it back and restarts the
+count. The 30 minutes include time spent suspended. Set the delay with `tray_idle_minutes` in
+`~/.config/face-auth.toml` or `/etc/face-auth.toml`; 0 keeps the icon in view. It is read at
+startup, so restart the tray after changing it. Other trays may ignore Passive and keep showing the
+icon.
+
 ## Privileges
 
 - **Nothing root-owned writes to your session.** The scanning icon comes from `/proc`. Upstream's
