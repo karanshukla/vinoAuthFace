@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Upgrade an install to a release without a git checkout. deploy.sh installs
-# this as vinoauthface-upgrade. It downloads the release's source bundle,
+# this as vinoauthface-upgrade, and vinoauthface-update links to it. It downloads the release's source bundle,
 # verifies it against the release's SHA256SUMS, and runs that release's own
 # deploy.sh: every upgrade is a full reinstall, done by the deploy logic the
 # release shipped with, so config, templates and PAM are kept the same way a
@@ -59,6 +59,9 @@ as_user() {
     if [ "$ACTUAL_USER" != root ]; then sudo -u "$ACTUAL_USER" -H "$@"; else "$@"; fi
 }
 CACHE_DIR="$ACTUAL_HOME/.cache/vinoauthface/src"
+# One build directory for every release, outside the per-tag sources, so an
+# upgrade recompiles only what changed rather than every dependency.
+TARGET_DIR="$ACTUAL_HOME/.cache/vinoauthface/target"
 
 printf '%svinoAuthFace upgrade%s\n' "$BOLD" "$RESET"
 
@@ -97,7 +100,7 @@ fi
 
 BASE="${FACE_AUTH_DEPLOY_RELEASE_BASE:-https://github.com/$RELEASE_REPO/releases/download/$TAG}"
 DEST="$CACHE_DIR/$TAG"
-as_user mkdir -p "$CACHE_DIR"
+as_user mkdir -p "$CACHE_DIR" "$TARGET_DIR"
 as_user rm -rf "$DEST.download"
 as_user mkdir "$DEST.download"
 
@@ -139,7 +142,10 @@ DEPLOY_ARGS=()
 
 printf '\n'
 cd "$DEST"
-./deploy.sh "${DEPLOY_ARGS[@]}"
+# Forced: the shared build directory still holds the previous release's
+# binaries, which deploy.sh would otherwise install as they are.
+CARGO_TARGET_DIR="$TARGET_DIR" FACE_AUTH_FORCE_BUILD=1 ./deploy.sh "${DEPLOY_ARGS[@]}"
 
-# The previous releases' sources (and their build trees) aren't needed again.
+# The previous releases' sources aren't needed again. The build directory is
+# kept for the next upgrade.
 find "$CACHE_DIR" -mindepth 1 -maxdepth 1 ! -name "$TAG" -exec rm -rf {} +

@@ -48,7 +48,7 @@ fi
 echo "Removing binaries..."
 rm -f "$BIN_DIR/vinoauthface-auth" "$BIN_DIR/face-auth"
 rm -f /usr/local/libexec/vinoauthface-unseal
-rm -f "$BIN_DIR/vinoauthface" "$BIN_DIR/vinoauthface-upgrade" "$COMPLETION_DIR/vinoauthface" "$BIN_DIR/face-enroll" "$COMPLETION_DIR/face-enroll"
+rm -f "$BIN_DIR/vinoauthface" "$BIN_DIR/vinoauthface-upgrade" "$BIN_DIR/vinoauthface-update" "$COMPLETION_DIR/vinoauthface" "$BIN_DIR/face-enroll" "$COMPLETION_DIR/face-enroll"
 rm -f "$ZSH_COMPLETION_DIR/_vinoauthface" "$FISH_COMPLETION_DIR/vinoauthface.fish"
 
 # The tray (installed by deploy.sh unless --no-tray). A running tray exits on its own when its
@@ -89,7 +89,7 @@ rm -rf "$SHARE_DIR"
 echo "Removing config..."
 rm -f "$CONFIG_DIR/face-auth.toml"
 
-# Release sources vinoauthface-upgrade unpacked (and built in).
+# Release sources vinoauthface-upgrade unpacked, and its build directory.
 rm -rf "$ACTUAL_HOME/.cache/vinoauthface"
 
 if [ -f /etc/udev/rules.d/99-face-auth-camera.rules ]; then
