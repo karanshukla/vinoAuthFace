@@ -99,4 +99,4 @@ Changes: [CHANGELOG.md](CHANGELOG.md). Reporting a vulnerability: [SECURITY.md](
 
 MIT, for this code. The detector (`det_500m.onnx`) and recognition models (`w600k_mbf.onnx`,
 `w600k_r50.onnx`) are InsightFace model-zoo weights, licensed for non-commercial research use
-only; see [docs/architecture.md](docs/architecture.md#models).
+only; see [docs/architecture.md](docs/architecture.md#models). As a result, you may only use this software for your own personal research purposes. If you do fork this project and plan on commercial use, you MUST replace the models used.
