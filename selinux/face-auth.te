@@ -1,10 +1,49 @@
-module face_auth 1.0;
+module face_auth 1.1;
 
 require {
     type xdm_t;
+    type unconfined_t;
     type v4l_device_t;
+    type games_exec_t;
+    attribute file_type;
+    attribute non_security_file_type;
+    attribute non_auth_file_type;
     class chr_file map;
+    class dir { getattr search open read write add_name remove_name };
+    class file { getattr open read map lock create write setattr rename unlink };
 }
 
-# Allow GDM/gdm-password (xdm_t) to mmap the IR camera for capture
+# Labels come from face-auth.fc. /dev/accel gets the GPU's dri_device_t there,
+# which the greeters can already open; the stock policy leaves it device_t.
+
+# /var/lib/face-auth: templates, read-only to everything confined.
+type face_auth_var_lib_t;
+typeattribute face_auth_var_lib_t file_type, non_security_file_type, non_auth_file_type;
+
+# <user>/lockout: the one writable part of the store.
+type face_auth_lockout_t;
+typeattribute face_auth_lockout_t file_type, non_security_file_type, non_auth_file_type;
+
+# /var/cache/face-auth: compiled NPU blobs. Written by root paths, read by all.
+type face_auth_cache_t;
+typeattribute face_auth_cache_t file_type, non_security_file_type, non_auth_file_type;
+
+# Enrolment (sudo, or pkexec from the tray) creates lockout/ beside a new
+# user's templates.
+type_transition unconfined_t face_auth_var_lib_t:dir face_auth_lockout_t "lockout";
+
+# The greeters (GDM, SDDM, Plasma Login) run pam_exec in xdm_t.
 allow xdm_t v4l_device_t:chr_file map;
+
+allow xdm_t face_auth_var_lib_t:dir { getattr search open read };
+allow xdm_t face_auth_var_lib_t:file { getattr open read };
+
+allow xdm_t face_auth_lockout_t:dir { getattr search open read write add_name remove_name };
+allow xdm_t face_auth_lockout_t:file { getattr open read create write setattr rename unlink };
+
+allow xdm_t face_auth_cache_t:dir { getattr search open read };
+allow xdm_t face_auth_cache_t:file { getattr open read map lock };
+
+# A cold cache compiles in the NPU driver, which stats every directory in
+# /usr/lib64 and gives up on the first it can't.
+allow xdm_t games_exec_t:dir getattr;

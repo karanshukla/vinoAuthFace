@@ -107,6 +107,9 @@ jobs:
           printf '%s\n' '#%PAM-1.0' 'auth       include      login' | sudo tee /usr/lib/pam.d/cosmic-greeter
           # A second one that stays untouched: uninstall must delete it outright.
           printf '%s\n' '#%PAM-1.0' 'auth       include      login' | sudo tee /usr/lib/pam.d/kde-fingerprint
+          # Plasma Login without the -fingerprint service, as on Fedora 45.
+          printf '%s\n' '#%PAM-1.0' 'auth       substack     password-auth' 'auth       include      postlogin' \
+            | sudo tee /usr/lib/pam.d/plasmalogin
 
       - name: "Branch 1: cargo present -> build from source"
         run: |
@@ -129,6 +132,9 @@ jobs:
           test "$(stat -c %a /var/lib/face-auth)" = 2750
           test "$(stat -c %U:%a /var/cache/face-auth)" = root:755
           test "$(stat -c %U:%a /usr/local/share/face-auth/uninstall.sh)" = root:755
+          # The login screen is opt-in: a fresh install leaves it alone.
+          grep -q 'Plasma login screen: password only' /tmp/deploy.log
+          test ! -e /etc/pam.d/plasmalogin
 
       # update.sh swaps only the binaries: same modes as deploy.sh, and a
       # second run with nothing rebuilt changes nothing.
@@ -142,6 +148,30 @@ jobs:
           grep -q 'Nothing changed' /tmp/update.log
           grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/sudo
 
+      # What the tray's login-screen entries run through the helper.
+      - name: Login screen modes
+        run: |
+          lm=/usr/local/share/face-auth/login-mode.sh
+          test "$(stat -c %U:%a "$lm")" = root:755
+          test "$("$lm" status)" = off
+          # both: required, below the password stack.
+          sudo "$lm" both
+          test "$("$lm" status)" = both
+          sed -n 3p /etc/pam.d/plasmalogin | grep -qE '^auth +required +pam_exec\.so.*vinoauthface-auth'
+          sed -n 2p /etc/pam.d/plasmalogin | grep -q substack
+          # face: sufficient, above it, and only one line.
+          sudo "$lm" face
+          test "$("$lm" status)" = face
+          sed -n 2p /etc/pam.d/plasmalogin | grep -qE '^auth +sufficient +pam_exec\.so.*vinoauthface-auth'
+          test "$(grep -c face-auth /etc/pam.d/plasmalogin)" = 1
+          # off: the override it created goes again.
+          sudo "$lm" off
+          test "$("$lm" status)" = off
+          test ! -e /etc/pam.d/plasmalogin
+          test ! -e /etc/pam.d/.face-auth-plasmalogin-created
+          # Left on, for uninstall to clean up below.
+          sudo "$lm" face
+
       # The helper is the tray's only root entry point: it must refuse
       # anything that did not come through pkexec, and any named target.
       - name: Tray files and helper checks
@@ -149,8 +179,8 @@ jobs:
           test -x /usr/local/bin/vinoauthface-tray
           test "$(stat -c %U:%a /usr/local/libexec/vinoauthface-helper)" = root:755
           policy=/usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
-          test "$(grep -c 'exec.argv1' "$policy")" = 4
-          test "$(grep -c '<allow_active>auth_admin</allow_active>' "$policy")" = 4
+          test "$(grep -c 'exec.argv1' "$policy")" = 7
+          test "$(grep -c '<allow_active>auth_admin</allow_active>' "$policy")" = 7
           test -f /etc/xdg/autostart/vinoauthface-tray.desktop
           test -f /usr/local/share/applications/vinoauthface-enrol.desktop
           test -f /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
@@ -161,6 +191,7 @@ jobs:
           refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper enrol --user root
           refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper enroll
           refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper upgrade v1
+          refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper login-face off
           refuses /usr/local/libexec/vinoauthface-helper enrol
           # Not enrolled: --enrolled answers 1 (no), not 2 (error).
           set +e; /usr/local/bin/vinoauthface-auth --enrolled; rc=$?; set -e
@@ -180,6 +211,7 @@ jobs:
           test ! -e /etc/pam.d/.face-auth-cosmic-greeter-created
           sudo rm /etc/pam.d/cosmic-greeter
           test ! -e /etc/pam.d/kde-fingerprint
+          test ! -e /etc/pam.d/plasmalogin
           test ! -e /var/cache/face-auth
           test ! -e /usr/local/share/bash-completion/completions/vinoauthface
           test ! -e /usr/local/share/zsh/site-functions/_vinoauthface

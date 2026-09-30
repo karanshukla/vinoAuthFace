@@ -98,6 +98,8 @@ crates/
   face-auth-tray/          # Tray icon + vinoauthface-helper (pkexec), polkit policy, desktop files
 config/face-auth.toml.example   # Documented config template
 selinux/face-auth.te            # SELinux policy source
+selinux/face-auth.fc            # SELinux file labels (NPU node, store, lockout, NPU cache)
 deploy.sh / uninstall.sh        # Install and removal
+login-mode.sh                   # Plasma login screen mode (deploy.sh and the tray helper run it)
 pin-camera.sh                   # Pins the camera by USB bus path
 ```

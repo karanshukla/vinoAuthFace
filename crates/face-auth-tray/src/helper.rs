@@ -11,6 +11,7 @@ pub const FACE_ENROLL: &str = "/usr/local/bin/vinoauthface";
 pub const FACE_AUTH: &str = "/usr/local/bin/vinoauthface-auth";
 pub const UNINSTALLER: &str = "/usr/local/share/face-auth/uninstall.sh";
 pub const UPGRADER: &str = "/usr/local/bin/vinoauthface-upgrade";
+pub const LOGIN_MODE: &str = "/usr/local/share/face-auth/login-mode.sh";
 pub const SAFE_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 
 /// One per polkit action in `data/io.github.karanshukla.vinoauthface.policy`,
@@ -24,6 +25,11 @@ pub enum Verb {
     Uninstall,
     /// `vinoauthface-upgrade` to the newest release.
     Upgrade,
+    /// `login-mode.sh`: face unlock at the Plasma login screen. One verb per
+    /// mode, since polkit pins the argument per action.
+    LoginOff,
+    LoginBoth,
+    LoginFace,
 }
 
 impl Verb {
@@ -33,11 +39,17 @@ impl Verb {
             Verb::Retrain => "retrain",
             Verb::Uninstall => "uninstall",
             Verb::Upgrade => "upgrade",
+            Verb::LoginOff => "login-off",
+            Verb::LoginBoth => "login-both",
+            Verb::LoginFace => "login-face",
         }
     }
 
+    const ALL: [Verb; 7] =
+        [Verb::Enrol, Verb::Retrain, Verb::Uninstall, Verb::Upgrade, Verb::LoginOff, Verb::LoginBoth, Verb::LoginFace];
+
     fn parse(arg: &str) -> Option<Verb> {
-        [Verb::Enrol, Verb::Retrain, Verb::Uninstall, Verb::Upgrade].into_iter().find(|v| v.arg() == arg)
+        Verb::ALL.into_iter().find(|v| v.arg() == arg)
     }
 }
 
@@ -46,7 +58,8 @@ impl Verb {
 /// rather than ignored.
 pub fn parse_request(args: &[String], pkexec_uid: Option<&str>) -> Result<(Verb, u32), String> {
     let [arg] = args else {
-        return Err(format!("expected exactly one of enrol, retrain, uninstall, upgrade; got {} arguments", args.len()));
+        let verbs: Vec<_> = Verb::ALL.iter().map(|v| v.arg()).collect();
+        return Err(format!("expected exactly one of {}; got {} arguments", verbs.join(", "), args.len()));
     };
     let verb = Verb::parse(arg).ok_or_else(|| format!("unknown action {arg:?}"))?;
     let uid = pkexec_uid
@@ -69,6 +82,9 @@ pub fn command(verb: Verb, user: &str) -> (&'static str, Vec<String>) {
         // under root's home, never somewhere the caller could swap it between
         // the checksum and deploy.sh running it.
         Verb::Upgrade => ("/bin/bash", vec![UPGRADER.into()]),
+        Verb::LoginOff => ("/bin/bash", vec![LOGIN_MODE.into(), "off".into()]),
+        Verb::LoginBoth => ("/bin/bash", vec![LOGIN_MODE.into(), "both".into()]),
+        Verb::LoginFace => ("/bin/bash", vec![LOGIN_MODE.into(), "face".into()]),
     }
 }
 
@@ -86,11 +102,12 @@ mod tests {
         assert_eq!(parse_request(&args(&["retrain"]), Some("1000")), Ok((Verb::Retrain, 1000)));
         assert_eq!(parse_request(&args(&["uninstall"]), Some("0")), Ok((Verb::Uninstall, 0)));
         assert_eq!(parse_request(&args(&["upgrade"]), Some("1000")), Ok((Verb::Upgrade, 1000)));
+        assert_eq!(parse_request(&args(&["login-both"]), Some("1000")), Ok((Verb::LoginBoth, 1000)));
     }
 
     #[test]
     fn rejects_unknown_verbs_and_flags() {
-        for list in [&["enroll"][..], &["ENROL"], &["--improve"], &[""], &["enrol ", ]] {
+        for list in [&["enroll"][..], &["ENROL"], &["--improve"], &[""], &["enrol ", ], &["login"], &["login-status"]] {
             assert!(parse_request(&args(list), Some("1000")).is_err(), "{list:?}");
         }
     }
@@ -99,7 +116,7 @@ mod tests {
     fn a_target_user_cannot_be_named() {
         // The only identity is PKEXEC_UID; a second argument naming someone
         // else is refused, not ignored.
-        for list in [&["enrol", "bob"][..], &["enrol", "--user", "bob"], &["retrain", "0"], &["upgrade", "v1"]] {
+        for list in [&["enrol", "bob"][..], &["enrol", "--user", "bob"], &["retrain", "0"], &["upgrade", "v1"], &["login-face", "off"]] {
             assert!(parse_request(&args(list), Some("1000")).is_err(), "{list:?}");
         }
         assert!(parse_request(&args(&[]), Some("1000")).is_err());
@@ -125,5 +142,8 @@ mod tests {
         assert_eq!(command(Verb::Retrain, "alice").1[0], "improve");
         assert_eq!(command(Verb::Uninstall, "alice").1, [UNINSTALLER]);
         assert_eq!(command(Verb::Upgrade, "alice").1, [UPGRADER]);
+        assert_eq!(command(Verb::LoginOff, "alice").1, [LOGIN_MODE, "off"]);
+        assert_eq!(command(Verb::LoginBoth, "alice").1, [LOGIN_MODE, "both"]);
+        assert_eq!(command(Verb::LoginFace, "alice").1, [LOGIN_MODE, "face"]);
     }
 }

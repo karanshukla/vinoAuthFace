@@ -1,4 +1,4 @@
-//! Root side of the tray's enrol, retrain, uninstall and upgrade entries, run through
+//! Root side of the tray's enrol, retrain, uninstall, upgrade and login-screen entries, run through
 //! pkexec. See `face_auth_tray::helper` for why this exists instead of
 //! pkexec running `vinoauthface` directly.
 

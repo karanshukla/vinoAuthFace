@@ -35,6 +35,7 @@ It starts at the next login, or run `vinoauthface-tray` now (it detaches from th
 | Enrol face | `vinoauthface enroll --user <you>`. Once you're enrolled it becomes "Enrol again from scratch" and takes a second click, since it replaces your templates | root, via pkexec |
 | Retrain face | `vinoauthface improve --user <you>`: captures more frames (new lighting, glasses) and keeps the old ones | root, via pkexec |
 | Test scan | One live scan, the same way the lock screen runs it. The result is a notification | you |
+| Login screen | Only with Plasma Login. Password only, password then face, or face: see [pam.md](pam.md#login-screen). Runs `login-mode.sh` | root, via pkexec |
 | Uninstall | Runs `uninstall.sh` after a second click. Your templates are kept, as with `sudo ./uninstall.sh`. The tray exits when it finishes | root, via pkexec |
 
 Enrolment progress ("Capturing frame 3/30", "Face too small: move closer") shows in the tooltip
@@ -63,10 +64,11 @@ icon.
   elsewhere with a symlink. That approach isn't used here.
 - **pkexec runs a fixed helper, never `vinoauthface enroll`.** polkit's `exec.path` pins a binary but not
   its arguments, so `pkexec vinoauthface enroll --embeddings-dir …` would let the caller choose where
-  root writes. `vinoauthface-helper` takes exactly one verb (`enrol`, `retrain`, `uninstall` or
-  `upgrade`) and no flags. The policy pins each verb with `exec.argv1`. The target user comes from
-  `PKEXEC_UID`, which pkexec sets, so there's no way to name another account. All four actions
-  are `auth_admin`.
+  root writes. `vinoauthface-helper` takes exactly one verb (`enrol`, `retrain`, `uninstall`,
+  `upgrade`, `login-off`, `login-both` or `login-face`) and no flags. The policy pins each verb
+  with `exec.argv1`, so the login-screen mode is one action per mode rather than an argument. The
+  target user comes from `PKEXEC_UID`, which pkexec sets, so there's no way to name another
+  account. All seven actions are `auth_admin`.
 - **Upgrade and uninstall never touch your home.** They run as plain root with no `SUDO_USER`, so
   the upgrade downloads and unpacks the release under root's home, where nothing you run can swap
   it between the checksum check and `deploy.sh` running it. Upgrade only installs the newest

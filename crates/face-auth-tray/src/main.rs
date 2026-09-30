@@ -1,4 +1,5 @@
-//! vinoAuthFace's tray icon: status, enrol, retrain, test, upgrade, uninstall.
+//! vinoAuthFace's tray icon: status, enrol, retrain, test, the login screen,
+//! upgrade, uninstall.
 //!
 //! A per-user session app, never in the authentication path. It runs
 //! unprivileged and elevates each action that touches the template store
@@ -7,12 +8,12 @@
 //! know the tray exists.
 
 use face_auth_core::{capture, update, user, Camera, FaceAuthConfig};
-use face_auth_tray::helper::{Verb, FACE_AUTH, HELPER, SAFE_PATH};
+use face_auth_tray::helper::{Verb, FACE_AUTH, HELPER, LOGIN_MODE, SAFE_PATH};
 use face_auth_tray::icon::{self, State};
 use face_auth_tray::idle::{self, Idle};
 use face_auth_tray::{progress, scanning};
 use ksni::blocking::{Handle, TrayMethods};
-use ksni::menu::{StandardItem, SubMenu};
+use ksni::menu::{RadioGroup, RadioItem, StandardItem, SubMenu};
 use ksni::{Category, MenuItem, ToolTip};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
@@ -42,6 +43,44 @@ enum Action {
     Test,
     Uninstall,
     Upgrade,
+    Login(LoginMode),
+}
+
+/// Face unlock at the Plasma login screen, as `login-mode.sh` names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoginMode {
+    Off,
+    Both,
+    Face,
+}
+
+impl LoginMode {
+    const ALL: [LoginMode; 3] = [LoginMode::Off, LoginMode::Both, LoginMode::Face];
+
+    fn parse(status: &str) -> Option<LoginMode> {
+        match status.trim() {
+            "off" => Some(LoginMode::Off),
+            "both" => Some(LoginMode::Both),
+            "face" => Some(LoginMode::Face),
+            _ => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            LoginMode::Off => "Password only",
+            LoginMode::Both => "Password, then face",
+            LoginMode::Face => "Face, or the password",
+        }
+    }
+
+    fn verb(self) -> Verb {
+        match self {
+            LoginMode::Off => Verb::LoginOff,
+            LoginMode::Both => Verb::LoginBoth,
+            LoginMode::Face => Verb::LoginFace,
+        }
+    }
 }
 
 /// What the tray does once an action has finished.
@@ -71,6 +110,8 @@ struct Status {
     /// `None` when vinoauthface-auth is missing or could not answer.
     enrolled: Option<bool>,
     backend: String,
+    /// `None` without Plasma Login, which hides the menu entry.
+    login: Option<LoginMode>,
 }
 
 impl Status {
@@ -88,7 +129,7 @@ impl Status {
             Some(_) => "tract (CPU)".into(),
             None => "unknown (cannot read /etc/face-auth.toml)".into(),
         };
-        Status { camera, enrolled: enrolled(), backend }
+        Status { camera, enrolled: enrolled(), backend, login: login_mode() }
     }
 
     fn ready(&self) -> bool {
@@ -138,6 +179,19 @@ fn enrolled() -> Option<bool> {
         Some(1) => Some(false),
         _ => None,
     }
+}
+
+/// Reads /etc/pam.d, which needs no privileges.
+fn login_mode() -> Option<LoginMode> {
+    let out = Command::new("/bin/bash")
+        .args([LOGIN_MODE, "status"])
+        .env_clear()
+        .env("PATH", SAFE_PATH)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    LoginMode::parse(&String::from_utf8_lossy(&out.stdout))
 }
 
 /// Desktop notifications over the session bus. Best effort: without a
@@ -359,6 +413,29 @@ impl ksni::Tray for Tray {
             }
         }
 
+        if let Some(mode) = s.login {
+            menu.push(
+                SubMenu {
+                    label: format!("Login screen: {}", mode.label()),
+                    icon_name: "system-users".into(),
+                    submenu: vec![RadioGroup {
+                        selected: LoginMode::ALL.iter().position(|m| *m == mode).unwrap_or(0),
+                        select: Box::new(move |t: &mut Tray, i| {
+                            if LoginMode::ALL[i] != mode {
+                                t.run(Action::Login(LoginMode::ALL[i]))
+                            }
+                        }),
+                        options: LoginMode::ALL
+                            .map(|m| RadioItem { label: m.label().into(), enabled: idle, ..Default::default() })
+                            .into(),
+                    }
+                    .into()],
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+
         menu.push(MenuItem::Separator);
         if self.confirm == Some(Confirm::Uninstall) {
             menu.push(item("Uninstall vinoAuthFace? Click to confirm", "dialog-warning", idle, |t| {
@@ -497,6 +574,28 @@ fn perform(action: Action, handle: &Handle<Tray>, notifier: &Notifier, user: &st
                 }
                 Ok(Some((false, err))) => {
                     notifier.send(0, "Uninstall failed", &err);
+                }
+                Err(e) => {
+                    notifier.send(0, "Cannot run pkexec", &e.to_string());
+                }
+            }
+        }
+        Action::Login(mode) => {
+            set_busy(Some("Login screen: waiting for authentication".into()));
+            match run_helper(mode.verb(), |_| {}) {
+                Ok(None) => {}
+                Ok(Some((true, _))) => {
+                    let body = match mode {
+                        LoginMode::Off => "Your password alone logs you in.",
+                        LoginMode::Both => {
+                            "Type your password, then look at the camera. If the camera fails, log in on a text console (Ctrl+Alt+F3)."
+                        }
+                        LoginMode::Face => "Select your account and press Enter to scan. A failed scan falls back to the password.",
+                    };
+                    notifier.send(0, &format!("Login screen: {}", mode.label()), body);
+                }
+                Ok(Some((false, err))) => {
+                    notifier.send(0, "Could not change the login screen", &err);
                 }
                 Err(e) => {
                     notifier.send(0, "Cannot run pkexec", &e.to_string());
@@ -680,7 +779,7 @@ mod tests {
 
     #[test]
     fn status_lines_name_what_is_missing() {
-        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into() };
+        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into(), login: None };
         let lines = s.lines();
         assert_eq!(lines[0], "Camera: no IR camera found");
         assert_eq!(lines[1], "Face: unknown (is vinoauthface installed?)");
@@ -688,8 +787,27 @@ mod tests {
         // ksni reads "_" as an access-key marker.
         assert!(lines.iter().all(|l| !l.contains('_')), "{lines:?}");
 
-        let s = Status { camera: Some("/dev/video2".into()), enrolled: Some(true), backend: "OpenVINO (NPU)".into() };
+        let s = Status {
+            camera: Some("/dev/video2".into()),
+            enrolled: Some(true),
+            backend: "OpenVINO (NPU)".into(),
+            login: Some(LoginMode::Face),
+        };
         assert!(s.ready());
         assert_eq!(s.lines()[..2], ["Camera: /dev/video2", "Face: enrolled"]);
+    }
+
+    #[test]
+    fn login_modes_round_trip_through_the_script() {
+        // login-mode.sh's status words, and its "none" without Plasma Login.
+        assert_eq!(LoginMode::parse("off\n"), Some(LoginMode::Off));
+        assert_eq!(LoginMode::parse("both"), Some(LoginMode::Both));
+        assert_eq!(LoginMode::parse("face"), Some(LoginMode::Face));
+        assert_eq!(LoginMode::parse("none"), None);
+        assert_eq!(LoginMode::parse(""), None);
+        for m in LoginMode::ALL {
+            assert_eq!(m.verb().arg(), format!("login-{m:?}").to_lowercase());
+            assert!(!m.label().contains('_'));
+        }
     }
 }
