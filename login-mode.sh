@@ -96,16 +96,18 @@ if [ "$(status)" = none ]; then
     exit 1
 fi
 
-# Sealed templates can't be unsealed from the greeter's SELinux domain yet
-# (#122), so a required scan would lock the login screen.
+# The greeter unseals through vinoauthface-unseal's SELinux domain (#122). An
+# install without it (a release from before it) can't, so a required scan
+# would lock the login screen.
 if [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 1 ] \
+   && [ ! -x /usr/local/libexec/vinoauthface-unseal ] \
    && grep -qE '^[[:space:]]*seal_embeddings[[:space:]]*=[[:space:]]*true' /etc/face-auth.toml 2>/dev/null; then
     if [ "$MODE" = both ]; then
-        echo "Refusing both: sealed templates can't be unsealed at the login screen under SELinux yet (issue 122), so no one could log in." >&2
+        echo "Refusing both: sealed templates need /usr/local/libexec/vinoauthface-unseal at the login screen under SELinux, and it isn't installed, so no one could log in. Re-run deploy.sh." >&2
         exit 1
     fi
     if [ "$MODE" = face ]; then
-        echo "Note: sealed templates can't be unsealed at the login screen under SELinux yet (issue 122); it will fall back to the password." >&2
+        echo "Note: without /usr/local/libexec/vinoauthface-unseal, sealed templates can't be unsealed at the login screen under SELinux; it will fall back to the password." >&2
     fi
 fi
 
