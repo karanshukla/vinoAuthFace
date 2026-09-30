@@ -253,7 +253,7 @@ pub fn report(checks: &[Check]) -> i32 {
 mod tests {
     use super::*;
 
-    const OURS: &str = "auth sufficient pam_exec.so quiet /usr/local/bin/vinoauthface-auth";
+    const OURS: &str = "auth sufficient pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth";
 
     #[test]
     fn stale_model_tag_fails_and_unknown_passes() {
