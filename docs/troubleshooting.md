@@ -1,7 +1,7 @@
 # Troubleshooting
 
 ```bash
-# Check the whole install in one go: PAM hooks, models, backend, ownership,
+# Check the whole install in one go: PAM hooks, model checksums, backend, ownership,
 # templates, camera, pin and sealing. Run it with sudo to include enrolment and
 # whether templates match the configured recognition model.
 sudo vinoauthface doctor
