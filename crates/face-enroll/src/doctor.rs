@@ -5,7 +5,9 @@
 //! question (config, camera, pinning, sealing) doctor calls it, so the two can't
 //! drift apart.
 
-use face_auth_core::{cameras, capture, config::SYSTEM_CONFIG_PATH, seal, storage::EmbeddingStore, FaceAuthConfig};
+use face_auth_core::{
+    cameras, capture, config::SYSTEM_CONFIG_PATH, seal, storage::EmbeddingStore, update, FaceAuthConfig,
+};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -36,6 +38,26 @@ pub struct Check {
 
 fn check(status: Status, name: impl Into<String>, detail: impl Into<String>) -> Check {
     Check { status, name: name.into(), detail: detail.into() }
+}
+
+/// Verdict for the update check. `latest` is `None` when the fetch failed.
+pub fn update_verdict(current: &str, latest: Option<&str>) -> Check {
+    let name = "update";
+    if update::release_number(current).is_none() {
+        return check(Status::Info, name, format!("{current} is not a release build; not checked"));
+    }
+    match latest {
+        None => check(Status::Info, name, "could not reach GitHub to check (offline?)"),
+        Some(l) if update::is_newer(current, l) => check(
+            Status::Info,
+            name,
+            format!(
+                "{l} is available (installed {current}). Update: git pull, then `sudo ./deploy.sh`; notes at {}",
+                update::RELEASES_URL
+            ),
+        ),
+        Some(_) => check(Status::Ok, name, format!("{current} is the latest release")),
+    }
 }
 
 /// Verdict for one PAM service file's contents.
@@ -218,6 +240,13 @@ pub fn run(pam_dir: &Path) -> Vec<Check> {
         }
     };
 
+    if config.update_check() {
+        let latest = update::release_number(crate::VERSION).and_then(|_| update::fetch_latest_tag());
+        out.push(update_verdict(crate::VERSION, latest.as_deref()));
+    } else {
+        out.push(check(Status::Info, "update", "check disabled (update_check = false)"));
+    }
+
     out.push(model_check("recognition model", &config.model_path()));
     out.push(model_check("detector model", &config.detector_model_path()));
     out.push(backend_verdict(&config.backend(), &config.npu_device(), cfg!(feature = "npu")));
@@ -331,6 +360,16 @@ mod tests {
         assert!(v.detail.contains("alice") && !v.detail.contains("bob"));
         assert_eq!(binding_verdict(false, "/dev/video2", None, &users).status, Status::Info);
         assert_eq!(binding_verdict(true, "/dev/video2", Some("2b7e:55c0"), &users[..1]).status, Status::Ok);
+    }
+
+    #[test]
+    fn update_verdicts() {
+        assert_eq!(update_verdict("v2", Some("v3")).status, Status::Info);
+        assert!(update_verdict("v2", Some("v3")).detail.contains("v3 is available"));
+        assert_eq!(update_verdict("v3", Some("v3")).status, Status::Ok);
+        assert_eq!(update_verdict("v3", Some("v2")).status, Status::Ok);
+        assert!(update_verdict("v2", None).detail.contains("could not reach"));
+        assert!(update_verdict("dev", Some("v9")).detail.contains("not a release build"));
     }
 
     #[test]

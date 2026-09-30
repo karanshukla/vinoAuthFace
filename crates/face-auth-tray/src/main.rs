@@ -6,7 +6,7 @@
 //! looking for the process in `/proc` (see `scanning.rs`): `vinoauthface-auth` does not
 //! know the tray exists.
 
-use face_auth_core::{capture, user, Camera, FaceAuthConfig};
+use face_auth_core::{capture, update, user, Camera, FaceAuthConfig};
 use face_auth_tray::helper::{Verb, FACE_AUTH, HELPER, SAFE_PATH};
 use face_auth_tray::icon::{self, State};
 use face_auth_tray::{progress, scanning};
@@ -26,6 +26,9 @@ const DOCS: &str = "https://github.com/karanshukla/vinoAuthFace/tree/main/docs";
 const SCAN_POLL: Duration = Duration::from_millis(200);
 /// How often enrolment is re-read, to catch a `sudo vinoauthface enroll` run by hand.
 const STATUS_POLL: Duration = Duration::from_secs(30);
+/// First update check, after login's own network and tray startup settle.
+const UPDATE_FIRST_CHECK: Duration = Duration::from_secs(60);
+const UPDATE_CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// pkexec's exit codes for a dismissed or refused prompt.
 const PKEXEC_CANCELLED: [i32; 2] = [126, 127];
 
@@ -41,6 +44,8 @@ enum Msg {
     Run(Action),
     /// A worker finished; re-read the status.
     Done,
+    /// An update check finished; `Some` is a newer release tag.
+    Update(Option<String>),
     Quit,
 }
 
@@ -50,7 +55,6 @@ struct Status {
     camera: Option<String>,
     /// `None` when vinoauthface-auth is missing or could not answer.
     enrolled: Option<bool>,
-    backend: String,
 }
 
 impl Status {
@@ -63,12 +67,7 @@ impl Status {
             Some(device) => Camera::open(device).is_ok().then(|| device.clone()),
             None => capture::detect_ir_camera(),
         });
-        let backend = match config.as_ref().map(|c| (c.backend(), c.npu_device())) {
-            Some((b, device)) if b == "openvino" => format!("OpenVINO ({device})"),
-            Some(_) => "tract (CPU)".into(),
-            None => "unknown (cannot read /etc/face-auth.toml)".into(),
-        };
-        Status { camera, enrolled: enrolled(), backend }
+        Status { camera, enrolled: enrolled() }
     }
 
     fn ready(&self) -> bool {
@@ -135,6 +134,8 @@ struct Tray {
     /// while one runs.
     busy: Option<String>,
     confirm: Option<Confirm>,
+    /// A newer release than the one running, from the daily update check.
+    update: Option<String>,
 }
 
 impl Tray {
@@ -250,23 +251,15 @@ impl ksni::Tray for Tray {
         let idle = self.busy.is_none();
         let enrolled = s.enrolled == Some(true);
         // "ksni" treats "_" as an access-key marker, so labels avoid it.
-        let mut menu = vec![
-            info(self.summary()),
-            info(match &s.camera {
-                Some(device) => format!("Camera: {device}"),
-                None => "Camera: no IR camera found".into(),
-            }),
-            info(format!(
-                "Face: {}",
-                match s.enrolled {
-                    Some(true) => "enrolled",
-                    Some(false) => "not enrolled",
-                    None => "unknown (is vinoauthface installed?)",
-                }
-            )),
-            info(format!("Backend: {}", s.backend)),
-            MenuItem::Separator,
-        ];
+        let mut menu = Vec::new();
+        if let Some(tag) = &self.update {
+            let url = format!("{}/tag/{tag}", update::RELEASES_URL);
+            menu.push(item(&format!("Update available: {tag}"), "software-update-available", true, move |_| {
+                let _ = Command::new("xdg-open").arg(&url).stdin(Stdio::null()).spawn();
+            }));
+            menu.push(info(format!("Installed: {}. Update with git pull, then sudo ./deploy.sh", update::CURRENT)));
+            menu.push(MenuItem::Separator);
+        }
 
         if s.enrolled == Some(false) {
             menu.push(item("Enrol face…", "list-add-user", idle, |t| t.run(Action::Enrol)));
@@ -443,9 +436,24 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
     let proc_root = Path::new("/proc");
     let mut last_status = Instant::now();
     let mut scanning = false;
+    let mut next_update_check = Instant::now() + UPDATE_FIRST_CHECK;
+    let mut notified_update: Option<String> = None;
     loop {
         match rx.recv_timeout(SCAN_POLL) {
             Ok(Msg::Quit) => return,
+            Ok(Msg::Update(latest)) => {
+                if latest.is_some() && latest != notified_update {
+                    if let Some(tag) = &latest {
+                        Notifier::new().send(
+                            0,
+                            "vinoAuthFace update available",
+                            &format!("{tag} is out (installed {}). Click the tray icon for details.", update::CURRENT),
+                        );
+                    }
+                    notified_update = latest.clone();
+                }
+                handle.update(|t| t.update = latest);
+            }
             Ok(Msg::Run(action)) => {
                 let (handle, tx, user) = (handle.clone(), tx.clone(), user.clone());
                 handle.clone().update(|t| t.busy = Some("Starting…".into()));
@@ -461,6 +469,20 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+
+        // Off the event loop: curl can take its full timeout, and the loop
+        // also paces the scan icon.
+        if Instant::now() >= next_update_check {
+            next_update_check = Instant::now() + UPDATE_CHECK_EVERY;
+            if update::release_number(update::CURRENT).is_some()
+                && FaceAuthConfig::load().map_or(true, |c| c.update_check())
+            {
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    let _ = tx.send(Msg::Update(update::newer_release(update::CURRENT)));
+                });
+            }
         }
 
         let now = scanning::face_auth_running(proc_root);
@@ -515,6 +537,7 @@ fn main() -> anyhow::Result<()> {
         scanning: false,
         busy: None,
         confirm: None,
+        update: None,
     };
     // Assumed, not checked: at login this can start before Plasma's tray does.
     let handle = tray.assume_sni_available(true).spawn()?;

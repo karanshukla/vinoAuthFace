@@ -1,6 +1,6 @@
 # Tray icon
 
-An optional tray icon for the session: status at a glance, and enrol, retrain, test and uninstall
+An optional tray icon for the session: an icon that shows scan state, and enrol, retrain, test and uninstall
 without remembering CLI flags. It replaces upstream's GTK settings GUI. It is a separate
 per-user app and is never part of authentication: `vinoauthface-auth` doesn't know it exists.
 
@@ -29,7 +29,7 @@ It starts at the next login, or run `vinoauthface-tray` now (it detaches from th
 
 | Entry | Does | Runs as |
 |---|---|---|
-| Status | Camera, enrolled or not, backend | you |
+| Update available | Shown at the top only when a newer release exists (checked a minute after start, then daily; `update_check = false` disables it). Opens that release's page. A notification appears once per new release | you |
 | Enrol face | `vinoauthface enroll --user <you>`. Once you're enrolled it becomes "Enrol again from scratch" and takes a second click, since it replaces your templates | root, via pkexec |
 | Retrain face | `vinoauthface improve --user <you>`: captures more frames (new lighting, glasses) and keeps the old ones | root, via pkexec |
 | Test scan | One live scan, the same way the lock screen runs it. The result is a notification | you |

@@ -222,3 +222,10 @@ scan_interval_ms = 0
 # are ignored at login and rejected at enrolment ("face too small, move
 # closer"). A user's own config may only raise it.
 # min_face_size_ratio = 0.0
+
+# Update check (default true). `vinoauthface doctor` and the tray icon ask
+# GitHub's public releases API (through curl) whether a newer release exists,
+# and say so. One anonymous request, which reveals only your IP address to
+# GitHub; the tray asks once a day. Never part of authentication. Dev builds
+# (VINOAUTHFACE_VERSION unset) never check. System policy only.
+# update_check = true
