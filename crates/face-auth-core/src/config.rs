@@ -29,8 +29,45 @@ const LIVENESS_MOTION_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 const START_DELAY_RANGE: std::ops::RangeInclusive<u64> = 0..=10_000;
 const MIN_FACE_SIZE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.75;
 
+/// `[liveness]` (or `liveness.key = ...`): the motion-liveness settings as one
+/// group. Each key is the flat `liveness_<key>` field under a shorter name.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct LivenessSection {
+    /// `off`, `standard` or `strict`; fills whichever thresholds aren't set.
+    pub preset: Option<String>,
+    pub motion_threshold: Option<f32>,
+    pub residual_motion_threshold: Option<f32>,
+    pub window_ms: Option<u64>,
+    pub grace_ms: Option<u64>,
+}
+
+/// `[lockout]`: the flat `lockout_<key>` fields.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct LockoutSection {
+    pub threshold: Option<u32>,
+    pub base_delay_ms: Option<u64>,
+    pub max_delay_ms: Option<u64>,
+}
+
+/// `[guards]`: when a face scan runs at all. Keys keep their flat names.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct GuardsSection {
+    pub seat_check: Option<bool>,
+    pub abort_if_ssh: Option<bool>,
+    pub abort_if_lid_closed: Option<bool>,
+    pub start_delay_ms: Option<u64>,
+    pub start_delay_scope: Option<String>,
+    pub require_confirmation_elevation: Option<bool>,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct FaceAuthConfig {
+    /// Grouped spellings of the flat fields below. Folded into them by
+    /// [`FaceAuthConfig::fold_sections`] straight after parsing, so everything
+    /// downstream (accessors, the user overlay, validation) only sees flat fields.
+    pub liveness: Option<LivenessSection>,
+    pub lockout: Option<LockoutSection>,
+    pub guards: Option<GuardsSection>,
     pub device: Option<String>,
     pub threshold: Option<f32>,
     pub model_path: Option<String>,
@@ -65,6 +102,9 @@ pub struct FaceAuthConfig {
 impl Default for FaceAuthConfig {
     fn default() -> Self {
         Self {
+            liveness: None,
+            lockout: None,
+            guards: None,
             device: None,
             threshold: Some(0.6),
             model_path: None,
@@ -130,7 +170,64 @@ fn read_user_file(path: &Path, owner_uid: u32) -> std::io::Result<String> {
     Ok(buf)
 }
 
+/// Set `flat` from the grouped spelling unless it already has a value.
+macro_rules! fold {
+    ($section:expr, $($from:ident => $to:expr),+ $(,)?) => {
+        $(if $to.is_none() { $to = $section.$from.take(); })+
+    };
+}
+
 impl FaceAuthConfig {
+    /// Move `[liveness]`, `[lockout]` and `[guards]` values into the flat
+    /// fields. A flat key wins over its grouped spelling, so a `FACE_AUTH_*`
+    /// variable or an older line still overrides the group. Within
+    /// `[liveness]`, an explicit value wins over `preset`.
+    ///
+    /// Must run on every parsed config, the user's included: the overlay
+    /// whitelist only looks at flat fields, so a group folded late would
+    /// bypass it.
+    pub fn fold_sections(&mut self) -> Result<()> {
+        if let Some(mut s) = self.liveness.take() {
+            fold!(s,
+                motion_threshold => self.liveness_motion_threshold,
+                residual_motion_threshold => self.liveness_residual_motion_threshold,
+                window_ms => self.liveness_window_ms,
+                grace_ms => self.liveness_grace_ms,
+            );
+            let (motion, residual) = match s.preset.as_deref() {
+                None | Some("standard") => (0.01, 0.0),
+                Some("off") => (0.0, 0.0),
+                Some("strict") => (0.01, 0.3),
+                Some(other) => bail!(
+                    "liveness preset must be \"off\", \"standard\" or \"strict\", not {:?}",
+                    other
+                ),
+            };
+            if s.preset.is_some() {
+                self.liveness_motion_threshold.get_or_insert(motion);
+                self.liveness_residual_motion_threshold.get_or_insert(residual);
+            }
+        }
+        if let Some(mut s) = self.lockout.take() {
+            fold!(s,
+                threshold => self.lockout_threshold,
+                base_delay_ms => self.lockout_base_delay_ms,
+                max_delay_ms => self.lockout_max_delay_ms,
+            );
+        }
+        if let Some(mut s) = self.guards.take() {
+            fold!(s,
+                seat_check => self.seat_check,
+                abort_if_ssh => self.abort_if_ssh,
+                abort_if_lid_closed => self.abort_if_lid_closed,
+                start_delay_ms => self.start_delay_ms,
+                start_delay_scope => self.start_delay_scope,
+                require_confirmation_elevation => self.require_confirmation_elevation,
+            );
+        }
+        Ok(())
+    }
+
     /// Full layered load: system file, then the calling user's file, then
     /// `FACE_AUTH_*` environment overrides.
     ///
@@ -155,7 +252,8 @@ impl FaceAuthConfig {
         // try_parsing so numeric keys coerce from their string env values.
         builder = builder.add_source(Environment::with_prefix("FACE_AUTH").try_parsing(true));
 
-        let config: FaceAuthConfig = builder.build()?.try_deserialize()?;
+        let mut config: FaceAuthConfig = builder.build()?.try_deserialize()?;
+        config.fold_sections()?;
         config.validate()?;
         Ok(config)
     }
@@ -189,7 +287,8 @@ impl FaceAuthConfig {
         if system_config.exists() {
             builder = builder.add_source(File::from(system_config));
         }
-        let config: FaceAuthConfig = builder.build()?.try_deserialize()?;
+        let mut config: FaceAuthConfig = builder.build()?.try_deserialize()?;
+        config.fold_sections().context("invalid system config")?;
         config.validate().context("invalid system config")?;
         Ok(config)
     }
@@ -589,7 +688,10 @@ fn load_user_overlay(username: &str) -> Option<FaceAuthConfig> {
 
     // The parse error is not logged: it quotes the offending line, and under
     // the set-group-ID lock-screen path the caller reads our stderr.
-    match toml::from_str::<FaceAuthConfig>(&contents) {
+    match toml::from_str::<FaceAuthConfig>(&contents)
+        .map_err(anyhow::Error::from)
+        .and_then(|mut cfg| cfg.fold_sections().map(|()| cfg))
+    {
         Ok(cfg) => Some(cfg),
         Err(_) => {
             tracing::warn!("ignoring malformed user config {}", path.display());
@@ -683,6 +785,84 @@ mod tests {
             ..FaceAuthConfig::default()
         });
         assert_eq!(cfg.liveness_residual_motion_threshold(), 0.3);
+    }
+
+    fn parse(toml_src: &str) -> FaceAuthConfig {
+        let mut cfg: FaceAuthConfig = toml::from_str(toml_src).unwrap();
+        cfg.fold_sections().unwrap();
+        cfg
+    }
+
+    #[test]
+    fn grouped_keys_fold_into_the_flat_fields() {
+        let cfg = parse(
+            "liveness.motion_threshold = 0.05\n\
+             liveness.grace_ms = 1234\n\
+             lockout.threshold = 3\n\
+             guards.start_delay_ms = 100\n\
+             guards.seat_check = true\n",
+        );
+        assert_eq!(cfg.liveness_motion_threshold(), 0.05);
+        assert_eq!(cfg.liveness_grace_ms(), 1234);
+        assert_eq!(cfg.lockout_threshold, Some(3));
+        assert_eq!(cfg.start_delay_ms, Some(100));
+        assert!(cfg.seat_check());
+    }
+
+    #[test]
+    fn table_headers_and_dotted_keys_are_the_same() {
+        let cfg = parse("[liveness]\nmotion_threshold = 0.05\n");
+        assert_eq!(cfg.liveness_motion_threshold(), 0.05);
+    }
+
+    #[test]
+    fn a_flat_key_wins_over_its_group() {
+        let cfg = parse("liveness_motion_threshold = 0.2\nliveness.motion_threshold = 0.05\n");
+        assert_eq!(cfg.liveness_motion_threshold(), 0.2);
+    }
+
+    #[test]
+    fn liveness_presets() {
+        let of = |p: &str| {
+            let c = parse(&format!("liveness.preset = \"{p}\"\n"));
+            (c.liveness_motion_threshold(), c.liveness_residual_motion_threshold())
+        };
+        assert_eq!(of("off"), (0.0, 0.0));
+        assert_eq!(of("standard"), (0.01, 0.0));
+        assert_eq!(of("strict"), (0.01, 0.3));
+    }
+
+    #[test]
+    fn an_explicit_liveness_value_beats_the_preset() {
+        let cfg = parse("liveness.preset = \"strict\"\nliveness.residual_motion_threshold = 0.1\n");
+        assert_eq!(cfg.liveness_residual_motion_threshold(), 0.1);
+        assert_eq!(cfg.liveness_motion_threshold(), 0.01);
+    }
+
+    #[test]
+    fn unknown_liveness_preset_is_an_error() {
+        let mut cfg: FaceAuthConfig = toml::from_str("liveness.preset = \"lax\"\n").unwrap();
+        assert!(cfg.fold_sections().is_err());
+    }
+
+    #[test]
+    fn grouped_user_keys_cannot_bypass_the_overlay() {
+        let mut cfg = FaceAuthConfig {
+            liveness_motion_threshold: Some(0.05),
+            ..system_baseline()
+        };
+        cfg.apply_user_overlay(&parse("liveness.preset = \"off\"\n"));
+        assert_eq!(cfg.liveness_motion_threshold(), 0.05, "preset off must not relax the system value");
+        assert_eq!(cfg.liveness_residual_motion_threshold(), 0.0);
+
+        cfg.apply_user_overlay(&parse("liveness.preset = \"strict\"\n"));
+        assert_eq!(cfg.liveness_residual_motion_threshold(), 0.3, "a user may tighten through a preset");
+
+        let before = (cfg.lockout_threshold, cfg.seat_check, cfg.start_delay_ms);
+        cfg.apply_user_overlay(&parse(
+            "lockout.threshold = 999\nguards.seat_check = false\nguards.start_delay_ms = 0\n",
+        ));
+        assert_eq!(before, (cfg.lockout_threshold, cfg.seat_check, cfg.start_delay_ms));
     }
 
     #[test]
@@ -929,7 +1109,7 @@ mod tests {
             .lines()
             .map(|l| match l.strip_prefix("# ") {
                 Some(rest) if rest.split_once(" = ").is_some_and(|(k, _)| {
-                    !k.is_empty() && k.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                    !k.is_empty() && k.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c == '.')
                 }) => rest.split(" #").next().unwrap_or(rest).to_string(),
                 _ => l.to_string(),
             })
@@ -937,18 +1117,25 @@ mod tests {
             .join("\n");
 
         for text in [raw, uncommented.as_str()] {
-            let via_toml: FaceAuthConfig = toml::from_str(text).expect("toml crate parses example");
+            let mut via_toml: FaceAuthConfig = toml::from_str(text).expect("toml crate parses example");
+            via_toml.fold_sections().expect("example groups fold");
             via_toml.validate().expect("example is valid");
-            let via_config: FaceAuthConfig = Config::builder()
+            let mut via_config: FaceAuthConfig = Config::builder()
                 .add_source(config::File::from_str(text, config::FileFormat::Toml))
                 .build()
                 .unwrap()
                 .try_deserialize()
                 .expect("config crate parses example");
+            via_config.fold_sections().expect("example groups fold");
             assert_eq!(via_config.threshold(), via_toml.threshold());
+            assert_eq!(
+                via_config.liveness_motion_threshold(),
+                via_toml.liveness_motion_threshold()
+            );
         }
 
-        let full: FaceAuthConfig = toml::from_str(&uncommented).unwrap();
+        let mut full: FaceAuthConfig = toml::from_str(&uncommented).unwrap();
+        full.fold_sections().unwrap();
         assert!(full.pinned_camera_index.is_some() && full.lockout_threshold.is_some());
         assert_eq!(full.backend(), "tract");
     }

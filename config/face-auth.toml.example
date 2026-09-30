@@ -4,25 +4,141 @@
 # It must stay root-owned. It is the only source the PAM authentication path
 # trusts for the camera, the models, and the template directory.
 #
+# Most installs never edit it. The settings people actually change are in
+# "Everyday settings" and "Liveness". The rest is written by deploy.sh and
+# pin-camera.sh, or is a safe default.
+#
+# Grouped keys (liveness.*, lockout.*, guards.*) are written dotted, not as
+# [table] headers, on purpose: deploy.sh and pin-camera.sh append plain keys to
+# the end of this file, and after a [table] header those would land inside it.
+# The old flat spellings (liveness_motion_threshold, lockout_threshold,
+# seat_check, ...) still work; a flat key wins over its grouped spelling.
+#
 # Users may also keep ~/.config/face-auth.toml. At the login and sudo prompt
 # that file may only ever make authentication STRICTER:
 #
 #   threshold, detector_threshold,
-#   liveness_motion_threshold,
-#   liveness_residual_motion_threshold,
-#   min_face_size_ratio             honoured only if >= the value set here
+#   liveness.motion_threshold,
+#   liveness.residual_motion_threshold,
+#   liveness.preset                 honoured only if it is not looser than the
+#   min_face_size_ratio             value set here
 #   device                          honoured only if it is a real IR capture
 #                                   device present on this machine
 #   scan_duration_ms, scan_interval_ms, capture_timeout_ms,
-#   liveness_grace_ms               honoured within built-in bounds
+#   liveness.grace_ms               honoured within built-in bounds
 #   model_path, detector_model_path, embeddings_dir,
-#   pinned_camera_*, lockout_*, backend, npu_device,
-#   liveness_window_ms, bind_camera, seat_check, abort_if_*, start_delay_*,
-#   require_confirmation_elevation
+#   pinned_camera_*, lockout.*, backend, npu_device,
+#   liveness.window_ms, bind_camera, seal_embeddings, guards.*
 #                                   ignored — system policy only
 #
-# FACE_AUTH_* environment variables affect the vinoauthface CLI and the offline tools.
-# They are ignored entirely during PAM authentication.
+# FACE_AUTH_* environment variables affect the vinoauthface CLI and the offline
+# tools, under the flat names (FACE_AUTH_LIVENESS_MOTION_THRESHOLD). They are
+# ignored entirely during PAM authentication.
+
+# ---------------------------------------------------------------------------
+# Everyday settings
+# ---------------------------------------------------------------------------
+
+# Cosine similarity threshold (0.3 - 1.0, HIGHER = stricter match).
+# This is the floor: a user cannot go below it, only above.
+threshold = 0.6
+
+# How long the face scan window lasts, in milliseconds (500 - 30000, default 5000).
+# The scanner keeps capturing and checking frames until this elapses or a match
+# is found, like Windows Hello.
+scan_duration_ms = 5000
+
+# Start delay (ms, 0 - 10000, default 2000, 0 disables). A screen locker runs
+# vinoAuthFace the instant it starts, so someone still at the camera after
+# locking would be unlocked at once. vinoAuthFace waits until the locker
+# (its parent process) has been running this long, then scans. A retry on the
+# same lock screen does not wait again. System policy only.
+# guards.start_delay_ms = 2000
+
+# ---------------------------------------------------------------------------
+# Liveness (motion check)
+# ---------------------------------------------------------------------------
+# During a scan, a match is only accepted once one face frame shows the motion
+# below. Only the face region is compared, after removing brightness and
+# contrast differences, so movement elsewhere in view and auto-exposure changes
+# don't count. A user's own config may only raise these.
+#
+# Start with the preset. "off" turns motion liveness off (a photo or a screen
+# replay can then unlock); "standard" is the default; "strict" adds the
+# residual check (a photo moved by hand). Sitting very still and failing to
+# unlock is a reason to lower the preset, not to raise the scan time. Any of
+# the individual keys below overrides the preset for that value.
+# liveness.preset = "standard"
+#
+# Fraction of face pixels that changed (0.0 - 1.0, default 0.01), against the
+# oldest face frame of the scan within liveness.window_ms. Defeats a rigidly
+# held photo. 0 disables it.
+# liveness.motion_threshold = 0.01
+#
+# Motion a rigid shift can't explain between consecutive face frames (0.0 -
+# 1.0, default 0 = off): the fraction still changed, after undoing the best
+# shift, in the most-changed eye-sized block of the face. A photo moved by hand
+# moves as one piece; a real face moves in parts (a blink, the mouth, the head
+# turning). Moved-photo tests peak around 0.2 and blinks reach 0.3-0.6, so 0.3
+# is the value to try. Off by default: a face held still may not blink within
+# one scan, and glasses glare over the eyes hides blinks.
+# liveness.residual_motion_threshold = 0.0
+#
+# How far back the motion_threshold comparison looks, in milliseconds (0 -
+# 2000, default 1000). A face held still barely changes between consecutive
+# frames but drifts measurably over a second; a photo doesn't change against
+# any frame. 0 compares consecutive frames only. System policy only.
+# liveness.window_ms = 1000
+#
+# Extra scan time, in milliseconds (0 - 10000, default 4000), used once and only
+# when a face has already matched but hasn't moved enough yet. A face held
+# still can take longer than the scan to blink or shift; this waits for it
+# instead of failing. A scan that never matched (nobody there, or someone
+# else) still ends after scan_duration_ms. 0 disables it.
+# liveness.grace_ms = 4000
+
+# ---------------------------------------------------------------------------
+# Lockout
+# ---------------------------------------------------------------------------
+# Backoff after repeated failed face matches (a face was seen and rejected).
+# Only throttles the face check: PAM still falls through to the password
+# prompt, and a locked-out attempt sleeps at most 3s before doing so.
+# System policy only; ignored in a user's own config.
+# lockout.threshold = 5          # failures allowed before any cooldown
+# lockout.base_delay_ms = 2000   # first cooldown, doubles per further failure
+# lockout.max_delay_ms = 300000  # cooldown ceiling
+
+# ---------------------------------------------------------------------------
+# Guards (when a scan runs at all). System policy only.
+# ---------------------------------------------------------------------------
+# Only authenticate the account that owns the active session on seat0 (any
+# account while seat0 shows a login greeter). Stops a sudo in a background or
+# fast-switched session matching whoever is at the camera. Skipped on systems
+# without logind.
+# guards.seat_check = true
+
+# Skip the scan, straight to the password, where it can't succeed.
+# abort_if_ssh: any ancestor process is sshd. Nobody is at the camera.
+# abort_if_lid_closed: an ACPI lid is closed and the camera's USB port isn't
+# reported removable. Set false for an external IR camera behind a hub.
+# guards.abort_if_ssh = true
+# guards.abort_if_lid_closed = true
+
+# start_delay_scope: "screen_lock" (default; sudo, polkit and login are not
+# delayed) or "all". Decided from PAM_SERVICE; unknown services count as
+# screen lockers. See guards.start_delay_ms above.
+# guards.start_delay_scope = "screen_lock"
+
+# Confirm with Enter (default false). After a face match for sudo, su or polkit,
+# vinoAuthFace asks for Enter on the terminal before it lets the caller through, so
+# a process that runs `sudo` while you sit in front of the camera cannot get
+# root unnoticed. Waits 20 s, and any other key declines. Not asked when there
+# is no terminal (pkexec from a GUI), and never on lock screens or login.
+# guards.require_confirmation_elevation = false
+
+# ---------------------------------------------------------------------------
+# Install and hardware (written by deploy.sh and pin-camera.sh; rarely hand-edited)
+# ---------------------------------------------------------------------------
 
 # IR camera device path.
 #
@@ -34,10 +150,6 @@
 # what your hardware exposes.
 # device = "/dev/video2"
 
-# Cosine similarity threshold (0.3 - 1.0, HIGHER = stricter match).
-# This is the floor: a user cannot go below it, only above.
-threshold = 0.6
-
 # Recognition model path (default: /usr/local/share/face-auth/w600k_mbf.onnx).
 # deploy.sh sets this to w600k_r50.onnx for an NPU build, or with
 # FACE_AUTH_RECOGNITION_MODEL=r50.
@@ -48,46 +160,6 @@ threshold = 0.6
 # Template storage directory. Must be root-owned and 0700 — anything that can
 # write here can choose whose face unlocks an account.
 # embeddings_dir = "/var/lib/face-auth"
-
-# Camera capture timeout in milliseconds (100 - 30000, default 5000)
-capture_timeout_ms = 5000
-
-# Face detection ONNX model path (default: /usr/local/share/face-auth/det_500m.onnx,
-# SCRFD, whose landmarks align the face before matching; falls back to the older
-# box-only version-slim-320.onnx if det_500m.onnx isn't installed). Changing the
-# detector means re-enrolling.
-# detector_model_path = "/usr/local/share/face-auth/det_500m.onnx"
-
-# Face detection confidence threshold (0.05 - 1.0, higher = stricter)
-detector_threshold = 0.5
-
-# How long the face scan window lasts, in milliseconds (500 - 30000, default 5000).
-# The scanner keeps capturing and checking frames until this elapses or a match
-# is found, like Windows Hello.
-scan_duration_ms = 5000
-
-# Extra scan time, in milliseconds (0 - 10000, default 4000), used once and only
-# when a face has already matched but hasn't moved enough for motion liveness
-# yet. A face held still can take longer than the scan to blink or shift; this
-# waits for it instead of failing. A scan that never matched (nobody there, or
-# someone else) still ends after scan_duration_ms. 0 disables it.
-# liveness_grace_ms = 4000
-
-# Extra delay between capture attempts within a scan window, in milliseconds
-# (0 - 5000, default 0).
-#
-# Zero is right for almost everyone: the scan loop is already paced by the
-# camera and by inference, so it cannot spin. Raise it only to trade unlock
-# speed for CPU.
-scan_interval_ms = 0
-
-# Backoff after repeated failed face matches (a face was seen and rejected).
-# Only throttles the face check: PAM still falls through to the password
-# prompt, and a locked-out attempt sleeps at most 3s before doing so.
-# System policy only; ignored in a user's own config.
-# lockout_threshold = 5          # failures allowed before any cooldown
-# lockout_base_delay_ms = 2000   # first cooldown, doubles per further failure
-# lockout_max_delay_ms = 300000  # cooldown ceiling
 
 # Seal stored face templates to this machine's TPM (systemd-creds, no PCR
 # policy, so firmware updates don't lose your enrolment). Protects a stolen or
@@ -107,72 +179,6 @@ scan_interval_ms = 0
 # which pin-camera.sh's port pin covers. System policy only.
 # bind_camera = true
 
-# Only authenticate the account that owns the active session on seat0 (any
-# account while seat0 shows a login greeter). Stops a sudo in a background or
-# fast-switched session matching whoever is at the camera. Skipped on systems
-# without logind. System policy only.
-# seat_check = true
-
-# Skip the scan, straight to the password, where it can't succeed.
-# abort_if_ssh: any ancestor process is sshd. Nobody is at the camera.
-# abort_if_lid_closed: an ACPI lid is closed and the camera's USB port isn't
-# reported removable. Set false for an external IR camera behind a hub.
-# System policy only.
-# abort_if_ssh = true
-# abort_if_lid_closed = true
-
-# Start delay (ms, 0 - 10000, default 2000, 0 disables). A screen locker runs
-# vinoAuthFace the instant it starts, so someone still at the camera after
-# locking would be unlocked at once. vinoAuthFace waits until the locker
-# (its parent process) has been running this long, then scans. A retry on the
-# same lock screen does not wait again.
-# start_delay_scope: "screen_lock" (default; sudo, polkit and login are not
-# delayed) or "all". Decided from PAM_SERVICE; unknown services count as
-# screen lockers. System policy only.
-# start_delay_ms = 2000
-# start_delay_scope = "screen_lock"
-
-# Confirm with Enter (default false). After a face match for sudo, su or polkit,
-# vinoAuthFace asks for Enter on the terminal before it lets the caller through, so
-# a process that runs `sudo` while you sit in front of the camera cannot get
-# root unnoticed. Waits 20 s, and any other key declines. Not asked when there
-# is no terminal (pkexec from a GUI), and never on lock screens or login.
-# System policy only.
-# require_confirmation_elevation = false
-
-# Motion liveness. During a scan, a match is only accepted once one face frame
-# shows both kinds of motion below. Only the face
-# region is compared, after removing brightness and contrast differences, so
-# movement elsewhere in view and auto-exposure changes don't count.
-# A user's own config may only raise either value.
-#
-# Fraction of face pixels that changed (0.0 - 1.0, default 0.01), against the
-# oldest face frame of the scan within liveness_window_ms. Defeats a rigidly
-# held photo. 0 disables it.
-# liveness_motion_threshold = 0.01
-#
-# How far back that comparison looks, in milliseconds (0 - 2000, default
-# 1000). A face held still barely changes between consecutive frames but drifts
-# measurably over a second; a photo doesn't change against any frame. 0
-# compares consecutive frames only. System policy only.
-# liveness_window_ms = 1000
-#
-# Motion a rigid shift can't explain between consecutive face frames (0.0 -
-# 1.0, default 0 = off): the fraction still changed, after undoing the best
-# shift, in the most-changed
-# eye-sized block of the face. A photo moved by hand moves as one piece; a
-# real face moves in parts (a blink, the mouth, the head turning). Moved-photo
-# tests peak around 0.2 and blinks reach 0.3-0.6, so 0.3 is the value to try.
-# Off by default: a face held still may not blink within one scan, and
-# glasses glare over the eyes hides blinks.
-# liveness_residual_motion_threshold = 0.0
-
-# Minimum face size (0.0 - 0.75, default 0 = off). The larger side of the
-# detected face box, as a fraction of the same side of the frame. Smaller faces
-# are ignored at login and rejected at enrolment ("face too small, move
-# closer"). A user's own config may only raise it.
-# min_face_size_ratio = 0.0
-
 # Camera pin, written by pin-camera.sh. When set, vinoAuthFace refuses frames
 # unless `device` resolves to this exact USB port and V4L2 index. Do not
 # hand-edit; re-run pin-camera.sh after intentionally changing hardware.
@@ -186,3 +192,33 @@ scan_interval_ms = 0
 # backend = "tract"
 # OpenVINO device when backend = "openvino": "NPU", "GPU" or "CPU".
 # npu_device = "NPU"
+
+# ---------------------------------------------------------------------------
+# Advanced (the defaults are right for nearly everyone)
+# ---------------------------------------------------------------------------
+
+# Camera capture timeout in milliseconds (100 - 30000, default 5000)
+capture_timeout_ms = 5000
+
+# Face detection ONNX model path (default: /usr/local/share/face-auth/det_500m.onnx,
+# SCRFD, whose landmarks align the face before matching; falls back to the older
+# box-only version-slim-320.onnx if det_500m.onnx isn't installed). Changing the
+# detector means re-enrolling.
+# detector_model_path = "/usr/local/share/face-auth/det_500m.onnx"
+
+# Face detection confidence threshold (0.05 - 1.0, higher = stricter)
+detector_threshold = 0.5
+
+# Extra delay between capture attempts within a scan window, in milliseconds
+# (0 - 5000, default 0).
+#
+# Zero is right for almost everyone: the scan loop is already paced by the
+# camera and by inference, so it cannot spin. Raise it only to trade unlock
+# speed for CPU.
+scan_interval_ms = 0
+
+# Minimum face size (0.0 - 0.75, default 0 = off). The larger side of the
+# detected face box, as a fraction of the same side of the frame. Smaller faces
+# are ignored at login and rejected at enrolment ("face too small, move
+# closer"). A user's own config may only raise it.
+# min_face_size_ratio = 0.0

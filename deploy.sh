@@ -755,10 +755,15 @@ fi
 if [ "$CONF_STATE" = kept ]; then
     NEW_KEYS=() NEW_LINES=()
     while read -r key; do
-        grep -qE "^#? ?$key ?=" "$CONFIG_DIR/face-auth.toml" && continue
+        # Grouped keys (liveness.motion_threshold) were flat before
+        # (liveness_motion_threshold; guards.* had no prefix): either spelling
+        # in the existing file counts as already set.
+        legacy="${key#guards.}"
+        legacy="${legacy/./_}"
+        grep -qE "^#? ?(${key//./[.]}|$legacy) ?=" "$CONFIG_DIR/face-auth.toml" && continue
         NEW_KEYS+=("$key")
-        NEW_LINES+=("# ${key} = $(grep -m1 -E "^#? ?$key ?= " config/face-auth.toml.example | sed -E 's/^#? ?[a-z0-9_]+ = //')")
-    done < <(sed -nE 's/^#? ?([a-z][a-z0-9_]*) = .*/\1/p' config/face-auth.toml.example | sort -u)
+        NEW_LINES+=("# ${key} = $(grep -m1 -E "^#? ?${key//./[.]} ?= " config/face-auth.toml.example | sed -E 's/^#? ?[a-z0-9_.]+ = //')")
+    done < <(sed -nE 's/^#? ?([a-z][a-z0-9_.]*) = .*/\1/p' config/face-auth.toml.example | sort -u)
     if [ "${#NEW_KEYS[@]}" -gt 0 ]; then
         CONF="$CONFIG_DIR/face-auth.toml"
         [ -s "$CONF" ] && [ "$(tail -c1 "$CONF" | wc -l)" -eq 0 ] && echo >> "$CONF"

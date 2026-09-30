@@ -35,7 +35,7 @@ report a vulnerability, see [SECURITY.md](../SECURITY.md).
   unless the target account owns the active seat0 session, or seat0 is showing a login greeter.
   With fast user switching, a `sudo` in B's background session won't match A's face while A is at
   the desk. No active session, or state it can't read, declines too. Without `/run/systemd/seats`
-  (no logind) the check is skipped. `seat_check = false` turns it off.
+  (no logind) the check is skipped. `guards.seat_check = false` turns it off.
 
 ## Templates at rest (TPM sealing)
 
@@ -76,14 +76,14 @@ of systemd, and the blobs live in `/var/lib/face-auth`, which survives image upd
   and barely reflect the camera's illuminator, so a phone showing your photo produces no
   face-shaped IR signal. Measured: zero detections across 100 attempts against a phone screen.
 - **Motion liveness** requires motion of the face against an earlier frame of the scan, up to
-  `liveness_window_ms` (default 1 s) back: a face held still barely changes in the ~130 ms between
+  `liveness.window_ms` (default 1 s) back: a face held still barely changes in the ~130 ms between
   consecutive frames, but drifts over a second, while a mounted photo doesn't change against any
   frame ([#96](https://github.com/karanshukla/vinoAuthFace/issues/96)). Only the face region counts, after removing brightness and contrast changes, so a hand moving beside a still
   photo or an auto-exposure step doesn't pass it. This defeats a rigidly held image, but not a
   photo moved by hand. Once a face has matched and only liveness is missing, the scan runs up to
-  `liveness_grace_ms` (default 4 s) longer so a still face isn't failed; that also gives a
+  `liveness.grace_ms` (default 4 s) longer so a still face isn't failed; that also gives a
   matching photo the same extra time to produce motion.
-- **Moved photos: opt-in.** `liveness_residual_motion_threshold` additionally requires motion,
+- **Moved photos: opt-in.** `liveness.residual_motion_threshold` additionally requires motion,
   between consecutive frames, that a single rigid shift (found to a quarter pixel) can't explain, in the most-changed eye-sized block
   of the face: a blink, the mouth, parallax as the head turns. In software tests, synthetic clips
   of a moved, tilted or zoomed IR photo peaked at 0.20, blinks reached 0.3-0.6, and a moving face
