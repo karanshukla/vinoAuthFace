@@ -130,12 +130,40 @@ pub fn backend_verdict(backend: &str, npu_device: &str, npu_built: bool) -> Chec
     }
 }
 
-fn model_check(name: &str, path: &str) -> Check {
-    match std::fs::metadata(path) {
-        Ok(m) if m.len() > 0 => check(Status::Ok, name, format!("{path} ({} bytes)", m.len())),
-        Ok(_) => check(Status::Fail, name, format!("{path} is empty")),
-        Err(e) => check(Status::Fail, name, format!("{path}: {e}")),
+/// The same pins `deploy.sh` verifies downloads against (`sha256sum` format).
+const PINNED_MODELS: &str = include_str!("../../../config/models.sha256");
+
+/// The pinned SHA-256 for a model file name, if it is one we ship.
+pub fn pinned_sha(pins: &str, file_name: &str) -> Option<String> {
+    pins.lines().find_map(|l| {
+        let (sha, name) = l.split_once("  ")?;
+        (name.trim() == file_name).then(|| sha.to_string())
+    })
+}
+
+pub fn model_verdict(name: &str, path: &str, pinned: Option<&str>, actual: std::io::Result<String>) -> Check {
+    match (actual, pinned) {
+        (Err(e), _) => check(Status::Fail, name, format!("{path}: {e}")),
+        (Ok(sha), Some(want)) if sha == want => check(Status::Ok, name, format!("{path} (checksum matches)")),
+        (Ok(sha), Some(want)) => check(
+            Status::Fail,
+            name,
+            format!("{path} doesn't match its pinned checksum ({sha}, want {want}); re-run deploy.sh"),
+        ),
+        (Ok(_), None) => check(Status::Info, name, format!("{path} isn't a model deploy.sh pins; not verified")),
     }
+}
+
+fn sha256_file(path: &str) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut std::fs::File::open(path)?, &mut hasher)?;
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn model_check(name: &str, path: &str) -> Check {
+    let file_name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    model_verdict(name, path, pinned_sha(PINNED_MODELS, &file_name).as_deref(), sha256_file(path))
 }
 
 pub fn run(pam_dir: &Path) -> Vec<Check> {
@@ -254,6 +282,25 @@ mod tests {
     use super::*;
 
     const OURS: &str = "auth sufficient pam_exec.so quiet /usr/local/bin/vinoauthface-auth";
+
+    #[test]
+    fn pins_cover_every_shipped_model() {
+        for name in ["w600k_mbf.onnx", "w600k_r50.onnx", "version-slim-320.onnx"] {
+            let sha = pinned_sha(PINNED_MODELS, name).unwrap_or_else(|| panic!("{name} not pinned"));
+            assert!(sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit()), "{name}: {sha}");
+        }
+        assert_eq!(pinned_sha(PINNED_MODELS, "custom.onnx"), None);
+    }
+
+    #[test]
+    fn model_checksum_verdicts() {
+        let ok = || Ok("ab".to_string());
+        assert_eq!(model_verdict("m", "/p", Some("ab"), ok()).status, Status::Ok);
+        assert_eq!(model_verdict("m", "/p", Some("cd"), ok()).status, Status::Fail);
+        assert_eq!(model_verdict("m", "/p", None, ok()).status, Status::Info);
+        let missing = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(model_verdict("m", "/p", Some("ab"), Err(missing)).status, Status::Fail);
+    }
 
     #[test]
     fn stale_model_tag_fails_and_unknown_passes() {

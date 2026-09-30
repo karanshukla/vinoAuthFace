@@ -106,19 +106,25 @@ done
 #   sudo FACE_AUTH_RECOGNITION_MODEL=r50 ./deploy.sh
 # Switching models means re-enrolling: the two produce incompatible embedding
 # spaces, and face-auth refuses to compare across them (see storage.rs).
+# Every model's pinned SHA-256, shared with `vinoauthface doctor` (which
+# embeds the same file), so the two can't drift.
+pinned_sha() {
+    awk -v name="$1" '$2 == name { print $1 }' config/models.sha256
+}
+
 RECOGNITION_MODEL="${FACE_AUTH_RECOGNITION_MODEL:-mbf}"
 case "$RECOGNITION_MODEL" in
     mbf)
         MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
         MODEL_ZIP="buffalo_sc.zip"
         MODEL_NAME="w600k_mbf.onnx"
-        MODEL_CHECKSUM="9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f"
+        MODEL_CHECKSUM="$(pinned_sha w600k_mbf.onnx)"
         ;;
     r50)
         MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
         MODEL_ZIP="buffalo_l.zip"
         MODEL_NAME="w600k_r50.onnx"
-        MODEL_CHECKSUM="4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
+        MODEL_CHECKSUM="$(pinned_sha w600k_r50.onnx)"
         ;;
     *)
         fail "Unknown FACE_AUTH_RECOGNITION_MODEL '$RECOGNITION_MODEL'" "Expected 'mbf' or 'r50'."
@@ -130,7 +136,11 @@ esac
 # `master` URL silently changes what gets installed. The checksum is the real
 # gate; the pin keeps it from breaking on an unrelated upstream commit.
 DETECTOR_URL="https://raw.githubusercontent.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB/0f9ca4a9fc80170fd505168fd1132b837141f7df/models/onnx/version-slim-320.onnx"
-DETECTOR_CHECKSUM="e9adbd0f920ddcce9368434c4d34d72520dc0c19b526fd44b4ef49bde2c3b1a8"
+DETECTOR_CHECKSUM="$(pinned_sha version-slim-320.onnx)"
+if [ -z "$MODEL_CHECKSUM" ] || [ -z "$DETECTOR_CHECKSUM" ]; then
+    fail "No pinned checksum for $MODEL_NAME or the detector in config/models.sha256"
+    exit 1
+fi
 
 BIN_DIR="/usr/local/bin"
 SHARE_DIR="/usr/local/share/face-auth"
@@ -640,7 +650,8 @@ fetch() {
     return 1
 }
 
-# Models already in place are not re-checked: this pass only installs.
+# Models already in place are not re-checked here: this pass only installs.
+# `vinoauthface doctor` checks installed models against the same pins.
 MODELS_NEW=()
 if [ -f "$SHARE_DIR/$MODEL_NAME" ]; then
     :
