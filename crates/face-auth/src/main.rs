@@ -86,8 +86,9 @@ fn wait_for_start_delay(config: &FaceAuthConfig) {
 }
 
 /// A routine authentication outcome: no match, or a session this tool declines
-/// to handle. Logged below the default level, because `pam_exec` relays our
-/// stderr to the terminal and this would otherwise print on every failed sudo.
+/// to handle. Logged below the default level, because `pam_exec.so stdout`
+/// relays our stderr to the user and this would otherwise show on every
+/// failed attempt.
 fn fail_auth(msg: &str) -> ! {
     tracing::info!("{msg}");
     std::process::exit(1)
@@ -289,6 +290,13 @@ fn run_enrolled() -> ! {
     }
 }
 
+/// Point stderr at /dev/null. Best effort: if it fails, errors show as text.
+fn silence_stderr() {
+    if let Ok(null) = std::fs::OpenOptions::new().write(true).open("/dev/null") {
+        unsafe { libc::dup2(std::os::fd::AsRawFd::as_raw_fd(&null), libc::STDERR_FILENO) };
+    }
+}
+
 fn main() {
     scrub_caller_environment();
     pin_process_context();
@@ -319,6 +327,14 @@ fn main() {
                 std::process::exit(2);
             }
         }
+    }
+
+    // With `pam_exec.so stdout`, stderr reaches the user too, as PAM
+    // messages on a lock screen. The scan prompt is the only line meant for
+    // them; failures go to syslog through `audit`.
+    let relayed = prompt::relayed();
+    if relayed {
+        silence_stderr();
     }
 
     // PAM_USER is the only authoritative identity here. USER, LOGNAME and
@@ -391,7 +407,9 @@ fn main() {
         "starting scan"
     );
 
-    let scanning = prompt::ScanPrompt::show(env::var("PAM_TTY").ok().as_deref(), info.uid);
+    let mut stdout = std::io::stdout();
+    let relay = relayed.then_some(&mut stdout as &mut dyn std::io::Write);
+    let scanning = prompt::ScanPrompt::show(env::var("PAM_TTY").ok().as_deref(), info.uid, relay);
     let result = auth.authenticate_scan(&info.name, scan_duration, scan_interval);
     drop(scanning);
     tracing::debug!(total = ?t0.elapsed(), "scan finished");
