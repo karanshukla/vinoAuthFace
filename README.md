@@ -33,7 +33,7 @@ The screen-spoof defense is a property of active near-infrared sensing, and it s
 the moment an RGB path exists. Narrower scope, stronger guarantee.
 
 If you don't have an IR camera, or you want a GUI, an enrolment wizard or GNOME lock screen
-integration, use gaze instead.
+integration, check out Gaze, Facelock or Howdy.
 
 ## Quick start
 
