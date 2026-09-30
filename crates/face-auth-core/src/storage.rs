@@ -32,7 +32,19 @@ const MAX_MODEL_TAG_LEN: u32 = 255;
 /// several `--improve` passes.
 const MAX_EMBEDDINGS: u32 = 256;
 
-const MAX_PAYLOAD_BYTES: u64 = 8 + MAX_EMBEDDINGS as u64 * EMBEDDING_DIM as u64 * 4;
+/// Refuses an enrolment that would take the gallery past `MAX_EMBEDDINGS`,
+/// before the camera opens rather than after a full capture.
+pub(crate) fn check_room(existing: usize, adding: usize) -> anyhow::Result<()> {
+    let total = existing.saturating_add(adding);
+    anyhow::ensure!(
+        total <= MAX_EMBEDDINGS as usize,
+        "{existing} embeddings stored, adding {adding} would exceed the limit of {MAX_EMBEDDINGS}; \
+         capture fewer frames or re-enrol with `vinoauthface enroll`"
+    );
+    Ok(())
+}
+
+const MAX_PAYLOAD_BYTES: u64 =8 + MAX_EMBEDDINGS as u64 * EMBEDDING_DIM as u64 * 4;
 
 /// A sealed blob is the payload base64-encoded plus systemd's credential
 /// header; 2x and a page of slack covers it.
@@ -417,6 +429,15 @@ mod tests {
 
     fn sample(seed: f32) -> Vec<f32> {
         (0..EMBEDDING_DIM).map(|i| seed + i as f32 * 1e-3).collect()
+    }
+
+    #[test]
+    fn check_room_allows_up_to_the_limit() {
+        assert!(check_room(0, MAX_EMBEDDINGS as usize).is_ok());
+        assert!(check_room(226, 30).is_ok());
+        assert!(check_room(240, 30).is_err());
+        assert!(check_room(0, MAX_EMBEDDINGS as usize + 1).is_err());
+        assert!(check_room(usize::MAX, 1).is_err());
     }
 
     #[test]

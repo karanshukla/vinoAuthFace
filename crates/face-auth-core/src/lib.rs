@@ -456,6 +456,7 @@ impl FaceAuth {
         progress: ProgressFn<'_>,
     ) -> Result<usize> {
         self.config.verify_pinned_camera()?;
+        crate::storage::check_room(0, frames)?;
         let mut store = EmbeddingStore::default();
         let device = self.config.device();
         let mut cam = Camera::open(&device)?;
@@ -500,6 +501,7 @@ impl FaceAuth {
         self.check_model_tag(&store)?;
 
         let existing = store.embeddings.len();
+        crate::storage::check_room(existing, frames)?;
         let device = self.config.device();
         let mut cam = Camera::open(&device)?;
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms, progress)?;

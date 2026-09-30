@@ -84,7 +84,9 @@ sudo vinoauthface improve --user $USER   # append, for other lighting or angles
 ```
 
 30 frames gives enough pose and expression variation from one sitting. Running `improve` in
-different lighting is the biggest gain beyond that.
+different lighting is the biggest gain beyond that. A user can store at most 256 embeddings;
+an enrolment or `improve` that would go past that fails before the camera opens, so re-enrol
+from scratch once the gallery is full.
 
 Both take `--user`, `--frames`, `--interval`, `--device`, `--threshold`, `--model` and
 `--embeddings-dir`; `-v` works on either.
