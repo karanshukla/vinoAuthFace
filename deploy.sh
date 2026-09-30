@@ -394,9 +394,9 @@ else
         # the deploy logic running them.
         DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$GIT_TAG"
     else
-        # Not releases/latest: GitHub's "latest" skips pre-releases, and every
-        # release is one (release.yml), so it 404s. Ask for the newest of any
-        # kind instead.
+        # Not releases/latest: GitHub's "latest" skips pre-releases, and the
+        # releases before v2 all were, so it 404s on them. Ask for the newest of
+        # any kind instead, which is right either way.
         LATEST_TAG="$(curl -fsSL "https://api.github.com/repos/$RELEASE_REPO/releases?per_page=1" \
             | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4 || true)"
         if [ -z "$LATEST_TAG" ]; then

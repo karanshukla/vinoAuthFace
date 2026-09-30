@@ -11,10 +11,9 @@ scripts/release.sh             # from an up-to-date main: tag origin/main's head
 
 Pushing the tag runs `release.yml`, which builds the static musl binaries with
 `VINOAUTHFACE_VERSION` set to the tag (shown by `vinoauthface --version` and `doctor`; local
-builds say `dev`) and publishes them as a GitHub **pre-release** with generated notes. Releases
-stay pre-releases until the recognition and liveness logic has had independent review, so
-GitHub's "latest" never points at one; `deploy.sh` asks the API for the newest release of any kind
-instead.
+builds say `dev`) and publishes them as a GitHub release with generated notes. v2 onwards are full
+releases, so GitHub's "latest" and the repo sidebar point at the newest one (earlier tags were
+pre-releases). `deploy.sh` asks the API for the newest release of any kind, so it works either way.
 
 When to cut one: whenever main has a user-facing change worth installing. There's no schedule.
 A tagged checkout's `deploy.sh` installs that tag's binaries, so a release is also what makes a
