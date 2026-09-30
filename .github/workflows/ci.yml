@@ -149,8 +149,8 @@ jobs:
           test -x /usr/local/bin/vinoauthface-tray
           test "$(stat -c %U:%a /usr/local/libexec/vinoauthface-helper)" = root:755
           policy=/usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
-          test "$(grep -c 'exec.argv1' "$policy")" = 3
-          test "$(grep -c '<allow_active>auth_admin</allow_active>' "$policy")" = 3
+          test "$(grep -c 'exec.argv1' "$policy")" = 4
+          test "$(grep -c '<allow_active>auth_admin</allow_active>' "$policy")" = 4
           test -f /etc/xdg/autostart/vinoauthface-tray.desktop
           test -f /usr/local/share/applications/vinoauthface-enrol.desktop
           test -f /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
@@ -160,6 +160,7 @@ jobs:
           refuses sudo /usr/local/libexec/vinoauthface-helper enrol
           refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper enrol --user root
           refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper enroll
+          refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper upgrade v1
           refuses /usr/local/libexec/vinoauthface-helper enrol
           # Not enrolled: --enrolled answers 1 (no), not 2 (error).
           set +e; /usr/local/bin/vinoauthface-auth --enrolled; rc=$?; set -e
@@ -230,7 +231,7 @@ jobs:
           }
           upgrade v999
           test "$(cat "$HOME/.cache/vinoauthface/src/v999/VERSION")" = v999
-          test "$(stat -c %U "$HOME/.cache/vinoauthface/src/v999/deploy.sh")" = "$USER"
+          test "$(stat -c %U "$HOME/.cache/vinoauthface/src/v999/deploy.sh")" = "$(id -un)"
           cmp /usr/local/bin/vinoauthface-auth /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
           # Asking for v998 fetches the v999 bundle from the override: refused.
           if upgrade v998; then echo "installed a bundle for the wrong release"; exit 1; fi
