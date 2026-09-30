@@ -395,6 +395,14 @@ mod tests {
 
     const TAG: &str = "w600k_mbf.onnx";
 
+    /// Writes a test file with the mode a real template has, whatever the
+    /// umask: a group-writable file would be refused before it's parsed, and
+    /// a rejection test would pass for the wrong reason.
+    fn plant(path: impl AsRef<Path>, data: impl AsRef<[u8]>) {
+        fs::write(&path, data).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    }
+
     fn sample(seed: f32) -> Vec<f32> {
         (0..EMBEDDING_DIM).map(|i| seed + i as f32 * 1e-3).collect()
     }
@@ -473,7 +481,7 @@ mod tests {
         buf.write_u32::<LittleEndian>(EMBEDDING_VERSION_LEGACY).unwrap();
         buf.write_u32::<LittleEndian>(u32::MAX).unwrap();
         buf.write_u32::<LittleEndian>(EMBEDDING_DIM).unwrap();
-        fs::write(dir.join("alice/embeddings.bin"), &buf).unwrap();
+        plant(dir.join("alice/embeddings.bin"), &buf);
 
         // Must fail on the bound, not by attempting a 96 GB allocation.
         assert!(EmbeddingStore::load("alice", &dir).is_err());
@@ -491,7 +499,7 @@ mod tests {
         for _ in 0..EMBEDDING_DIM {
             buf.write_f32::<LittleEndian>(f32::NAN).unwrap();
         }
-        fs::write(dir.join("alice/embeddings.bin"), &buf).unwrap();
+        plant(dir.join("alice/embeddings.bin"), &buf);
 
         assert!(EmbeddingStore::load("alice", &dir).is_err());
         fs::remove_dir_all(&dir).unwrap();
@@ -507,7 +515,7 @@ mod tests {
         let path = dir.join("alice/embeddings.bin");
         let mut data = fs::read(&path).unwrap();
         data.extend_from_slice(b"extra");
-        fs::write(&path, data).unwrap();
+        plant(&path, data);
 
         assert!(EmbeddingStore::load("alice", &dir).is_err());
         fs::remove_dir_all(&dir).unwrap();
@@ -535,7 +543,7 @@ mod tests {
         for v in sample(0.25) {
             buf.write_f32::<LittleEndian>(v).unwrap();
         }
-        fs::write(dir.join("bob/embeddings.bin"), &buf).unwrap();
+        plant(dir.join("bob/embeddings.bin"), &buf);
 
         let loaded = EmbeddingStore::load("bob", &dir).unwrap();
         assert_eq!(loaded.embeddings.len(), 1);
@@ -561,7 +569,7 @@ mod tests {
         let mut buf = Vec::new();
         buf.write_u32::<LittleEndian>(EMBEDDING_VERSION).unwrap();
         buf.write_u32::<LittleEndian>(u32::MAX).unwrap();
-        fs::write(dir.join("alice/embeddings.bin"), &buf).unwrap();
+        plant(dir.join("alice/embeddings.bin"), &buf);
 
         assert!(EmbeddingStore::load("alice", &dir).is_err());
         fs::remove_dir_all(&dir).unwrap();
@@ -578,8 +586,7 @@ mod tests {
         buf.write_u32::<LittleEndian>(blob.len() as u32).unwrap();
         buf.extend_from_slice(blob);
         let path = dir.join(user).join("embeddings.bin");
-        fs::write(&path, &buf).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        plant(&path, &buf);
     }
 
     #[test]
@@ -640,8 +647,7 @@ mod tests {
         buf.write_u32::<LittleEndian>(0).unwrap();
         buf.write_u32::<LittleEndian>(u32::MAX).unwrap();
         let path = dir.join("alice/embeddings.bin");
-        fs::write(&path, &buf).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        plant(&path, &buf);
 
         assert!(EmbeddingStore::load("alice", &dir).is_err());
         fs::remove_dir_all(&dir).unwrap();
