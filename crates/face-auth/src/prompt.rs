@@ -2,6 +2,11 @@
 //! `sudo` on a VT or in a terminal emulator doesn't sit silent for a couple of
 //! seconds. It is erased when the scan ends, leaving the password prompt (or
 //! the command's output) on a clean line.
+//!
+//! With no terminal (a lock screen, a polkit agent), the line goes to stdout
+//! instead, but only when `pam_exec.so stdout` relays it: the caller then shows
+//! it as a PAM info message. It can't be erased there; the greeter replaces it
+//! with its own prompt when the scan falls through.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -17,19 +22,33 @@ pub struct ScanPrompt {
     tty: Option<File>,
 }
 
+/// Is stdout the pipe `pam_exec.so stdout` relays to the caller? Without that
+/// option `pam_exec` points stdout (and stderr) at /dev/null.
+pub fn relayed() -> bool {
+    std::fs::metadata("/proc/self/fd/1").is_ok_and(|m| m.file_type().is_fifo())
+}
+
 impl ScanPrompt {
-    /// Show the placeholder on the caller's terminal. With none (a lock
-    /// screen, a polkit agent) this is a no-op. Not stdout: under `pam_exec`
-    /// that is not the terminal. The controlling terminal is tried first; if
-    /// the child has lost it, `PAM_TTY` is used, but only when it is a real
-    /// terminal node owned by the account being authenticated (see
-    /// `open_pam_tty`).
-    pub fn show(pam_tty: Option<&str>, uid: u32) -> Self {
+    /// Show the placeholder on the caller's terminal. The controlling
+    /// terminal is tried first; if the child has lost it, `PAM_TTY` is used,
+    /// but only when it is a real terminal node owned by the account being
+    /// authenticated (see `open_pam_tty`). With no terminal, one line goes to
+    /// `relay` (stdout when `relayed()`); with neither, this is a no-op. A
+    /// terminal wins over the relay so `sudo` doesn't print the line twice.
+    pub fn show(pam_tty: Option<&str>, uid: u32, relay: Option<&mut dyn Write>) -> Self {
         let tty = OpenOptions::new()
             .write(true)
             .open("/dev/tty")
             .ok()
             .or_else(|| pam_tty.and_then(|p| open_pam_tty(p, uid)));
+        if tty.is_none() {
+            if let Some(out) = relay {
+                // One line, flushed: each line is a separate PAM message, and
+                // stdout to a pipe is block-buffered until exit otherwise.
+                let _ = writeln!(out, "{MESSAGE}");
+                let _ = out.flush();
+            }
+        }
         Self::on(tty)
     }
 
@@ -106,5 +125,16 @@ mod tests {
     #[test]
     fn no_terminal_is_a_no_op() {
         drop(ScanPrompt::on(None));
+    }
+
+    #[test]
+    fn relay_gets_one_flushed_line() {
+        // Only meaningful without a controlling terminal, as under PAM.
+        if OpenOptions::new().write(true).open("/dev/tty").is_ok() {
+            return;
+        }
+        let mut out = Vec::new();
+        drop(ScanPrompt::show(None, 0, Some(&mut out)));
+        assert_eq!(out, format!("{MESSAGE}\n").as_bytes());
     }
 }

@@ -25,9 +25,10 @@ vinoauthface-auth (static binary, set-group-ID face-auth)
 
 ## Models
 
-Recognition uses InsightFace **`w600k_mbf.onnx`** (MobileFaceNet @ WebFace600K, ~13 MB, 512-d
-output) from the `buffalo_sc` pack by default, or `w600k_r50.onnx` from `buffalo_l`
-([configuration.md](configuration.md#recognition-model-mbf-default-vs-r50)). Detection uses
+Recognition uses InsightFace **`w600k_r50.onnx`** (ResNet50 @ WebFace600K, ~175 MB, 512-d
+output) from the `buffalo_l` pack on an NPU build, and **`w600k_mbf.onnx`** (MobileFaceNet, ~13 MB)
+from `buffalo_sc` on a CPU build
+([configuration.md](configuration.md#recognition-model-mbf-vs-r50)). Detection uses
 **`version-slim-320.onnx`** from
 [Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB),
 a separate project.
@@ -52,7 +53,7 @@ with upstream. On top of upstream it adds:
 | Camera pinning by physical USB port, against frame injection | [security.md](security.md#frame-injection-a-fake-camera) |
 | Face crop before encoding (detector boxes decoded) | above |
 | OpenVINO/NPU backend (optional build) | [install.md](install.md#openvino--npu-backend) |
-| mbf or r50 recognition model, templates tagged by model | [configuration.md](configuration.md#recognition-model-mbf-default-vs-r50) |
+| mbf or r50 recognition model, templates tagged by model | [configuration.md](configuration.md#recognition-model-mbf-vs-r50) |
 | polkit-1, Bitwarden and KDE lock screen unlock | [pam.md](pam.md) |
 | YUYV and Y16 sensors, auto-detect for IR nodes not named "IR" | [hardware.md](hardware.md) |
 | Prebuilt release binaries; CI running real deploy/uninstall cycles | [install.md](install.md) |

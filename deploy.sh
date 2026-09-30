@@ -100,9 +100,10 @@ for arg in "$@"; do
     esac
 done
 
-# Recognition model. "mbf" (MobileFaceNet, buffalo_sc) is the default: ~14MB
-# and fast. "r50" (ResNet50, buffalo_l) is ~175MB and more accurate, at a few
-# ms more per frame. Select with:
+# Recognition model. "mbf" (MobileFaceNet, buffalo_sc) is ~14MB and fast;
+# "r50" (ResNet50, buffalo_l) is ~175MB with a wider match margin, at a few ms
+# more per frame. An NPU build defaults to r50, where those ms are ~3; a CPU
+# (tract) build defaults to mbf. Override either way with:
 #   sudo FACE_AUTH_RECOGNITION_MODEL=r50 ./deploy.sh
 # Switching models means re-enrolling: the two produce incompatible embedding
 # spaces, and face-auth refuses to compare across them (see storage.rs).
@@ -112,22 +113,12 @@ pinned_sha() {
     awk -v name="$1" '$2 == name { print $1 }' config/models.sha256
 }
 
-RECOGNITION_MODEL="${FACE_AUTH_RECOGNITION_MODEL:-mbf}"
-case "$RECOGNITION_MODEL" in
-    mbf)
-        MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
-        MODEL_ZIP="buffalo_sc.zip"
-        MODEL_NAME="w600k_mbf.onnx"
-        MODEL_CHECKSUM="$(pinned_sha w600k_mbf.onnx)"
-        ;;
-    r50)
-        MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
-        MODEL_ZIP="buffalo_l.zip"
-        MODEL_NAME="w600k_r50.onnx"
-        MODEL_CHECKSUM="$(pinned_sha w600k_r50.onnx)"
-        ;;
+# Checked here so a typo fails before the build; resolved after it, once the
+# backend is known.
+case "${FACE_AUTH_RECOGNITION_MODEL:-}" in
+    ""|mbf|r50) ;;
     *)
-        fail "Unknown FACE_AUTH_RECOGNITION_MODEL '$RECOGNITION_MODEL'" "Expected 'mbf' or 'r50'."
+        fail "Unknown FACE_AUTH_RECOGNITION_MODEL '$FACE_AUTH_RECOGNITION_MODEL'" "Expected 'mbf' or 'r50'."
         exit 1
         ;;
 esac
@@ -137,8 +128,8 @@ esac
 # gate; the pin keeps it from breaking on an unrelated upstream commit.
 DETECTOR_URL="https://raw.githubusercontent.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB/0f9ca4a9fc80170fd505168fd1132b837141f7df/models/onnx/version-slim-320.onnx"
 DETECTOR_CHECKSUM="$(pinned_sha version-slim-320.onnx)"
-if [ -z "$MODEL_CHECKSUM" ] || [ -z "$DETECTOR_CHECKSUM" ]; then
-    fail "No pinned checksum for $MODEL_NAME or the detector in config/models.sha256"
+if [ -z "$DETECTOR_CHECKSUM" ]; then
+    fail "No pinned checksum for the detector in config/models.sha256"
     exit 1
 fi
 
@@ -155,7 +146,7 @@ NPU_CACHE_DIR="/var/cache/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
 OPENVINO_INSTALL_DIR="/usr/local/lib/face-auth/openvino"
 
-PAM_LINE="auth       sufficient  pam_exec.so quiet /usr/local/bin/vinoauthface-auth"
+PAM_LINE="auth       sufficient  pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth"
 
 if [ "$(id -u)" -ne 0 ]; then
     fail "Run this with sudo" "It installs into /usr/local, /etc and /var/lib."
@@ -513,6 +504,45 @@ if [ "$NPU_ACTIVE" = 1 ] && ! ldd "$BIN_SRC/vinoauthface-auth" | grep -q libopen
     exit 1
 fi
 
+# ---- Recognition model ----
+# The NPU default applies only where it can't strand anyone: a config that
+# already names a model keeps it, and so does a store with enrolled templates,
+# which were made with mbf and would stop matching.
+ENROLLED="$(find "$VAR_DIR" -mindepth 2 -maxdepth 2 -name embeddings.bin -print -quit 2>/dev/null || true)"
+CONF_MODEL="$(sed -n 's@^model_path *= *".*/w600k_\(mbf\|r50\)\.onnx"@\1@p' "$CONFIG_DIR/face-auth.toml" 2>/dev/null | head -1 || true)"
+if [ -n "${FACE_AUTH_RECOGNITION_MODEL:-}" ]; then
+    RECOGNITION_MODEL="$FACE_AUTH_RECOGNITION_MODEL"
+elif [ -n "$CONF_MODEL" ]; then
+    RECOGNITION_MODEL="$CONF_MODEL"
+elif [ "$NPU_ACTIVE" = 1 ] && ! grep -qs '^model_path' "$CONFIG_DIR/face-auth.toml"; then
+    if [ -z "$ENROLLED" ]; then
+        RECOGNITION_MODEL="r50"
+    else
+        RECOGNITION_MODEL="mbf"
+        skip Model "keeping mbf: faces are enrolled with it (FACE_AUTH_RECOGNITION_MODEL=r50 to switch, then re-enrol)"
+    fi
+else
+    RECOGNITION_MODEL="mbf"
+fi
+case "$RECOGNITION_MODEL" in
+    mbf)
+        MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
+        MODEL_ZIP="buffalo_sc.zip"
+        MODEL_NAME="w600k_mbf.onnx"
+        MODEL_CHECKSUM="$(pinned_sha w600k_mbf.onnx)"
+        ;;
+    r50)
+        MODEL_URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
+        MODEL_ZIP="buffalo_l.zip"
+        MODEL_NAME="w600k_r50.onnx"
+        MODEL_CHECKSUM="$(pinned_sha w600k_r50.onnx)"
+        ;;
+esac
+if [ -z "$MODEL_CHECKSUM" ]; then
+    fail "No pinned checksum for $MODEL_NAME in config/models.sha256"
+    exit 1
+fi
+
 # ---- Install binaries ----
 section "Install"
 # Set-group-ID face-auth (mode 2755): KScreenLocker and swaylock run PAM as
@@ -735,7 +765,11 @@ if [ "$RECOGNITION_MODEL" != "mbf" ]; then
         [ -s "$CONF" ] && [ "$(tail -c1 "$CONF" | wc -l)" -eq 0 ] && echo >> "$CONF"
         echo "model_path = \"$SHARE_DIR/$MODEL_NAME\"" >> "$CONF"
     fi
-    warn Config "model_path set to $MODEL_NAME. Switching models means re-enrolling."
+    if [ -n "$ENROLLED" ]; then
+        warn Config "model_path set to $MODEL_NAME. Switching models means re-enrolling."
+    else
+        ok Config "model_path = $MODEL_NAME"
+    fi
 fi
 
 # Keep the backend line in sync with what was actually built. A mismatch
