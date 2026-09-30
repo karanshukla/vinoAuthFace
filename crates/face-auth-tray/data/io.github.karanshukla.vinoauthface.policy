@@ -4,10 +4,11 @@
  "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
 
 <!--
-  The tray's three root actions. Each pins both the binary (exec.path) and
+  The tray's four root actions. Each pins both the binary (exec.path) and
   its only argument (the first-argument annotation), so pkexec cannot be pointed at vinoauthface
   with caller-chosen flags. The helper acts only for PKEXEC_UID.
-  auth_admin, never yes: every action changes who a face unlocks.
+  auth_admin, never yes: every action changes who a face unlocks, or (upgrade) runs a
+  downloaded deploy.sh as root.
 -->
 <policyconfig>
   <vendor>vinoAuthFace</vendor>
@@ -48,5 +49,17 @@
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">uninstall</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.upgrade">
+    <description>Upgrade vinoAuthFace to the newest release</description>
+    <message>Authentication is required to upgrade vinoAuthFace</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">upgrade</annotate>
   </action>
 </policyconfig>

@@ -159,6 +159,14 @@ fi
 
 ACTUAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 
+# The release this is: a tagged checkout, or the VERSION file in a release's
+# source bundle (vinoauthface-upgrade). Builds are stamped with it, so doctor
+# and the tray know what's installed; anything else builds as "dev". Keep in
+# step with update.sh, or its builds differ from these and it never no-ops.
+RELEASE_TAG="$(git describe --tags --exact-match 2>/dev/null || cat VERSION 2>/dev/null || true)"
+STAMP=()
+[ -n "$RELEASE_TAG" ] && STAMP=(env VINOAUTHFACE_VERSION="$RELEASE_TAG")
+
 printf '%svinoAuthFace installer%s\n' "$BOLD" "$RESET"
 
 # ---- Undo any previous partial setup ----
@@ -195,9 +203,9 @@ find_cargo() {
 # build scripts, and root-owned files left in target/ break their next build.
 as_user() {
     if [ -n "${SUDO_USER:-}" ] && [ "$(id -u)" -eq 0 ]; then
-        sudo -u "$SUDO_USER" -H "$@"
+        sudo -u "$SUDO_USER" -H "${STAMP[@]}" "$@"
     else
-        "$@"
+        "${STAMP[@]}" "$@"
     fi
 }
 
@@ -389,10 +397,10 @@ else
         # Override for air-gapped mirrors, and for CI exercising this path
         # with a file:// URL.
         DOWNLOAD_BASE="$FACE_AUTH_DEPLOY_RELEASE_BASE"
-    elif GIT_TAG="$(git describe --tags --exact-match 2>/dev/null)"; then
-        # A tagged checkout installs its own release, so the binaries match
-        # the deploy logic running them.
-        DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$GIT_TAG"
+    elif [ -n "$RELEASE_TAG" ]; then
+        # A release installs its own binaries, so they match the deploy logic
+        # running them.
+        DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$RELEASE_TAG"
     else
         # Not releases/latest: GitHub's "latest" skips pre-releases, and the
         # releases before v2 all were, so it 404s on them. Ask for the newest of
@@ -578,6 +586,8 @@ rm -f "$BIN_DIR/face-auth" "$BIN_DIR/face-enroll" "$BIN_DIR/face-auth-tray" \
     /usr/local/libexec/face-auth-helper /usr/local/share/bash-completion/completions/face-enroll
 # The tray's uninstall entry runs this copy; the repo may be long gone.
 install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"
+# Upgrades without a checkout (docs/install.md).
+install -D -o root -g root -m 0755 upgrade.sh "$BIN_DIR/vinoauthface-upgrade"
 
 # ---- Tray (default; skipped by --no-tray) ----
 # The helper is what polkit authorises: root-owned, fixed path, one verb, no
@@ -1061,4 +1071,5 @@ if [ -n "$PINNED" ]; then
 else
     printf '  %-10s %s\n' "Camera" "once unlock works: sudo ./pin-camera.sh /dev/videoN (vinoauthface enroll prints it)"
 fi
+printf '  %-10s %s\n' "Upgrade" "sudo vinoauthface-upgrade (when doctor or the tray says there's a new release)"
 printf '  %-10s %s\n' "Uninstall" "sudo ./uninstall.sh"

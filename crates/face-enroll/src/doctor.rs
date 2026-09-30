@@ -52,7 +52,7 @@ pub fn update_verdict(current: &str, latest: Option<&str>) -> Check {
             Status::Info,
             name,
             format!(
-                "{l} is available (installed {current}). Update: git pull, then `sudo ./deploy.sh`; notes at {}",
+                "{l} is available (installed {current}). Update: `sudo vinoauthface-upgrade`; notes at {}",
                 update::RELEASES_URL
             ),
         ),

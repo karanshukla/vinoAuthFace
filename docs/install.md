@@ -144,19 +144,34 @@ Remove it with `sudo semodule -r face_auth`.
 ## Updating
 
 Nothing updates itself. `vinoauthface doctor` prints an `update` line, and the tray adds an
-"Update available" entry plus one notification per new release, when a newer release exists. Both
+"Update to vN" entry plus one notification per new release, when a newer release exists. Both
 ask GitHub's public releases API through `curl` (tray: after a minute, then daily). Turn it off
 with `update_check = false` in `/etc/face-auth.toml`. Dev builds never check.
 
-To update, from your checkout:
+To update, no checkout needed:
 
 ```bash
-git pull
-sudo ./deploy.sh
+sudo vinoauthface-upgrade          # the newest release
+sudo vinoauthface-upgrade v3       # a specific one, also to go back
+sudo vinoauthface-upgrade --force  # reinstall the one you're on
 ```
 
-A checkout on a release tag installs that release's binaries (or builds them, with Rust
-installed). Your config, templates and PAM setup are kept. New settings are appended to
+It downloads the release's source bundle (`vinoauthface-source.tar.gz`), checks it against the
+release's `SHA256SUMS`, unpacks it into `~/.cache/vinoauthface/src/<tag>` and runs that release's
+own `deploy.sh`. Every upgrade is a full reinstall by the release's deploy logic, so anything a
+release changes beyond the binaries (models, config, PAM, SELinux) comes with it. A `--no-tray`
+install stays one. Older releases' unpacked sources are deleted once it succeeds. Releases before
+the command existed have no bundle; use a checkout for those.
+
+An OpenVINO install builds from the bundle as you, with your Rust and ovfetch, the same as a
+checkout. That's why the tray can't upgrade one: its helper runs as root only. The tray's
+"Update to vN" entry is for CPU installs, and runs the same command through pkexec (see
+[tray.md](tray.md)).
+
+From a checkout, `git pull` then `sudo ./deploy.sh` still works. A checkout on a release tag
+installs that release's binaries (or builds them, with Rust installed).
+
+Either way, your config, templates and PAM setup are kept. New settings are appended to
 `/etc/face-auth.toml` as commented defaults.
 
 ## Updating after a code change

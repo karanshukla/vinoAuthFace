@@ -24,12 +24,13 @@ It starts at the next login, or run `vinoauthface-tray` now (it detaches from th
 | `/etc/xdg/autostart/vinoauthface-tray.desktop` | Starts it at login |
 | `/usr/local/share/applications/vinoauthface-{tray,enrol}.desktop` | Launchers. "Enrol face" works without the tray running |
 | `/usr/local/share/face-auth/uninstall.sh` | Installed by every deploy, so the uninstall entry works after the repo is gone |
+| `/usr/local/bin/vinoauthface-upgrade` | Installed by every deploy (not only with the tray). The upgrade entry runs it |
 
 ## Menu
 
 | Entry | Does | Runs as |
 |---|---|---|
-| Update available | Shown at the top only when a newer release exists (checked a minute after start, then daily; `update_check = false` disables it). Opens that release's page. A notification appears once per new release | you |
+| Update to vN | Shown at the top only when a newer release exists (checked a minute after start, then daily; `update_check = false` disables it). Runs `vinoauthface-upgrade` (see [install.md](install.md#updating)), then restarts the tray on the new version. On an OpenVINO install it only shows the command, since that build compiles as you. "What's new" next to it opens the release page. A notification appears once per new release | root, via pkexec |
 | Status | A submenu: the camera it would use, whether you're enrolled, the backend and the installed version. When something is wrong its label says what ("Status: No IR camera found") with a warning icon. For the full picture, run `sudo vinoauthface doctor` | you |
 | Enrol face | `vinoauthface enroll --user <you>`. Once you're enrolled it becomes "Enrol again from scratch" and takes a second click, since it replaces your templates | root, via pkexec |
 | Retrain face | `vinoauthface improve --user <you>`: captures more frames (new lighting, glasses) and keeps the old ones | root, via pkexec |
@@ -54,10 +55,14 @@ the icon doesn't change.
   elsewhere with a symlink. That approach isn't used here.
 - **pkexec runs a fixed helper, never `vinoauthface enroll`.** polkit's `exec.path` pins a binary but not
   its arguments, so `pkexec vinoauthface enroll --embeddings-dir …` would let the caller choose where
-  root writes. `vinoauthface-helper` takes exactly one verb (`enrol`, `retrain` or `uninstall`) and
-  no flags. The policy pins each verb with `exec.argv1`. The target user comes from
-  `PKEXEC_UID`, which pkexec sets, so there's no way to name another account. All three actions
+  root writes. `vinoauthface-helper` takes exactly one verb (`enrol`, `retrain`, `uninstall` or
+  `upgrade`) and no flags. The policy pins each verb with `exec.argv1`. The target user comes from
+  `PKEXEC_UID`, which pkexec sets, so there's no way to name another account. All four actions
   are `auth_admin`.
+- **Upgrade and uninstall never touch your home.** They run as plain root with no `SUDO_USER`, so
+  the upgrade downloads and unpacks the release under root's home, where nothing you run can swap
+  it between the checksum check and `deploy.sh` running it. Upgrade only installs the newest
+  release: no version can be named.
 - **Enrolment status without reading the store.** The store is closed to you, so the tray asks
   `vinoauthface-auth --enrolled`, which runs with the `face-auth` group and only answers for your own
   user ID.
@@ -67,8 +72,8 @@ the icon doesn't change.
 ### A face can approve enrol and retrain
 
 The polkit password prompt goes through the `polkit-1` PAM stack, and `deploy.sh` adds
-vinoAuthFace to that stack. So a face match can approve the tray's enrol, retrain and uninstall
-actions, the same way it can approve `sudo`. polkit can't send one action through a different PAM
+vinoAuthFace to that stack. So a face match can approve the tray's enrol, retrain, uninstall and
+upgrade actions, the same way it can approve `sudo`. polkit can't send one action through a different PAM
 service. Someone who spoofs your face (see [security.md](security.md#presentation-attacks-something-held-up-to-the-real-camera))
 could add their own frames with Retrain. They could do that anyway through
 `sudo vinoauthface enroll`, since a face also satisfies `sudo`, so the tray grants nothing new. To require

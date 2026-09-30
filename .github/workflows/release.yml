@@ -41,12 +41,20 @@ jobs:
           cargo build --release --locked --target x86_64-unknown-linux-musl \
             -p face-auth -p face-enroll -p face-camera-diag -p face-similarity-check -p face-auth-tray
 
+      # The source bundle is what vinoauthface-upgrade installs from: the tag's tree plus a
+      # VERSION file, which deploy.sh reads in place of `git describe`. Not GitHub's own
+      # tag tarballs: they aren't in SHA256SUMS, and their bytes have changed before.
       - name: Stage artifacts and checksums
+        env:
+          TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'dev' }}
         run: |
           mkdir -p dist
           for bin in vinoauthface-auth vinoauthface vinoauthface-camera-diag vinoauthface-similarity-check vinoauthface-tray vinoauthface-helper; do
             cp "target/x86_64-unknown-linux-musl/release/$bin" "dist/$bin-x86_64-unknown-linux-musl"
           done
+          git archive --format=tar.gz --prefix="vinoauthface-$TAG/" \
+            --add-virtual-file="vinoauthface-$TAG/VERSION:$TAG" \
+            -o dist/vinoauthface-source.tar.gz HEAD
           (cd dist && sha256sum -- * > SHA256SUMS)
 
       # Manual/branch runs just verify the build succeeds and leave artifacts attached to the

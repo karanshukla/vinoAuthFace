@@ -42,8 +42,10 @@ cargo deny check
   six binaries), `clippy` (`-D warnings`), `deny` (`deny.toml`: crates.io only, license
   allow-list, advisories), and `deploy-script`, which runs a real `sudo ./deploy.sh` /
   `./uninstall.sh` cycle through every build path, including the checksum-verified download via
-  a `file://` override (`FACE_AUTH_DEPLOY_RELEASE_BASE`, deploy.sh-only, not a config option).
-- `release.yml` publishes static musl binaries as a GitHub pre-release on `v*` tags. Versions
+  a `file://` override (`FACE_AUTH_DEPLOY_RELEASE_BASE`, deploy.sh and upgrade.sh only, not a
+  config option). The same job runs `vinoauthface-upgrade` against a fake source bundle.
+- `release.yml` publishes static musl binaries and `vinoauthface-source.tar.gz` (the tag's tree
+  plus `VERSION`, what `upgrade.sh` installs from) on `v*` tags. Versions
   are consecutive (`v2`, `v3`), cut with `scripts/release.sh`; see `docs/releasing.md`.
 - `ci.yml`'s `npu` job builds, lints and tests the `npu` feature against an OpenVINO that
   ovfetch provisions, then runs the ovfetch deploy path (compiling on OpenVINO's CPU plugin,
@@ -106,8 +108,8 @@ Six crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/d
   which replaces upstream's GTK GUI. Two binaries: `vinoauthface-tray` (per-user, `ksni`
   StatusNotifierItem, never in the auth path; spots scans by `vinoauthface-auth` in `/proc`, reads
   enrolment via `vinoauthface-auth --enrolled`) and `vinoauthface-helper`, the only thing its polkit policy
-  lets pkexec run. The helper takes one verb (`enrol|retrain|uninstall`), no flags, and the target
-  user from `PKEXEC_UID` only; keep it that way, and keep ksni/zbus out of it. `data/` holds the
+  lets pkexec run. The helper takes one verb (`enrol|retrain|uninstall|upgrade`), no flags, and the
+  target user from `PKEXEC_UID` only; keep it that way, and keep ksni/zbus out of it. `data/` holds the
   policy, desktop files and the generated icon (`FACE_AUTH_BLESS_ICONS=1 cargo test -p
   face-auth-tray` after changing `icon.rs`).
 
