@@ -133,4 +133,7 @@ Auto-detect only ever considers IR-named nodes or physical greyscale sensors, an
 - **SELinux policy scope:** the lock-screen policy grants `xdm_t` mmap access to all V4L2
   devices. Narrowing it requires custom udev device types.
 - **Model integrity:** both models are pinned by SHA-256 and the detector URL is pinned to a
-  commit. `deploy.sh` aborts on mismatch. Release binaries are verified against `SHA256SUMS`.
+  commit. `deploy.sh` aborts on mismatch. Release binaries, and the source bundle `vinoauthface-upgrade` installs from, are verified
+  against the release's `SHA256SUMS`. That catches a corrupted or truncated download, not a
+  compromised release: `SHA256SUMS` is published alongside the files it covers, so the trust
+  anchor is GitHub over TLS.

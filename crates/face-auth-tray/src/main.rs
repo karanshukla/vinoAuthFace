@@ -1,4 +1,4 @@
-//! vinoAuthFace's tray icon: status, enrol, retrain, test, uninstall.
+//! vinoAuthFace's tray icon: status, enrol, retrain, test, upgrade, uninstall.
 //!
 //! A per-user session app, never in the authentication path. It runs
 //! unprivileged and elevates each action that touches the template store
@@ -15,12 +15,14 @@ use ksni::menu::{StandardItem, SubMenu};
 use ksni::{Category, MenuItem, ToolTip};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+const TRAY: &str = "/usr/local/bin/vinoauthface-tray";
 const DOCS: &str = "https://github.com/karanshukla/vinoAuthFace/tree/main/docs";
 /// How often `/proc` is checked for a running scan.
 const SCAN_POLL: Duration = Duration::from_millis(200);
@@ -38,12 +40,22 @@ enum Action {
     Retrain,
     Test,
     Uninstall,
+    Upgrade,
+}
+
+/// What the tray does once an action has finished.
+enum After {
+    Stay,
+    Quit,
+    /// Re-exec the tray, which an upgrade just replaced.
+    Restart,
 }
 
 enum Msg {
     Run(Action),
     /// A worker finished; re-read the status.
     Done,
+    Restart,
     /// An update check finished; `Some` is a newer release tag.
     Update(Option<String>),
     Quit,
@@ -78,6 +90,12 @@ impl Status {
 
     fn ready(&self) -> bool {
         self.camera.is_some() && self.enrolled == Some(true)
+    }
+
+    /// An OpenVINO install compiles as the user on upgrade, which the root
+    /// helper can't do, so the tray only points at the command.
+    fn openvino(&self) -> bool {
+        self.backend.starts_with("OpenVINO")
     }
 
     /// The Status submenu's read-only lines.
@@ -281,10 +299,17 @@ impl ksni::Tray for Tray {
         let mut menu = Vec::new();
         if let Some(tag) = &self.update {
             let url = format!("{}/tag/{tag}", update::RELEASES_URL);
-            menu.push(item(&format!("Update available: {tag}"), "software-update-available", true, move |_| {
+            if s.openvino() {
+                menu.push(info(format!("Update available: {tag}. Run sudo vinoauthface-upgrade")));
+            } else {
+                menu.push(item(&format!("Update to {tag}…"), "software-update-available", idle, |t| {
+                    t.run(Action::Upgrade)
+                }));
+            }
+            menu.push(item(&format!("What's new in {tag}"), "help-about", true, move |_| {
                 let _ = Command::new("xdg-open").arg(&url).stdin(Stdio::null()).spawn();
             }));
-            menu.push(info(format!("Installed: {}. Update with git pull, then sudo ./deploy.sh", update::CURRENT)));
+            menu.push(info(format!("Installed: {}", update::CURRENT)));
             menu.push(MenuItem::Separator);
         }
 
@@ -396,7 +421,7 @@ fn test_scan(user: &str) -> std::io::Result<(bool, String)> {
     Ok((out.status.success(), last_line(&String::from_utf8_lossy(&out.stderr))))
 }
 
-fn perform(action: Action, handle: &Handle<Tray>, notifier: &Notifier, user: &str) -> bool {
+fn perform(action: Action, handle: &Handle<Tray>, notifier: &Notifier, user: &str) -> After {
     let set_busy = |text: Option<String>| {
         handle.update(|t| t.busy = text);
     };
@@ -457,7 +482,7 @@ fn perform(action: Action, handle: &Handle<Tray>, notifier: &Notifier, user: &st
                         "vinoAuthFace uninstalled",
                         "Your enrolled face was kept in /var/lib/face-auth. Remove it with sudo rm -rf /var/lib/face-auth.",
                     );
-                    return true;
+                    return After::Quit;
                 }
                 Ok(Some((false, err))) => {
                     notifier.send(0, "Uninstall failed", &err);
@@ -467,9 +492,32 @@ fn perform(action: Action, handle: &Handle<Tray>, notifier: &Notifier, user: &st
                 }
             }
         }
+        Action::Upgrade => {
+            set_busy(Some("Upgrading: waiting for authentication".into()));
+            let mut id = 0;
+            let result = run_helper(Verb::Upgrade, |_| {
+                if id == 0 {
+                    set_busy(Some("Upgrading: running deploy.sh".into()));
+                    id = notifier.send(0, "Upgrading vinoAuthFace", "Downloading and installing the new release.");
+                }
+            });
+            match result {
+                Ok(None) => {}
+                Ok(Some((true, _))) => {
+                    notifier.send(id, "vinoAuthFace upgraded", "The tray restarts on the new version.");
+                    return After::Restart;
+                }
+                Ok(Some((false, err))) => {
+                    notifier.send(id, "Upgrade failed", &err);
+                }
+                Err(e) => {
+                    notifier.send(id, "Cannot run pkexec", &e.to_string());
+                }
+            }
+        }
     }
     set_busy(None);
-    false
+    After::Stay
 }
 
 fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: String) {
@@ -481,6 +529,11 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
     loop {
         match rx.recv_timeout(SCAN_POLL) {
             Ok(Msg::Quit) => return,
+            Ok(Msg::Restart) => {
+                let err = Command::new(TRAY).exec();
+                eprintln!("vinoauthface-tray: cannot restart {TRAY}: {err}");
+                return;
+            }
             Ok(Msg::Update(latest)) => {
                 if latest.is_some() && latest != notified_update {
                     if let Some(tag) = &latest {
@@ -498,8 +551,11 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
                 let (handle, tx, user) = (handle.clone(), tx.clone(), user.clone());
                 handle.clone().update(|t| t.busy = Some("Starting…".into()));
                 std::thread::spawn(move || {
-                    let uninstalled = perform(action, &handle, &Notifier::new(), &user);
-                    let _ = tx.send(if uninstalled { Msg::Quit } else { Msg::Done });
+                    let _ = tx.send(match perform(action, &handle, &Notifier::new(), &user) {
+                        After::Stay => Msg::Done,
+                        After::Quit => Msg::Quit,
+                        After::Restart => Msg::Restart,
+                    });
                 });
             }
             Ok(Msg::Done) => {

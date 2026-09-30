@@ -5,7 +5,8 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 mod doctor;
 
-/// The release tag CI builds with (`VINOAUTHFACE_VERSION`), or "dev".
+/// The release tag the build was stamped with (`VINOAUTHFACE_VERSION`: CI, or deploy.sh
+/// building a release), or "dev".
 pub const VERSION: &str = match option_env!("VINOAUTHFACE_VERSION") {
     Some(v) => v,
     None => "dev",

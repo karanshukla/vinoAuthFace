@@ -217,6 +217,29 @@ jobs:
           cmp /usr/local/bin/vinoauthface-auth /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
           cmp /usr/local/libexec/vinoauthface-helper /tmp/fake-release/vinoauthface-helper-x86_64-unknown-linux-musl
 
+      # The same fake release, plus a source bundle built the way release.yml builds it.
+      - name: vinoauthface-upgrade installs from the source bundle
+        run: |
+          git archive --format=tar.gz --prefix=vinoauthface-v999/ \
+            --add-virtual-file="vinoauthface-v999/VERSION:v999" \
+            -o /tmp/fake-release/vinoauthface-source.tar.gz HEAD
+          (cd /tmp/fake-release && rm SHA256SUMS && sha256sum -- * > SHA256SUMS)
+          upgrade() {
+            sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" FACE_AUTH_DEPLOY_RELEASE_BASE="file:///tmp/fake-release" \
+              /usr/local/bin/vinoauthface-upgrade "$@"
+          }
+          upgrade v999
+          test "$(cat "$HOME/.cache/vinoauthface/src/v999/VERSION")" = v999
+          test "$(stat -c %U "$HOME/.cache/vinoauthface/src/v999/deploy.sh")" = "$USER"
+          cmp /usr/local/bin/vinoauthface-auth /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
+          # Asking for v998 fetches the v999 bundle from the override: refused.
+          if upgrade v998; then echo "installed a bundle for the wrong release"; exit 1; fi
+          # A bundle SHA256SUMS doesn't match: refused before anything unpacks.
+          echo tampered >> /tmp/fake-release/vinoauthface-source.tar.gz
+          if upgrade v999 --force; then echo "installed a tampered bundle"; exit 1; fi
+          sudo ./uninstall.sh
+          test ! -e /usr/local/bin/vinoauthface-upgrade
+
       - name: Cleanup
         if: always()
         run: |
