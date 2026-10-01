@@ -18,12 +18,14 @@ pub struct UserInfo {
     pub home: PathBuf,
 }
 
+const MAX_USERNAME_LEN: usize = 32;
+
 /// Reject anything that could escape the embeddings directory or confuse
 /// path handling. Deliberately stricter than POSIX allows: the accounts
 /// this tool is used with are ordinary local logins.
 pub fn validate_username(user: &str) -> Result<&str> {
-    if user.is_empty() || user.len() > 32 {
-        bail!("invalid username: must be 1-32 characters");
+    if user.is_empty() || user.len() > MAX_USERNAME_LEN {
+        bail!("invalid username: must be 1-{MAX_USERNAME_LEN} characters");
     }
     if user == "." || user == ".." {
         bail!("invalid username: reserved path component");

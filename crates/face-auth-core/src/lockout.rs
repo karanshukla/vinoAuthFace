@@ -1,12 +1,10 @@
 //! Per-user backoff after repeated face-match failures.
 //!
-//! Each `face-auth` run is a fresh process, so state lives in
-//! `<store>/<user>/lockout/state.bin`. That directory is the only part of the
-//! store the set-group-ID `face-auth` binary can write, because lock screens
-//! run it as the user and it still has to record their failures. This only throttles the *face* factor: PAM's
-//! `sufficient` line still falls through to the password, so nobody can be
-//! locked out of their machine. What it bounds is how fast a scripted loop of
-//! spoof attempts (`sudo -k; sudo true` in a loop) can retry.
+//! State lives in `<store>/<user>/lockout/state.bin` because each `face-auth`
+//! run is a fresh process. That directory is the only group-writable part of
+//! the store: lock screens run the set-group-ID binary as the user, and it
+//! still has to record their failures. Only the face factor is throttled; PAM
+//! falls through to the password, so nobody is locked out of the machine.
 
 use crate::storage::{ensure_dir, lockout_dir, user_store_dir, LOCKOUT_DIR_MODE, LOCKOUT_FILE_MODE};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -18,6 +16,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const LOCKOUT_VERSION: u32 = 1;
 const STATE_FILE: &str = "state.bin";
+const MAX_STATE_FILE_LEN: u64 = 64;
+/// Caps the doubling exponent so the shift cannot overflow.
+const MAX_DOUBLINGS: u32 = 20;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct LockoutState {
@@ -60,7 +61,7 @@ impl LockoutState {
         else {
             return Self::default();
         };
-        if !file.metadata().is_ok_and(|m| m.is_file() && m.len() <= 64) {
+        if !file.metadata().is_ok_and(|m| m.is_file() && m.len() <= MAX_STATE_FILE_LEN) {
             return Self::default();
         }
         let mut reader = BufReader::new(file);
@@ -78,8 +79,7 @@ impl LockoutState {
     fn save(&self, user: &str, embeddings_dir: &Path) -> anyhow::Result<()> {
         let user_dir = user_store_dir(user, embeddings_dir)?;
         if !user_dir.is_dir() {
-            // Nobody enrolled under this name. The user directory is created
-            // only by enrolment, and the group could not create it anyway.
+            // Only enrolment creates the user directory; the group cannot.
             anyhow::bail!("no store for '{user}'");
         }
         let dir = lockout_dir(&user_dir);
@@ -108,7 +108,6 @@ impl LockoutState {
             writer.get_ref().sync_all()?;
         }
         fs::rename(&tmp_path, dir.join(STATE_FILE))?;
-        // Persist the rename itself.
         if let Ok(d) = File::open(&dir) {
             let _ = d.sync_all();
         }
@@ -124,7 +123,7 @@ fn remaining_cooldown(state: &LockoutState, policy: &LockoutPolicy) -> Option<Du
     if state.failures < policy.threshold {
         return None;
     }
-    let extra = (state.failures - policy.threshold).min(20); // bound the shift
+    let extra = (state.failures - policy.threshold).min(MAX_DOUBLINGS);
     let delay_ms = policy.base_delay_ms.saturating_mul(1u64 << extra).min(policy.max_delay_ms);
 
     let elapsed_ms = now_unix_ms().saturating_sub(state.last_failure_unix_ms);

@@ -23,7 +23,9 @@ const FILE_NAME: &str = "cameras";
 /// Bounds what a load reads and allocates. A user enrolled on more cameras
 /// than this re-enrols fresh.
 const MAX_CAMERAS: usize = 16;
-const MAX_FILE_BYTES: u64 = (MAX_CAMERAS * 10) as u64;
+/// `vvvv:pppp` and a newline.
+const CAMERA_LINE_BYTES: usize = 10;
+const MAX_FILE_BYTES: u64 = (MAX_CAMERAS * CAMERA_LINE_BYTES) as u64;
 
 /// `vvvv:pppp` of the USB device behind a V4L2 node, or `None` when it has no
 /// USB identity (MIPI, v4l2loopback) or reports a malformed one.

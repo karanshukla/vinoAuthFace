@@ -299,7 +299,6 @@ impl FaceAuthConfig {
 
     /// Merge the safe subset of a user's config over a system baseline.
     fn apply_user_overlay(&mut self, overlay: &FaceAuthConfig) {
-        // Thresholds: accept only values at least as strict as the system's.
         if let Some(t) = overlay.threshold {
             if t.is_finite() && t >= self.threshold() && THRESHOLD_RANGE.contains(&t) {
                 self.threshold = Some(t);
@@ -347,8 +346,7 @@ impl FaceAuthConfig {
             }
         }
 
-        // Timing preferences cannot weaken a match decision, only how long the
-        // user is willing to wait, so they are honoured within bounds.
+        // Timing cannot weaken a match decision, so it is honoured within bounds.
         if let Some(v) = overlay.capture_timeout_ms {
             if CAPTURE_TIMEOUT_RANGE.contains(&v) {
                 self.capture_timeout_ms = Some(v);
@@ -524,12 +522,8 @@ impl FaceAuthConfig {
             .clamp(*LIVENESS_WINDOW_RANGE.start(), *LIVENESS_WINDOW_RANGE.end())
     }
 
-    /// Extra delay between scan attempts.
-    ///
-    /// Defaults to zero: the loop is already paced by the camera, which
-    /// delivers 15 frames a second while a single attempt costs ~235ms of
-    /// inference, so it cannot spin. The old 200ms default added most of a
-    /// second across a handful of attempts for nothing.
+    /// Extra delay between scan attempts. Zero because the camera already
+    /// paces the loop.
     pub fn scan_interval_ms(&self) -> u64 {
         self.scan_interval_ms
             .unwrap_or(0)
@@ -538,8 +532,6 @@ impl FaceAuthConfig {
 }
 
 impl FaceAuthConfig {
-    /// Backoff after repeated face-match failures. See `lockout::check`: it
-    /// never blocks the password fallback, only how fast face attempts retry.
     /// Inference backend: "tract" (default, pure-Rust CPU) or "openvino"
     /// (needs a build with the `npu` feature; runs on `npu_device()`).
     pub fn backend(&self) -> String {
@@ -553,8 +545,7 @@ impl FaceAuthConfig {
 
     /// Minimum fraction of face-patch pixels that must change between a face
     /// frame and the oldest one within `liveness_window_ms` before a match is
-    /// accepted. See
-    /// `preprocess::motion_profile`'s `total`. Zero disables the check.
+    /// accepted. See `preprocess::motion_profile`'s `total`. Zero disables it.
     pub fn liveness_motion_threshold(&self) -> f32 {
         self.liveness_motion_threshold.unwrap_or(0.01)
     }
