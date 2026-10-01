@@ -70,8 +70,12 @@ find_cargo() {
 # Build as the invoking user: root-owned files in target/ break their next build.
 # Stamped the way deploy.sh stamps its builds.
 RELEASE_TAG="$(git describe --tags --exact-match 2>/dev/null || cat VERSION 2>/dev/null || true)"
-STAMP=()
-[ -n "$RELEASE_TAG" ] && STAMP=(env VINOAUTHFACE_VERSION="$RELEASE_TAG")
+STAMP=(env)
+[ -n "$RELEASE_TAG" ] && STAMP+=(VINOAUTHFACE_VERSION="$RELEASE_TAG")
+# sudo drops the environment, so a build directory set by the caller
+# (vinoauthface-upgrade sets one) is passed on to cargo explicitly.
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+[ -n "${CARGO_TARGET_DIR:-}" ] && STAMP+=(CARGO_TARGET_DIR="$CARGO_TARGET_DIR")
 as_user() {
     if [ -n "${SUDO_USER:-}" ]; then
         sudo -u "$SUDO_USER" -H "${STAMP[@]}" "$@"
@@ -98,7 +102,7 @@ TRAY=0
 OV_LIB="$(ldd "$BIN_DIR/vinoauthface-auth" 2>/dev/null | awk '/libopenvino_c/ {print $3; exit}' || true)"
 if [ -n "$OV_LIB" ]; then
     OV_LIB_DIR="$(dirname "$OV_LIB")"
-    BIN_SRC="target/release"
+    BIN_SRC="$TARGET_DIR/release"
     # An ovfetch deploy finds OpenVINO through an rpath (see deploy.sh for why
     # DT_RPATH and GNU ld); system and archive installs through the loader's
     # normal search.
@@ -108,7 +112,7 @@ if [ -n "$OV_LIB" ]; then
         command -v ld.bfd >/dev/null 2>&1 && RUSTFLAGS_NPU="$RUSTFLAGS_NPU -C link-arg=-fuse-ld=bfd"
     fi
     # openvino-sys caches the library directory it found and never rechecks.
-    if grep -hs '^cargo:rustc-link-search=native=' target/release/build/openvino-sys-*/output \
+    if grep -hs '^cargo:rustc-link-search=native=' "$TARGET_DIR"/release/build/openvino-sys-*/output \
             | grep -qvxF "cargo:rustc-link-search=native=$OV_LIB_DIR"; then
         as_user "$CARGO" clean --quiet --release -p openvino-sys
     fi
@@ -127,7 +131,7 @@ if [ -n "$OV_LIB" ]; then
             || { fail "Tray build failed" "Nothing was installed."; exit 1; }
     fi
 else
-    BIN_SRC="target/$MUSL_TARGET/release"
+    BIN_SRC="$TARGET_DIR/$MUSL_TARGET/release"
     # One build with the tray, as deploy.sh does, so cargo resolves the same
     # features and an unchanged tree relinks nothing.
     tray=()
@@ -160,8 +164,8 @@ put "$BIN_SRC/vinoauthface-auth" "$BIN_DIR/vinoauthface-auth" root:face-auth 275
 put "$BIN_SRC/vinoauthface" "$BIN_DIR/vinoauthface" root:root 0755
 put "$BIN_SRC/vinoauthface-unseal" /usr/local/libexec/vinoauthface-unseal root:root 0755
 if [ "$TRAY" = 1 ]; then
-    put "target/$MUSL_TARGET/release/vinoauthface-tray" "$BIN_DIR/vinoauthface-tray" root:root 0755
-    put "target/$MUSL_TARGET/release/vinoauthface-helper" "$HELPER" root:root 0755
+    put "$TARGET_DIR/$MUSL_TARGET/release/vinoauthface-tray" "$BIN_DIR/vinoauthface-tray" root:root 0755
+    put "$TARGET_DIR/$MUSL_TARGET/release/vinoauthface-helper" "$HELPER" root:root 0755
 fi
 
 printf '\n'

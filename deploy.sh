@@ -176,8 +176,12 @@ ACTUAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 # and the tray know what's installed; anything else builds as "dev". Keep in
 # step with update.sh, or its builds differ from these and it never no-ops.
 RELEASE_TAG="$(git describe --tags --exact-match 2>/dev/null || cat VERSION 2>/dev/null || true)"
-STAMP=()
-[ -n "$RELEASE_TAG" ] && STAMP=(env VINOAUTHFACE_VERSION="$RELEASE_TAG")
+STAMP=(env)
+[ -n "$RELEASE_TAG" ] && STAMP+=(VINOAUTHFACE_VERSION="$RELEASE_TAG")
+# sudo drops the environment, so a build directory set by the caller
+# (vinoauthface-upgrade sets one) is passed on to cargo explicitly.
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+[ -n "${CARGO_TARGET_DIR:-}" ] && STAMP+=(CARGO_TARGET_DIR="$CARGO_TARGET_DIR")
 
 printf '%svinoAuthFace installer%s\n' "$BOLD" "$RESET"
 
@@ -191,7 +195,7 @@ done
 
 # ---- Build ----
 MUSL_TARGET="x86_64-unknown-linux-musl"
-ARTIFACT_DIR="target/$MUSL_TARGET/release"
+ARTIFACT_DIR="$TARGET_DIR/$MUSL_TARGET/release"
 
 # Locate cargo. This script runs under sudo, and root's PATH normally does not
 # include the invoking user's rustup installation, so look there as well.
@@ -355,7 +359,7 @@ if [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(fin
         # against the staging prefix, deleted once installed, so the next
         # relink would search a directory that is gone. Rebuild it whenever
         # the recorded directory is not the one this build uses.
-        if grep -hs '^cargo:rustc-link-search=native=' target/release/build/openvino-sys-*/output \
+        if grep -hs '^cargo:rustc-link-search=native=' "$TARGET_DIR"/release/build/openvino-sys-*/output \
                 | grep -qvxF "cargo:rustc-link-search=native=$OV_LIB_DIR"; then
             as_user "$CARGO_BIN" clean --quiet --release -p openvino-sys
         fi
@@ -392,7 +396,7 @@ if [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(fin
             '$CARGO_BIN' build --release --locked --features '$NPU_FEATURES' -p face-auth -p face-enroll \"\$@\"
         " _ || exit 1
     fi
-    BIN_SRC="target/release"
+    BIN_SRC="$TARGET_DIR/release"
     NPU_ACTIVE=1
     ok Build "NPU backend (OpenVINO, glibc)"
 elif [ -f "$ARTIFACT_DIR/vinoauthface-auth" ] && [ -f "$ARTIFACT_DIR/vinoauthface" ] \
@@ -616,6 +620,7 @@ install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"
 install -D -o root -g root -m 0755 login-mode.sh "$SHARE_DIR/login-mode.sh"
 # Upgrades without a checkout (docs/install.md).
 install -D -o root -g root -m 0755 upgrade.sh "$BIN_DIR/vinoauthface-upgrade"
+ln -sfn vinoauthface-upgrade "$BIN_DIR/vinoauthface-update"
 
 # ---- Tray (default; skipped by --no-tray) ----
 # The helper is what polkit authorises: root-owned, fixed path, one verb, no
