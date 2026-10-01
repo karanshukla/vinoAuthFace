@@ -8,3 +8,4 @@ pub mod idle;
 pub mod progress;
 mod raster;
 pub mod scanning;
+pub mod single_instance;
