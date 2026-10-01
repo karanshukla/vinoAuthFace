@@ -60,13 +60,11 @@ fn skip_reason(config: &FaceAuthConfig) -> Option<SkipReason> {
 
 /// Give a freshly started screen locker time to be walked away from.
 ///
-/// The locker runs PAM the moment it starts, so a user still sitting at the
-/// camera after locking would be unlocked at once. Sleeps out the remainder of
-/// `start_delay_ms`, measured from the locker's own start time (our parent,
-/// since `pam_exec` execs us directly): a retry on the same lock screen sees
-/// the same start time and does not pay the delay again. Not a failed attempt,
-/// so nothing is recorded against the lockout. If the age can't be read, scan
-/// straight away rather than stall.
+/// The locker runs PAM the moment it starts, so a user still at the camera
+/// would be unlocked at once. Sleeps out the rest of `start_delay_ms`,
+/// measured from the locker's own start time (our parent, since `pam_exec`
+/// execs us directly), so a retry on the same lock screen pays it once. Not
+/// recorded against the lockout. If the age can't be read, scan immediately.
 fn wait_for_start_delay(config: &FaceAuthConfig) {
     let surface = environment::classify_pam_service(env::var("PAM_SERVICE").ok().as_deref());
     let delay = config.start_delay_for(surface);

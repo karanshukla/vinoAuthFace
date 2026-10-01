@@ -5,6 +5,9 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 mod doctor;
 
+/// Enough pose and expression variation from one sitting; fewer match less reliably.
+const DEFAULT_FRAMES: usize = 30;
+
 /// The release tag the build was stamped with (`VINOAUTHFACE_VERSION`: CI, or deploy.sh
 /// building a release), or "dev".
 pub const VERSION: &str = match option_env!("VINOAUTHFACE_VERSION") {
@@ -54,9 +57,7 @@ struct Capture {
     #[arg(short, long, help = "Username to enrol")]
     user: String,
 
-    /// 30 gives enough pose and expression variation from one sitting for
-    /// reliable matching; fewer enrol faster but match less reliably.
-    #[arg(short, long, help = "Number of frames to capture", default_value = "30")]
+    #[arg(short, long, help = "Number of frames to capture", default_value_t = DEFAULT_FRAMES)]
     frames: usize,
 
     #[arg(long, help = "Interval between frames (ms)", default_value = "400")]
@@ -112,15 +113,11 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
         anyhow::bail!("--frames must be at least 1");
     }
 
-    // Resolve to the canonical account name. `getent passwd 0` succeeds and
-    // would otherwise enrol into a directory literally named "0", which the
-    // authentication path (looking up "root") never reads — a silent no-op.
+    // Canonical name: `getent passwd 0` would otherwise enrol into a directory "0".
     let info = user::lookup(&args.user)?;
 
-    // The system template directory is root-owned 0700 so that no unprivileged
-    // process can plant a face for an account. Writing there needs root; say so
-    // clearly rather than failing later on EACCES. An explicit --embeddings-dir
-    // is the caller's own business, so it is left alone.
+    // The system store is root-only (0700); say so up front rather
+    // than failing on EACCES. An explicit --embeddings-dir is the caller's business.
     let euid = unsafe { libc::geteuid() };
     if euid != 0 && args.embeddings_dir.is_none() {
         anyhow::bail!(
