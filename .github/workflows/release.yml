@@ -57,6 +57,28 @@ jobs:
             -o dist/vinoauthface-source.tar.gz HEAD
           (cd dist && sha256sum -- * > SHA256SUMS)
 
+      # deploy.sh and vinoauthface-upgrade refuse a SHA256SUMS without a valid signature from
+      # the key in scripts/verify-release.sh. MINISIGN_SECRET_KEY is that key's secret half,
+      # unencrypted (minisign -G -W): the repository secret is what protects it. Tags only, so
+      # a manual run never touches the key. Checked against the committed public key before
+      # publishing: a release every install would refuse must not go out.
+      - name: Sign checksums
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::error::MINISIGN_SECRET_KEY is not set; refusing to publish an unsigned release"
+            exit 1
+          fi
+          sudo apt-get install -y minisign
+          key="$(mktemp)"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
+          minisign -S -s "$key" -m dist/SHA256SUMS -t "vinoAuthFace $TAG SHA256SUMS"
+          scripts/verify-release.sh dist/SHA256SUMS dist/SHA256SUMS.minisig
+
       # Manual/branch runs just verify the build succeeds and leave artifacts attached to the
       # workflow run — only an actual tag push publishes a release, so a test run can't create
       # or clobber one.

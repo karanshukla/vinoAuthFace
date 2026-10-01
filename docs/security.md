@@ -137,6 +137,9 @@ Auto-detect only ever considers IR-named nodes or physical greyscale sensors, an
   `login` (`local_login_t`) isn't wired by `deploy.sh`, and confined users' `sudo_t` is untested.
 - **Model integrity:** both models are pinned by SHA-256 and the detector URL is pinned to a
   commit. `deploy.sh` aborts on mismatch. Release binaries, and the source bundle `vinoauthface-upgrade` installs from, are verified
-  against the release's `SHA256SUMS`. That catches a corrupted or truncated download, not a
-  compromised release: `SHA256SUMS` is published alongside the files it covers, so the trust
-  anchor is GitHub over TLS.
+  against the release's `SHA256SUMS`, and `SHA256SUMS` against a minisign signature from the
+  release key, whose public half is in `scripts/verify-release.sh`. So a release replaced on
+  GitHub, or a mirror serving other files, is refused unless whoever did it also holds the
+  signing key, which only `release.yml` uses (the `MINISIGN_SECRET_KEY` repository secret). The
+  check needs only openssl, not minisign. Releases before v6 aren't signed and can't be
+  installed by download; build them from a checkout.

@@ -3,7 +3,8 @@ set -euo pipefail
 
 # Upgrade an install to a release without a git checkout. deploy.sh installs
 # this as vinoauthface-upgrade, and vinoauthface-update links to it. It downloads the release's source bundle,
-# verifies it against the release's SHA256SUMS, and runs that release's own
+# verifies it against the release's SHA256SUMS (itself signed with the release
+# key, see scripts/verify-release.sh), and runs that release's own
 # deploy.sh: every upgrade is a full reinstall, done by the deploy logic the
 # release shipped with, so config, templates and PAM are kept the same way a
 # re-run of deploy.sh keeps them.
@@ -49,6 +50,8 @@ fi
 # Keep in step with deploy.sh.
 RELEASE_REPO="karanshukla/vinoAuthFace"
 BUNDLE="vinoauthface-source.tar.gz"
+# Installed by deploy.sh from scripts/verify-release.sh.
+VERIFY_RELEASE="/usr/local/share/face-auth/verify-release.sh"
 
 # The bundle is unpacked and built as the user who ran sudo, like a checkout
 # in their home: deploy.sh compiles as that user, never as root. On disk, not
@@ -105,15 +108,24 @@ as_user rm -rf "$DEST.download"
 as_user mkdir "$DEST.download"
 
 step "downloading $BASE/$BUNDLE"
-for asset in "$BUNDLE" SHA256SUMS; do
+for asset in "$BUNDLE" SHA256SUMS SHA256SUMS.minisig; do
     if ! as_user curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
             -o "$DEST.download/$asset" "$BASE/$asset"; then
         fail "Download failed: $BASE/$asset" \
-            "Releases before the upgrade command have no source bundle: use a git checkout for those."
+            "Releases before v6 aren't signed, and those before the upgrade command have no" \
+            "source bundle: use a git checkout for those."
         as_user rm -rf "$DEST.download"
         exit 1
     fi
 done
+# A checksum file from the same place as the bundle only catches a bad
+# download; the signature is what ties it to a release CI built.
+if ! "$VERIFY_RELEASE" "$DEST.download/SHA256SUMS" "$DEST.download/SHA256SUMS.minisig"; then
+    fail "Signature verification failed for the release's SHA256SUMS" \
+        "If $VERIFY_RELEASE is missing, re-run deploy.sh from a checkout."
+    as_user rm -rf "$DEST.download"
+    exit 1
+fi
 # The bundle must be listed, not just match: --ignore-missing alone would pass
 # a file SHA256SUMS never mentions.
 if ! (cd "$DEST.download" \
@@ -124,7 +136,7 @@ if ! (cd "$DEST.download" \
     as_user rm -rf "$DEST.download"
     exit 1
 fi
-ok Download "source bundle, checksum verified"
+ok Download "source bundle, signature and checksum verified"
 
 as_user rm -rf "$DEST"
 as_user mkdir "$DEST"

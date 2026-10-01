@@ -41,11 +41,13 @@ cargo deny check
 - `ci.yml` (every PR, and pushes to main): `test` (unit tests + a from-source musl build of all
   six binaries), `clippy` (`-D warnings`), `deny` (`deny.toml`: crates.io only, license
   allow-list, advisories), and `deploy-script`, which runs a real `sudo ./deploy.sh` /
-  `./uninstall.sh` cycle through every build path, including the checksum-verified download via
-  a `file://` override (`FACE_AUTH_DEPLOY_RELEASE_BASE`, deploy.sh and upgrade.sh only, not a
-  config option). The same job runs `vinoauthface-upgrade` against a fake source bundle.
+  `./uninstall.sh` cycle through every build path, including the signature- and
+  checksum-verified download via a `file://` override (`FACE_AUTH_DEPLOY_RELEASE_BASE`, deploy.sh
+  and upgrade.sh only, not a config option) signed with a throwaway key
+  (`FACE_AUTH_RELEASE_PUBKEY`, honoured only alongside that override). The same job runs `vinoauthface-upgrade` against a fake source bundle.
 - `release.yml` publishes static musl binaries and `vinoauthface-source.tar.gz` (the tag's tree
-  plus `VERSION`, what `upgrade.sh` installs from) on `v*` tags. Versions
+  plus `VERSION`, what `upgrade.sh` installs from) on `v*` tags, with `SHA256SUMS` signed by the
+  `MINISIGN_SECRET_KEY` secret. Its public half is `RELEASE_PUBKEY` in `scripts/verify-release.sh`. Versions
   are consecutive (`v2`, `v3`), cut with `scripts/release.sh`; see `docs/releasing.md`.
 - `ci.yml`'s `npu` job builds, lints and tests the `npu` feature against an OpenVINO that
   ovfetch provisions, then runs the ovfetch deploy path (compiling on OpenVINO's CPU plugin,

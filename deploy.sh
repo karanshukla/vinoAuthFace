@@ -416,7 +416,8 @@ elif CARGO_BIN="$(find_cargo)"; then
     ok Build "CPU backend (tract, static musl)"
 else
     # No toolchain and nothing built locally: fetch the release binaries CI
-    # publishes, verified against the release's SHA256SUMS.
+    # publishes, verified against the release's SHA256SUMS, whose signature is
+    # verified against the release key in scripts/verify-release.sh.
     RELEASE_REPO="karanshukla/vinoAuthFace"
     if [ -n "${FACE_AUTH_DEPLOY_RELEASE_BASE:-}" ]; then
         # Override for air-gapped mirrors, and for CI exercising this path
@@ -444,11 +445,19 @@ else
     printf '    %-10s %s%s%s\n' "" "$DIM" "$DOWNLOAD_BASE" "$RESET"
     DL_DIR="$(mktemp -d)"
     DOWNLOAD_OK=1
-    for asset in vinoauthface-auth-$MUSL_TARGET vinoauthface-$MUSL_TARGET SHA256SUMS; do
+    for asset in vinoauthface-auth-$MUSL_TARGET vinoauthface-$MUSL_TARGET SHA256SUMS SHA256SUMS.minisig; do
         curl "${CURL_FLAGS[@]}" --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
             -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" || { DOWNLOAD_OK=0; break; }
     done
     if [ "$DOWNLOAD_OK" = 1 ]; then
+        # A checksum file from the same place as the binaries only catches a bad
+        # download; the signature is what ties them to a release CI built.
+        if ! scripts/verify-release.sh "$DL_DIR/SHA256SUMS" "$DL_DIR/SHA256SUMS.minisig"; then
+            fail "Signature verification failed for the release's SHA256SUMS" \
+                "Releases before v6 aren't signed. Install Rust (https://rustup.rs) to build from source instead."
+            rm -rf "$DL_DIR"
+            exit 1
+        fi
         # Both binaries must be listed, not just match: --ignore-missing alone
         # would pass a file SHA256SUMS never mentions.
         if ! (cd "$DL_DIR" \
@@ -463,7 +472,7 @@ else
         mv "$DL_DIR/vinoauthface-auth-$MUSL_TARGET" "$DL_DIR/bin/vinoauthface-auth"
         mv "$DL_DIR/vinoauthface-$MUSL_TARGET" "$DL_DIR/bin/vinoauthface"
         BIN_SRC="$DL_DIR/bin"
-        ok Download "release binaries, checksums verified"
+        ok Download "release binaries, signature and checksums verified"
         # Optional: releases before it have none, and without it sealed
         # templates still unseal everywhere but an SELinux-confined greeter.
         asset="vinoauthface-unseal-$MUSL_TARGET"
@@ -628,7 +637,9 @@ rm -f "$BIN_DIR/face-auth" "$BIN_DIR/face-enroll" "$BIN_DIR/face-auth-tray" \
 install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"
 # The same for the tray's login-screen entries.
 install -D -o root -g root -m 0755 login-mode.sh "$SHARE_DIR/login-mode.sh"
-# Upgrades without a checkout (docs/install.md).
+# Upgrades without a checkout (docs/install.md), and the release signature
+# check they run.
+install -D -o root -g root -m 0755 scripts/verify-release.sh "$SHARE_DIR/verify-release.sh"
 install -D -o root -g root -m 0755 upgrade.sh "$BIN_DIR/vinoauthface-upgrade"
 ln -sfn vinoauthface-upgrade "$BIN_DIR/vinoauthface-update"
 
