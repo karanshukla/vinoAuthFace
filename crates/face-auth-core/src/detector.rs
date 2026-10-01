@@ -4,16 +4,14 @@ use tract_onnx::tract_hir::infer::Factoid;
 
 use crate::capture::IrFrame;
 
-// Frame-quality gates, expressed in 8-bit-equivalent units so the numbers can
-// be compared against what `cargo run --example frame-stats` prints.
+// Frame-quality gates in 8-bit-equivalent units, comparable to what
+// `cargo run --example frame-stats` prints. The mean gate must carry the
+// dark-frame rejection: dark strobe frames have enough variance to pass a
+// variance-only gate. Pinned by the `*_minimum_mean` and `*_minimum_variance` tests.
 //
 // Measured on the reference ASUS IR sensor:
 //   illuminated frames   mean 48-96,  variance  82-317
 //   dark (strobe off)    mean 1.8-8,  variance 3.4-39
-//
-// The old gate was a variance floor of 100_000 in the u16 domain, which is a
-// variance of 1.5 in these units — low enough that the dark frames passed it
-// and were then histogram-equalised into a grey noise field.
 const MIN_FRAME_MEAN_8BIT: f64 = 12.0;
 const MIN_FRAME_VARIANCE_8BIT: f64 = 20.0;
 
@@ -464,23 +462,38 @@ mod tests {
 
     #[test]
     fn unlit_strobe_frame_is_too_dark() {
-        // Modelled on a real unlit frame from the reference sensor, which
-        // measured mean 8.0 and variance 38 in 8-bit units. Values 0..=16 give
-        // mean 8.0, variance 24 — dark, but with *more* than enough variance to
-        // clear the old variance-only gate, which is exactly why those frames
-        // reached histogram equalisation and became a grey noise field.
+        // Values 0..=16: mean 8.0, variance 24. Dark, yet enough variance to
+        // pass a variance-only gate.
         let data: Vec<u8> = (0..1024).map(|i| (i % 17) as u8).collect();
         let q = assess_frame(&frame8(data, 32, 32));
         assert!(matches!(q, FrameQuality::TooDark { .. }), "got {q:?}");
+    }
 
-        // The old gate: variance > 100_000 in the u16 domain. Confirm this
-        // frame would have sailed through it, so the test documents the bug.
-        let frame = frame8((0..1024).map(|i| (i % 17) as u8).collect(), 32, 32);
-        let len = frame.data.len() as f64;
-        let mean = frame.data.iter().map(|&v| v as f64).sum::<f64>() / len;
-        let var_u16 =
-            frame.data.iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / len;
-        assert!(var_u16 > 100_000.0, "u16 variance was {var_u16}");
+    /// Alternates `mean - spread` and `mean + spread`: exact mean, variance `spread^2`.
+    fn two_level_frame(mean: u8, spread: u8) -> IrFrame {
+        frame8((0..1024).map(|i| if i % 2 == 0 { mean - spread } else { mean + spread }).collect(), 32, 32)
+    }
+
+    #[test]
+    fn accepts_frame_at_minimum_mean() {
+        assert_eq!(assess_frame(&two_level_frame(12, 5)), FrameQuality::Ok);
+    }
+
+    #[test]
+    fn rejects_frame_below_minimum_mean() {
+        let q = assess_frame(&two_level_frame(11, 5));
+        assert!(matches!(q, FrameQuality::TooDark { .. }), "got {q:?}");
+    }
+
+    #[test]
+    fn accepts_frame_above_minimum_variance() {
+        assert_eq!(assess_frame(&two_level_frame(100, 5)), FrameQuality::Ok);
+    }
+
+    #[test]
+    fn rejects_frame_below_minimum_variance() {
+        let q = assess_frame(&two_level_frame(100, 4));
+        assert!(matches!(q, FrameQuality::TooFlat { .. }), "got {q:?}");
     }
 
     #[test]
@@ -555,7 +568,6 @@ mod tests {
 
     #[test]
     fn brightness_alone_does_not_pass() {
-        // A bright but featureless frame must still be rejected.
         let q = assess_frame(&frame8(vec![200; 1024], 32, 32));
         assert!(matches!(q, FrameQuality::TooFlat { .. }), "got {q:?}");
     }

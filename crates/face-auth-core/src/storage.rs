@@ -21,19 +21,15 @@ const EMBEDDING_VERSION: u32 = 2;
 const EMBEDDING_VERSION_SEALED: u32 = 3;
 const EMBEDDING_DIM: u32 = 512;
 
-/// A tag is a file name. Bounded for the same reason as `MAX_EMBEDDINGS`.
+/// A tag is a file name; bounded like `MAX_EMBEDDINGS`.
 const MAX_MODEL_TAG_LEN: u32 = 255;
 
-/// Upper bound on stored embeddings per user.
-///
-/// `count` is read straight off disk and drives an allocation, so it is
-/// bounded before use: an unbounded `u32` here asks for ~96 GB and aborts
-/// the process. Enrolment adds 30 at a time by default, leaving room for
-/// several `--improve` passes.
+/// Upper bound on stored embeddings per user. `count` is read off disk and
+/// sizes an allocation, so it is bounded before use. Pinned by
+/// `check_room_allows_up_to_the_limit`.
 const MAX_EMBEDDINGS: u32 = 256;
 
-/// Refuses an enrolment that would take the gallery past `MAX_EMBEDDINGS`,
-/// before the camera opens rather than after a full capture.
+/// Refuses an enrolment that would pass `MAX_EMBEDDINGS`, before the camera opens.
 pub(crate) fn check_room(existing: usize, adding: usize) -> anyhow::Result<()> {
     let total = existing.saturating_add(adding);
     anyhow::ensure!(
@@ -44,14 +40,19 @@ pub(crate) fn check_room(existing: usize, adding: usize) -> anyhow::Result<()> {
     Ok(())
 }
 
-const MAX_PAYLOAD_BYTES: u64 =8 + MAX_EMBEDDINGS as u64 * EMBEDDING_DIM as u64 * 4;
+/// Count and dimension, then the vectors.
+const BODY_HEADER_BYTES: u64 = 8;
+const F32_BYTES: u64 = 4;
+const MAX_PAYLOAD_BYTES: u64 = BODY_HEADER_BYTES + MAX_EMBEDDINGS as u64 * EMBEDDING_DIM as u64 * F32_BYTES;
 
-/// A sealed blob is the payload base64-encoded plus systemd's credential
-/// header; 2x and a page of slack covers it.
-const MAX_SEALED_BYTES: u64 = MAX_PAYLOAD_BYTES * 2 + 4096;
+/// Base64 growth is under 2x; the page covers systemd's credential header.
+const SEALED_OVERHEAD_FACTOR: u64 = 2;
+const SEALED_SLACK_BYTES: u64 = 4096;
+const MAX_SEALED_BYTES: u64 = MAX_PAYLOAD_BYTES * SEALED_OVERHEAD_FACTOR + SEALED_SLACK_BYTES;
 
-/// Largest valid file: header, a full-length tag, and a full sealed blob.
-const MAX_STORE_BYTES: u64 = 16 + MAX_MODEL_TAG_LEN as u64 + MAX_SEALED_BYTES;
+/// Version, tag length and blob length.
+const FILE_HEADER_BYTES: u64 = 16;
+const MAX_STORE_BYTES: u64 = FILE_HEADER_BYTES + MAX_MODEL_TAG_LEN as u64 + MAX_SEALED_BYTES;
 
 /// Biometric templates: root-owned, readable by the `face-auth` group that the
 /// set-group-ID `face-auth` binary runs with, never writable by it. The
@@ -315,12 +316,10 @@ impl EmbeddingStore {
             fs::DirBuilder::new().recursive(true).mode(EMBEDDINGS_DIR_MODE).create(parent)?;
         }
         ensure_dir(&user_dir, EMBEDDINGS_DIR_MODE)?;
-        // Created here, by root at enrolment, because the group cannot create
-        // entries in the user directory itself.
+        // The group cannot create entries in the user directory, so root makes this now.
         ensure_dir(&lockout_dir(&user_dir), LOCKOUT_DIR_MODE)?;
 
-        // Unique and created exclusively, never followed: nothing pre-planted
-        // at a fixed name can redirect the write.
+        // Unique, exclusive, never followed: a pre-planted name can't redirect the write.
         let tmp_path = user_dir.join(format!("embeddings.bin.{}.tmp", std::process::id()));
         let _ = fs::remove_file(&tmp_path);
         let path = user_dir.join("embeddings.bin");
@@ -360,7 +359,6 @@ impl EmbeddingStore {
 
         fs::rename(&tmp_path, &path)?;
 
-        // Persist the rename itself.
         if let Ok(dir) = File::open(&user_dir) {
             let _ = dir.sync_all();
         }

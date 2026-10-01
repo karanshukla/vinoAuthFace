@@ -7,10 +7,8 @@
 
 use std::time::Duration;
 
-/// Time since boot, suspend included. `Instant` runs on the monotonic
-/// clock, which stops while the laptop sleeps: vinoWhisper's tray, timed that
-/// way, took hours of wall clock to reach its 30 minutes on a laptop that
-/// suspended often.
+/// Time since boot, suspend included. `Instant` stops while the laptop sleeps,
+/// which would stretch the idle delay across suspends.
 pub fn boottime() -> Duration {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: `ts` is a valid, writable timespec.

@@ -38,20 +38,24 @@ pub struct Letterbox {
     scale: f32,
 }
 
-/// The detector input `[3, 320, 320]`, `(v - 127.5) / 128` on 8-bit values,
-/// greyscale replicated to all three channels. Bilinear downscale.
+/// An 8-bit value as the detector expects it.
+fn normalize_8bit(v: f32) -> f32 {
+    (v - 127.5) / 128.0
+}
+
+/// The detector input `[3, 320, 320]`, greyscale replicated to all three
+/// channels. Bilinear downscale.
 pub fn preprocess(frame: &IrFrame) -> anyhow::Result<(Array3<f32>, Letterbox)> {
     let (w, h) = (frame.width as usize, frame.height as usize);
     anyhow::ensure!(w > 0 && h > 0 && frame.data.len() == w * h, "bad frame geometry {w}x{h}");
     let scale = INPUT_SIZE as f32 / w.max(h) as f32;
     let (sw, sh) = (((w as f32 * scale).round() as usize).min(INPUT_SIZE), ((h as f32 * scale).round() as usize).min(INPUT_SIZE));
-    // Padding is 0 in 8-bit terms, as the reference implementation pads.
-    let pad = -127.5 / 128.0;
+    let pad = normalize_8bit(0.0);
     let mut input = Array3::<f32>::from_elem((3, INPUT_SIZE, INPUT_SIZE), pad);
     for y in 0..sh {
         for x in 0..sw {
             let v = sample(frame, (x as f32 + 0.5) / scale - 0.5, (y as f32 + 0.5) / scale - 0.5) / 257.0;
-            let n = (v - 127.5) / 128.0;
+            let n = normalize_8bit(v);
             for c in 0..3 {
                 input[[c, y, x]] = n;
             }

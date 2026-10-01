@@ -106,8 +106,7 @@ mod tests {
 
     #[test]
     fn opposed_embedding_scores_below_zero_not_clamped() {
-        // The old implementation seeded the running maximum at 0.0, so an
-        // anti-correlated match was indistinguishable from an orthogonal one.
+        // The running maximum must not start at 0.0.
         let probe = vec![1.0, 0.0, 0.0];
         let store = store_of(vec![vec![-1.0, 0.0, 0.0]]);
         assert!(!verify_embedding(&probe, &store, 0.6).unwrap());

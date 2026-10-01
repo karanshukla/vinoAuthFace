@@ -11,7 +11,7 @@
 //!
 //! `GAP` compares each face frame against the oldest of the last `GAP` face
 //! frames (default 1, consecutive), the way `authenticate_scan` uses
-//! `liveness_baseline_ms`. At the laptop's ~7.5 face frames/s, 8 is about 1 s.
+//! `liveness_window_ms`. At the laptop's ~7.5 face frames/s, 8 is about 1 s.
 use face_auth_core::capture::IrFrame;
 use face_auth_core::detector::{assess_frame, FaceDetector, FrameQuality};
 use face_auth_core::preprocess::{face_patch, histogram_equalize, motion_profile};

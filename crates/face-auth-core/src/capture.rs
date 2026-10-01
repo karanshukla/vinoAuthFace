@@ -77,14 +77,10 @@ fn widen_y16(samples: &mut [u16], bits: u32) {
 /// Refuse implausible geometry from `G_FMT` before it sizes an allocation.
 const MAX_DIMENSION: u32 = 8192;
 
-/// Buffers to request from the driver.
-///
-/// One is not enough. Between `DQBUF` and the following `QBUF` the driver has
-/// nowhere to put an incoming frame, so it drops it — which means two
-/// successive captures are not necessarily adjacent frames. On a sensor that
-/// strobes its illuminator on alternate frames, that makes the phase of what
-/// you get unpredictable, and "take the brighter of two" can hand back two
-/// unlit frames in a row. A small ring keeps a buffer queued at all times.
+/// Buffers to request from the driver. One is not enough: between `DQBUF` and
+/// `QBUF` the driver drops incoming frames, so two captures need not be
+/// adjacent, and on a strobing sensor "the brighter of two" could be two unlit
+/// frames. A ring keeps a buffer queued at all times.
 const BUFFER_COUNT: u32 = 4;
 
 // Kernel struct v4l2_format: type(4) + padding(4) + union raw_data[200] = 208 bytes
@@ -193,9 +189,7 @@ impl Camera {
         let fd = open(device_path, OFlag::O_RDWR, Mode::empty())
             .map_err(|e| anyhow::anyhow!("Failed to open {}: {}", device_path, e))?;
 
-        // Query current format instead of setting it.
-        // VIDIOC_S_FMT triggers sensor init on IR cameras (~2s delay).
-        // The camera is already configured correctly, so G_FMT is instant.
+        // G_FMT, not S_FMT: setting a format re-inits IR sensors (~2s delay).
         let mut fmt = make_v4l2_format(V4L2_BUF_TYPE_VIDEO_CAPTURE, 0, 0, 0);
         ioctl(fd.as_raw_fd(), VIDIOC_G_FMT, &mut fmt as *mut _ as *mut c_void)?;
         let pix: &v4l2_pix_format = unsafe { &*(fmt.raw.as_ptr() as *const v4l2_pix_format) };
@@ -290,7 +284,6 @@ impl Camera {
             self.stream_on = true;
         }
 
-        // Use poll() to wait for data with the configured timeout
         let mut pfd = pollfd {
             fd: self.fd.as_raw_fd(),
             events: POLLIN,
@@ -369,15 +362,10 @@ impl Camera {
     /// ASUS sensor the lit frames average 48–96 (of 255) and the dark ones
     /// 2–8, strictly alternating at 15 fps.
     ///
-    /// A dark frame is not merely useless: histogram equalisation stretches its
-    /// 0–23 range across the full scale and turns sensor noise into a
-    /// high-contrast grey field, which the detector then searches in vain.
-    /// Worse, a capture interval that happens to be an even number of frames
-    /// locks onto one phase, so an unlucky caller sees *only* dark frames.
-    ///
-    /// Taking the brighter of two consecutive frames sidesteps all of that
-    /// without assuming the strobe exists: on a camera that does not strobe the
-    /// two frames are alike and either will do.
+    /// A dark frame is worse than useless: equalisation stretches its noise
+    /// into a high-contrast field, and a capture interval of an even number of
+    /// frames can lock onto the dark phase. The brighter of two consecutive
+    /// frames avoids both without assuming a strobe exists.
     pub fn capture_illuminated_frame(&mut self, timeout_ms: i32) -> Result<IrFrame> {
         let first = self.capture_frame(timeout_ms)?;
 

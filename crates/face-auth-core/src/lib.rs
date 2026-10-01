@@ -48,6 +48,33 @@ pub fn face_input(
 /// frame rate: about 1 s at 15 pairs a second, and a bound on memory.
 const MAX_LIVENESS_FRAMES: usize = 16;
 
+/// Capture errors in a row before a scan gives up and reports the error.
+const MAX_CONSECUTIVE_CAPTURE_ERRORS: u32 = 3;
+
+/// Both thresholds at zero turn motion liveness off.
+fn liveness_disabled(motion_threshold: f32, residual_threshold: f32) -> bool {
+    motion_threshold <= 0.0 && residual_threshold <= 0.0
+}
+
+/// `total` (against the oldest face frame in the window) defeats a static
+/// photo; `local` (against the previous frame) defeats one moved by hand.
+fn motion_passes(total: f32, local: f32, motion_threshold: f32, residual_threshold: f32) -> bool {
+    total >= motion_threshold && local >= residual_threshold
+}
+
+/// Once per scan, a face that matched but hasn't moved enough gets `grace`
+/// more time. A scan that never matched never extends.
+fn grace_extends_scan(liveness_pending: bool, already_extended: bool, grace: Duration) -> bool {
+    liveness_pending && !already_extended && !grace.is_zero()
+}
+
+/// The oldest face frame is dropped once it falls outside the liveness window
+/// or the buffer is over `MAX_LIVENESS_FRAMES`; the newest is always kept as
+/// the baseline.
+fn drop_oldest_face(frames_kept: usize, oldest_age: Duration, window: Duration) -> bool {
+    frames_kept > 1 && (oldest_age > window || frames_kept > MAX_LIVENESS_FRAMES)
+}
+
 /// Progress reporting for the interactive enrolment paths.
 ///
 /// The library never writes to stdout itself — `face-auth` runs under
@@ -199,28 +226,17 @@ impl FaceAuth {
         // Only a scan that saw a face counts toward lockout: an unattended
         // `sudo` with nobody at the camera is not a failed attempt.
         let mut face_seen = false;
-        // Motion liveness: a match only counts once real motion has been seen.
-        // `total` defeats a static photo, and is measured against the oldest
-        // face frame within `liveness_window_ms`: a still face barely changes
-        // between consecutive frames but drifts over a second, while a photo
-        // never changes. `local` (motion a rigid shift can't explain, in the
-        // most-changed part of the face) defeats one moved by hand, and stays
-        // on consecutive frames, where it was calibrated.
+        // A match only counts once motion has been seen (see `motion_passes`).
         let motion_threshold = self.config.liveness_motion_threshold();
         let residual_threshold = self.config.liveness_residual_motion_threshold();
         let window = Duration::from_millis(self.config.liveness_window_ms());
         let mut recent_faces: std::collections::VecDeque<(Instant, crate::capture::IrFrame, FaceBox)> =
             std::collections::VecDeque::new();
-        let mut motion_seen = motion_threshold <= 0.0 && residual_threshold <= 0.0;
-        // A face held still can match well before it moves enough to pass.
-        // Once that has happened, the window is extended once rather than
-        // failing someone who is plainly there; a scan that never matched
-        // still ends on time.
+        let mut motion_seen = liveness_disabled(motion_threshold, residual_threshold);
         let grace = Duration::from_millis(self.config.liveness_grace_ms());
         let mut liveness_pending = false;
         let mut extended = false;
 
-        // Wait out the remainder of the interval without overrunning the window.
         let nap = |deadline: Instant| {
             let sleep =
                 Duration::from_millis(interval_ms).min(deadline.saturating_duration_since(Instant::now()));
@@ -230,7 +246,7 @@ impl FaceAuth {
         };
 
         loop {
-            if Instant::now() >= deadline && liveness_pending && !extended && !grace.is_zero() {
+            if Instant::now() >= deadline && grace_extends_scan(liveness_pending, extended, grace) {
                 extended = true;
                 deadline += grace;
                 tracing::debug!(frames = frame_num, grace_ms = grace.as_millis() as u64, "matched, liveness pending; extending scan");
@@ -260,7 +276,7 @@ impl FaceAuth {
                 Err(e) => {
                     consecutive_errors += 1;
                     tracing::warn!(frame = frame_num, error = %e, "capture failed");
-                    if consecutive_errors >= 3 {
+                    if consecutive_errors >= MAX_CONSECUTIVE_CAPTURE_ERRORS {
                         return Err(e);
                     }
                     nap(deadline);
@@ -293,15 +309,15 @@ impl FaceAuth {
             }
             face_seen = true;
 
-            // The first face frame has nothing to diff against, so it can never
-            // pass the liveness gate. Use it as the baseline and skip encoding.
+            // The first face frame is only a baseline and is never encoded.
             // Both patches are cut with the earlier frame's box: the detector's
             // box wobbles in size from frame to frame, and two differently
             // scaled patches would differ everywhere.
             let now = Instant::now();
-            while recent_faces.len() > 1
-                && (now.duration_since(recent_faces[0].0) > window || recent_faces.len() > MAX_LIVENESS_FRAMES)
-            {
+            while let Some(oldest) = recent_faces.front() {
+                if !drop_oldest_face(recent_faces.len(), now.duration_since(oldest.0), window) {
+                    break;
+                }
                 recent_faces.pop_front();
             }
             let profile = |(_, old_raw, old_box): &(Instant, crate::capture::IrFrame, FaceBox)| {
@@ -324,7 +340,7 @@ impl FaceAuth {
                 nap(deadline);
                 continue;
             };
-            motion_seen |= across.total >= motion_threshold && consecutive.local >= residual_threshold;
+            motion_seen |= motion_passes(across.total, consecutive.local, motion_threshold, residual_threshold);
             tracing::debug!(
                 frame = frame_num,
                 motion = across.total,
@@ -540,5 +556,63 @@ mod tests {
         let config = FaceAuthConfig::default();
         assert_eq!(config.threshold(), 0.6);
         assert!(config.validate().is_ok());
+    }
+
+    const MOTION: f32 = 0.01;
+    const RESIDUAL: f32 = 0.3;
+
+    #[test]
+    fn accepts_motion_at_both_thresholds() {
+        assert!(motion_passes(MOTION, RESIDUAL, MOTION, RESIDUAL));
+    }
+
+    #[test]
+    fn rejects_a_static_photo_below_the_total_threshold() {
+        assert!(!motion_passes(MOTION / 2.0, RESIDUAL, MOTION, RESIDUAL));
+    }
+
+    #[test]
+    fn rejects_a_photo_moved_by_hand_below_the_local_threshold() {
+        assert!(!motion_passes(MOTION, RESIDUAL / 2.0, MOTION, RESIDUAL));
+    }
+
+    #[test]
+    fn liveness_is_off_only_when_both_thresholds_are_zero() {
+        assert!(liveness_disabled(0.0, 0.0));
+        assert!(!liveness_disabled(MOTION, 0.0));
+        assert!(!liveness_disabled(0.0, RESIDUAL));
+    }
+
+    #[test]
+    fn extends_a_pending_match_once() {
+        let grace = Duration::from_millis(4000);
+        assert!(grace_extends_scan(true, false, grace));
+        assert!(!grace_extends_scan(true, true, grace));
+    }
+
+    #[test]
+    fn never_extends_a_scan_that_has_not_matched_or_has_no_grace() {
+        assert!(!grace_extends_scan(false, false, Duration::from_millis(4000)));
+        assert!(!grace_extends_scan(true, false, Duration::ZERO));
+    }
+
+    #[test]
+    fn keeps_a_face_frame_inside_the_window() {
+        let window = Duration::from_millis(1000);
+        assert!(!drop_oldest_face(5, window, window));
+        assert!(drop_oldest_face(5, window + Duration::from_millis(1), window));
+    }
+
+    #[test]
+    fn keeps_the_baseline_frame_however_old() {
+        let window = Duration::from_millis(1000);
+        assert!(!drop_oldest_face(1, window * 10, window));
+    }
+
+    #[test]
+    fn caps_buffered_face_frames() {
+        let window = Duration::from_millis(1000);
+        assert!(!drop_oldest_face(MAX_LIVENESS_FRAMES, Duration::ZERO, window));
+        assert!(drop_oldest_face(MAX_LIVENESS_FRAMES + 1, Duration::ZERO, window));
     }
 }
