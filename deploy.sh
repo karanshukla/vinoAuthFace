@@ -215,6 +215,15 @@ find_cargo() {
     return 1
 }
 
+# True when a source file is newer than the artifact $1, and a toolchain is
+# there to rebuild it. Reusing target/ is meant for a deploy with no cargo; with
+# one, it would silently install binaries from before the last pull.
+needs_rebuild() {
+    find_cargo >/dev/null || return 1
+    [ -n "$(find crates Cargo.toml Cargo.lock \( -name '*.rs' -o -name Cargo.toml -o -name Cargo.lock \) \
+        -newer "$1" -print -quit 2>/dev/null)" ]
+}
+
 # Build as the invoking user, never as root: cargo fetches crates and runs
 # build scripts, and root-owned files left in target/ break their next build.
 as_user() {
@@ -400,7 +409,7 @@ if [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(fin
     NPU_ACTIVE=1
     ok Build "NPU backend (OpenVINO, glibc)"
 elif [ -f "$ARTIFACT_DIR/vinoauthface-auth" ] && [ -f "$ARTIFACT_DIR/vinoauthface" ] \
-   && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ]; then
+   && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ] && ! needs_rebuild "$ARTIFACT_DIR/vinoauthface-auth"; then
     skip Build "using $ARTIFACT_DIR/ (FACE_AUTH_FORCE_BUILD=1 to rebuild)"
 elif CARGO_BIN="$(find_cargo)"; then
     build_with_cargo "$CARGO_BIN" || exit 1
@@ -532,7 +541,8 @@ if [ "$WITH_TRAY" = 1 ]; then
     if [ -n "${DL_DIR:-}" ]; then
         [ -f "$DL_DIR/bin/vinoauthface-tray" ] && TRAY_SRC="$DL_DIR/bin"
     elif [ "$BIN_SRC" = "$ARTIFACT_DIR" ] && [ -f "$ARTIFACT_DIR/vinoauthface-tray" ] \
-         && [ -f "$ARTIFACT_DIR/vinoauthface-helper" ]; then
+         && [ -f "$ARTIFACT_DIR/vinoauthface-helper" ] && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ] \
+         && ! needs_rebuild "$ARTIFACT_DIR/vinoauthface-tray"; then
         TRAY_SRC="$ARTIFACT_DIR"
     elif CARGO_BIN="$(find_cargo)"; then
         step "building the tray"
