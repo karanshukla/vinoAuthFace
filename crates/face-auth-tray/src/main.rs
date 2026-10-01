@@ -11,7 +11,7 @@ use face_auth_core::{capture, update, user, Camera, FaceAuthConfig};
 use face_auth_tray::helper::{Verb, FACE_AUTH, HELPER, LOGIN_MODE, SAFE_PATH};
 use face_auth_tray::icon::{self, State};
 use face_auth_tray::idle::{self, Idle};
-use face_auth_tray::{progress, scanning};
+use face_auth_tray::{progress, scanning, single_instance};
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{RadioGroup, RadioItem, StandardItem, SubMenu};
 use ksni::{Category, MenuItem, ToolTip};
@@ -755,6 +755,12 @@ fn detach_from_terminal() {
 
 fn main() -> anyhow::Result<()> {
     detach_from_terminal();
+    let _instance = match single_instance::lock_path().map(|p| single_instance::acquire(&p)) {
+        Some(Ok(Some(held))) => Some(held),
+        Some(Ok(None)) => return Ok(()),
+        // No runtime dir or lock error: a second tray beats no tray.
+        _ => None,
+    };
     let me = user::current()?;
     let (tx, rx) = mpsc::channel();
     let tray = Tray {

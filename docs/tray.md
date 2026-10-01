@@ -14,7 +14,7 @@ sudo ./deploy.sh
 
 The tray installs by default. Skip it with `sudo ./deploy.sh --no-tray` (or `FACE_AUTH_TRAY=0`).
 
-It starts at the next login, or run `vinoauthface-tray` now (it detaches from the terminal, so closing it leaves the tray running). `uninstall.sh` removes it.
+It starts at the next login, or run `vinoauthface-tray` now (it detaches from the terminal, so closing it leaves the tray running). `uninstall.sh` removes it. Only one tray runs per session: a second `vinoauthface-tray` exits at once.
 
 | File | What |
 |---|---|
