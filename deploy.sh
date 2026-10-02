@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+# Everything below (config/, selinux/, target/, the scripts it installs) is
+# relative to the checkout. Run from another directory, it would read those
+# from wherever the caller happened to be, which may be writable by others.
+cd "$(dirname "$(readlink -f "$0")")"
+
 # ---- Output ----
 # One line per step: ok (done), skip (nothing to do), warn (needs a look).
 # Colour only on a terminal, and never with NO_COLOR set.
