@@ -13,13 +13,13 @@ build from source instead of using the release binaries, camera pinning, and rem
 No build toolchain is required. If `deploy.sh` finds no Rust toolchain and no local build, it
 downloads the static musl binaries from
 [GitHub Releases](https://github.com/karanshukla/vinoAuthFace/releases) and verifies them against
-the release's `SHA256SUMS`. Build from source for an unreleased change or the NPU backend.
+the release's `SHA256SUMS`, which is signed with the release key. Build from source for an unreleased change or the NPU backend.
 
 ## What deploy.sh does
 
 | Step | What | Details |
 |------|------|---------|
-| Build | Picks the first that applies | OpenVINO + cargo: NPU build. Prebuilt binaries in `target/`: use them, unless cargo is available and the sources are newer than they are (`FACE_AUTH_FORCE_BUILD=1` rebuilds regardless; it covers the tray too). Cargo: static musl build. Otherwise: download and checksum-verify the release binaries |
+| Build | Picks the first that applies | OpenVINO + cargo: NPU build. Prebuilt binaries in `target/`: use them, unless cargo is available and the sources are newer than they are (`FACE_AUTH_FORCE_BUILD=1` rebuilds regardless; it covers the tray too). Cargo: static musl build. Otherwise: download the release binaries and verify their signature and checksums |
 | Binaries | Installs to `/usr/local/bin` | `vinoauthface-auth` (set-group-ID `face-auth`, see [security.md](security.md#trust-model)) and `vinoauthface`, plus its bash, zsh and fish completions under `/usr/local/share` (regenerate with `vinoauthface completions bash`, `zsh` or `fish`) |
 | Models | Downloads and SHA-256 verifies | Recognition model (`w600k_r50.onnx` for an NPU build, `w600k_mbf.onnx` otherwise) and the `det_500m.onnx` (SCRFD) detector, to `/usr/local/share/face-auth/`. Installing the detector over an older install means re-enrolling; `deploy.sh` says so. A copy in `models/` is used first, and verified too |
 | Config | Installs default config | `/etc/face-auth.toml`, kept if it already exists; the deploy appends any settings from `config/face-auth.toml.example` it lacks, commented out at their defaults |
@@ -179,7 +179,7 @@ sudo vinoauthface-upgrade --force  # reinstall the one you're on
 `vinoauthface-update` is the same command under another name.
 
 It downloads the release's source bundle (`vinoauthface-source.tar.gz`), checks it against the
-release's `SHA256SUMS`, unpacks it into `~/.cache/vinoauthface/src/<tag>` and runs that release's
+release's `SHA256SUMS` and that file's signature, unpacks it into `~/.cache/vinoauthface/src/<tag>` and runs that release's
 own `deploy.sh`. Every upgrade is a full reinstall by the release's deploy logic, so anything a
 release changes beyond the binaries (models, config, PAM, SELinux) comes with it. A `--no-tray`
 install stays one. Older releases' unpacked sources are deleted once it succeeds, but the build

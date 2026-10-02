@@ -88,8 +88,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      # minisign: signs the fake release below, the way release.yml signs a real one.
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y musl-tools cmake
+        run: sudo apt-get update && sudo apt-get install -y musl-tools cmake minisign
 
       # swaylock: requisite gates above the authenticator must stay above
       # face-auth. gdm-password: its included stack already runs face-auth,
@@ -242,14 +243,42 @@ jobs:
           cp target/x86_64-unknown-linux-musl/release/vinoauthface-tray /tmp/fake-release/vinoauthface-tray-x86_64-unknown-linux-musl
           cp target/x86_64-unknown-linux-musl/release/vinoauthface-helper /tmp/fake-release/vinoauthface-helper-x86_64-unknown-linux-musl
           (cd /tmp/fake-release && sha256sum -- * > SHA256SUMS)
+          # Signed with a throwaway key; verify-release.sh takes its public half
+          # from FACE_AUTH_RELEASE_PUBKEY only alongside FACE_AUTH_DEPLOY_RELEASE_BASE.
+          minisign -G -W -p /tmp/release-key.pub -s /tmp/release-key.sec
+          minisign -S -s /tmp/release-key.sec -m /tmp/fake-release/SHA256SUMS -t "fake release"
+          echo "FACE_AUTH_RELEASE_PUBKEY=$(tail -1 /tmp/release-key.pub)" >> "$GITHUB_ENV"
           # Remove the local prebuilt binaries so deploy.sh can't fall back to branch 2 instead.
           rm -f target/x86_64-unknown-linux-musl/release/vinoauthface-auth target/x86_64-unknown-linux-musl/release/vinoauthface \
             target/x86_64-unknown-linux-musl/release/vinoauthface-unseal
           rm -f target/x86_64-unknown-linux-musl/release/vinoauthface-tray target/x86_64-unknown-linux-musl/release/vinoauthface-helper
 
-      - name: "Branch 3: no cargo, no local binaries -> checksum-verified download"
+      - name: "Branch 3: no cargo, no local binaries -> signature- and checksum-verified download"
         run: |
-          sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" FACE_AUTH_DEPLOY_RELEASE_BASE="file:///tmp/fake-release" ./deploy.sh --with-tray
+          deploy() {
+            sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" FACE_AUTH_DEPLOY_RELEASE_BASE="file:///tmp/fake-release" \
+              FACE_AUTH_RELEASE_PUBKEY="$FACE_AUTH_RELEASE_PUBKEY" ./deploy.sh --with-tray
+          }
+          # A release whose SHA256SUMS isn't signed by the release key: refused,
+          # before anything is installed.
+          mv /tmp/fake-release/SHA256SUMS.minisig /tmp/SHA256SUMS.minisig.good
+          if deploy; then echo "installed an unsigned release"; exit 1; fi
+          minisign -G -W -p /tmp/other-key.pub -s /tmp/other-key.sec
+          minisign -S -s /tmp/other-key.sec -m /tmp/fake-release/SHA256SUMS -t "other key"
+          if deploy; then echo "installed a release signed with another key"; exit 1; fi
+          mv /tmp/SHA256SUMS.minisig.good /tmp/fake-release/SHA256SUMS.minisig
+          # What the checksums alone can't catch: a swapped binary with SHA256SUMS
+          # regenerated to match. The signature no longer covers it.
+          cp /tmp/fake-release/SHA256SUMS /tmp/SHA256SUMS.good
+          cp /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl /tmp/auth.good
+          echo swapped >> /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
+          (cd /tmp/fake-release && sha256sum -- vinoauthface-*-musl > SHA256SUMS)
+          if deploy; then echo "installed a binary the signature doesn't cover"; exit 1; fi
+          test ! -e /usr/local/bin/vinoauthface-auth
+          mv /tmp/SHA256SUMS.good /tmp/fake-release/SHA256SUMS
+          mv /tmp/auth.good /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
+          deploy
+          test "$(stat -c %U:%a /usr/local/share/face-auth/verify-release.sh)" = root:755
           test -x /usr/local/bin/vinoauthface-auth
           cmp /usr/local/bin/vinoauthface-auth /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
           cmp /usr/local/libexec/vinoauthface-helper /tmp/fake-release/vinoauthface-helper-x86_64-unknown-linux-musl
@@ -261,11 +290,14 @@ jobs:
           git archive --format=tar.gz --prefix=vinoauthface-v999/ \
             --add-virtual-file="vinoauthface-v999/VERSION:v999" \
             -o /tmp/fake-release/vinoauthface-source.tar.gz HEAD
-          (cd /tmp/fake-release && rm SHA256SUMS && sha256sum -- * > SHA256SUMS)
+          (cd /tmp/fake-release && rm SHA256SUMS SHA256SUMS.minisig && sha256sum -- * > SHA256SUMS)
           upgrade() {
             sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" FACE_AUTH_DEPLOY_RELEASE_BASE="file:///tmp/fake-release" \
-              /usr/local/bin/vinoauthface-upgrade "$@"
+              FACE_AUTH_RELEASE_PUBKEY="$FACE_AUTH_RELEASE_PUBKEY" /usr/local/bin/vinoauthface-upgrade "$@"
           }
+          # Not signed yet: refused.
+          if upgrade v999; then echo "upgraded to an unsigned release"; exit 1; fi
+          minisign -S -s /tmp/release-key.sec -m /tmp/fake-release/SHA256SUMS -t "fake release"
           upgrade v999
           test "$(cat "$HOME/.cache/vinoauthface/src/v999/VERSION")" = v999
           test "$(readlink /usr/local/bin/vinoauthface-update)" = vinoauthface-upgrade

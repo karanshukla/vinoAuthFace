@@ -71,7 +71,7 @@ icon.
   account. All seven actions are `auth_admin`.
 - **Upgrade and uninstall never touch your home.** They run as plain root with no `SUDO_USER`, so
   the upgrade downloads and unpacks the release under root's home, where nothing you run can swap
-  it between the checksum check and `deploy.sh` running it. Upgrade only installs the newest
+  it between the signature and checksum checks and `deploy.sh` running it. Upgrade only installs the newest
   release: no version can be named.
 - **Enrolment status without reading the store.** The store is closed to you, so the tray asks
   `vinoauthface-auth --enrolled`, which runs with the `face-auth` group and only answers for your own

@@ -20,7 +20,7 @@ If the bug is also in [upstream authFace](https://github.com/pfalkingham/authFac
 | Spoofed USB device injecting frames | `pin-camera.sh` pins the physical port and V4L2 index; vinoauthface-auth re-checks it from sysfs on every attempt and fails closed. Auto-detect ignores virtual (v4l2loopback) nodes. |
 | Scripted retry loop | Exponential lockout after 5 failed matches, stored in the root-owned store so a user cannot reset it. |
 | Crafted template file or driver data | Every length read from disk or the driver is bounded before use; non-finite values and trailing bytes are rejected. |
-| Tampered model or release binary | Models are pinned by SHA-256 (detector URL pinned to a commit). Release binaries are verified against `SHA256SUMS` before install. |
+| Tampered model or release binary | Models are pinned by SHA-256 (detector URL pinned to a commit). Release binaries are verified against `SHA256SUMS`, and `SHA256SUMS` against the release signing key, before install. |
 | PR that weakens any of the above | The `guard` check fails any PR from someone other than the owner that touches `crates/`, the scripts, `selinux/`, `pam/`, `config/`, `.github/`, dependencies or this file. It runs from main's copy (`pull_request_target`) and never executes PR code. Only the owner's ruleset bypass can merge a flagged PR. |
 | Compromised dependency or action | Crates from crates.io only (cargo-deny), `Cargo.lock` enforced, every CI action pinned to a commit, Dependabot waits 7 days and nothing auto-merges. |
 
