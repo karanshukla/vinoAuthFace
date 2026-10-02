@@ -3,11 +3,22 @@
 //! Usernames reaching this crate end up as path components under the
 //! embeddings directory, so they are validated before use rather than
 //! trusted. Lookups go through `getent` so NSS sources (LDAP, SSSD,
-//! systemd-homed) resolve the same way the rest of the system sees them.
+//! systemd-homed) resolve the same way the rest of the system sees them: a
+//! static musl `getpwnam` would only read `/etc/passwd`.
 
 use anyhow::{bail, Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Run by absolute path, never through `PATH`, which the caller of a
+/// set-group-ID or root process may control. `/usr/bin` on every merged-`/usr`
+/// distro (Fedora, Ubuntu, Arch, the Atomic desktops); `/bin` for the rest.
+const GETENT: [&str; 2] = ["/usr/bin/getent", "/bin/getent"];
+
+fn getent() -> Command {
+    let path = GETENT.into_iter().find(|p| Path::new(p).is_file()).unwrap_or(GETENT[0]);
+    Command::new(path)
+}
 
 /// A resolved system account.
 #[derive(Debug, Clone)]
@@ -63,7 +74,7 @@ fn parse_passwd_line(line: &str) -> Option<UserInfo> {
 pub fn lookup(user: &str) -> Result<UserInfo> {
     validate_username(user)?;
 
-    let output = Command::new("getent")
+    let output = getent()
         .arg("passwd")
         .arg(user)
         .output()
@@ -99,7 +110,7 @@ pub fn current() -> Result<UserInfo> {
 /// Resolve an account by user ID, for callers handed a UID by something
 /// trusted (the kernel, pkexec) rather than a name.
 pub fn by_uid(uid: u32) -> Result<UserInfo> {
-    let output = Command::new("getent")
+    let output = getent()
         .arg("passwd")
         .arg(uid.to_string())
         .output()
@@ -155,6 +166,12 @@ mod tests {
         assert_eq!(info.name, "alice");
         assert_eq!(info.uid, 1000);
         assert_eq!(info.home, PathBuf::from("/home/alice"));
+    }
+
+    #[test]
+    fn getent_runs_by_absolute_path() {
+        let cmd = getent();
+        assert!(Path::new(cmd.get_program()).is_absolute(), "PATH must not pick getent");
     }
 
     #[test]

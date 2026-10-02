@@ -13,7 +13,8 @@ pub const DEFAULT_DETECTOR: &str = "det_500m.onnx";
 /// The box-only detector installs had before SCRFD.
 pub const LEGACY_DETECTOR: &str = "version-slim-320.onnx";
 
-/// Default embeddings location. Must stay root-owned and 0700 — see deploy.sh.
+/// Default embeddings location. Must stay root-owned (`root:face-auth`
+/// `2750`) — see deploy.sh.
 pub const DEFAULT_EMBEDDINGS_DIR: &str = "/var/lib/face-auth";
 
 // Bounds applied to every config source. A threshold near zero accepts any

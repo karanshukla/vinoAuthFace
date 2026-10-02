@@ -143,7 +143,9 @@ Auto-detect only ever considers IR-named nodes or physical greyscale sensors, an
   open it. Narrowing either requires custom udev device types. Only `xdm_t` is covered: TTY
   `login` (`local_login_t`) isn't wired by `deploy.sh`, and confined users' `sudo_t` is untested.
 - **Model integrity:** both models are pinned by SHA-256 and the detector URL is pinned to a
-  commit. `deploy.sh` aborts on mismatch. Release binaries, and the source bundle `vinoauthface-upgrade` installs from, are verified
+  commit. They're verified at install, where `deploy.sh` aborts on a mismatch, and by
+  `vinoauthface doctor`, not each time they're loaded: a model swapped in place afterwards (which
+  takes root) runs until doctor flags it. Release binaries, and the source bundle `vinoauthface-upgrade` installs from, are verified
   against the release's `SHA256SUMS`. That catches a corrupted or truncated download, not a
   compromised release: `SHA256SUMS` is published alongside the files it covers, so the trust
   anchor is GitHub over TLS.

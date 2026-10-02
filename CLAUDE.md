@@ -214,8 +214,8 @@ read from disk before allocating (`MAX_EMBEDDINGS`, `MAX_MODEL_TAG_LEN`) and rej
 non-finite values. Follow this pattern for any new per-user state file; `cameras.rs` (the
 text `<user>/cameras` list of enrolled USB IDs) is the small example.
 
-`/var/lib/face-auth` itself is root:root `0700`. Never make it user-writable: whatever can write
-a template chooses whose face unlocks the account (upstream's privesc fix, issue #25).
+`/var/lib/face-auth` itself is `root:face-auth` `2750`. Never make it user-writable: whatever can
+write a template chooses whose face unlocks the account (upstream's privesc fix, issue #25).
 
 ### Deploy/uninstall scripts
 
