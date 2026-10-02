@@ -12,7 +12,7 @@ If the bug is also in [upstream authFace](https://github.com/pfalkingham/authFac
 
 | Threat | Defence |
 |---|---|
-| Local user plants or swaps a face template | Store is root-owned `0700`, templates `0600`, enrolment needs root. `deploy.sh` re-secures an old world-writable store in place and removes planted symlinks. |
+| Local user plants or swaps a face template | Store and per-user directories are `root:face-auth` `2750`, templates `0640`, enrolment needs root. Only the per-user `lockout/` (`2770`, files `0660`) is group-writable. Nothing but the set-group-ID `vinoauthface-auth` has the `face-auth` group, so it can read every template (a bug in it exposes templates, never root) but write only lockout state. `deploy.sh` re-secures an old world-writable store in place and removes planted symlinks. |
 | Local user loosens matching via their own config or env | The PAM path reads `/etc/face-auth.toml` only and ignores `FACE_AUTH_*`. A user's config can only tighten thresholds or pick a validated IR device; paths, camera pin, lockout and backend are system policy. |
 | Wrong account's template decides the result | Identity comes from `PAM_USER` only, resolved through NSS and validated before becoming a path component. |
 | Remote session triggers the local camera | Non-local `PAM_RHOST` is refused. |
@@ -20,7 +20,7 @@ If the bug is also in [upstream authFace](https://github.com/pfalkingham/authFac
 | Spoofed USB device injecting frames | `pin-camera.sh` pins the physical port and V4L2 index; vinoauthface-auth re-checks it from sysfs on every attempt and fails closed. Auto-detect ignores virtual (v4l2loopback) nodes. |
 | Scripted retry loop | Exponential lockout after 5 failed matches, stored in the root-owned store so a user cannot reset it. |
 | Crafted template file or driver data | Every length read from disk or the driver is bounded before use; non-finite values and trailing bytes are rejected. |
-| Tampered model or release binary | Models are pinned by SHA-256 (detector URL pinned to a commit). Release binaries are verified against `SHA256SUMS` before install. |
+| Tampered model or release binary | Models are pinned by SHA-256 (detector URL pinned to a commit) and verified at install (`deploy.sh`) and by `vinoauthface doctor`, not each time they're loaded. Release binaries are verified against `SHA256SUMS` before install. |
 | PR that weakens any of the above | The `guard` check fails any PR from someone other than the owner that touches `crates/`, the scripts, `selinux/`, `pam/`, `config/`, `.github/`, dependencies or this file. It runs from main's copy (`pull_request_target`) and never executes PR code. Only the owner's ruleset bypass can merge a flagged PR. |
 | Compromised dependency or action | Crates from crates.io only (cargo-deny), `Cargo.lock` enforced, every CI action pinned to a commit, Dependabot waits 7 days and nothing auto-merges. |
 

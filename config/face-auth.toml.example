@@ -157,8 +157,9 @@ scan_duration_ms = 5000
 # with a different model.
 # model_path = "/usr/local/share/face-auth/w600k_mbf.onnx"
 
-# Template storage directory. Must be root-owned and 0700 — anything that can
-# write here can choose whose face unlocks an account.
+# Template storage directory. Must be root-owned (deploy.sh makes it
+# root:face-auth 2750) — anything that can write here can choose whose face
+# unlocks an account.
 # embeddings_dir = "/var/lib/face-auth"
 
 # Seal stored face templates to this machine's TPM (systemd-creds, no PCR

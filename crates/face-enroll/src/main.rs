@@ -116,7 +116,7 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
     // Canonical name: `getent passwd 0` would otherwise enrol into a directory "0".
     let info = user::lookup(&args.user)?;
 
-    // The system store is root-only (0700); say so up front rather
+    // The system store is root-owned; say so up front rather
     // than failing on EACCES. An explicit --embeddings-dir is the caller's business.
     let euid = unsafe { libc::geteuid() };
     if euid != 0 && args.embeddings_dir.is_none() {
