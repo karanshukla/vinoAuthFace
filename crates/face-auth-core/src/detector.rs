@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use image::DynamicImage;
 use tract_onnx::prelude::*;
 use tract_onnx::tract_hir::infer::Factoid;
@@ -238,7 +239,7 @@ impl DetectorKind {
 #[cfg_attr(feature = "npu", allow(clippy::large_enum_variant))]
 pub enum FaceDetector {
     Tract {
-        model: TypedRunnableModel<TypedModel>,
+        model: Arc<TypedRunnableModel>,
         kind: DetectorKind,
         threshold: f32,
     },
@@ -344,7 +345,7 @@ impl FaceDetector {
                 let result = model.run(tvec!(Tensor::from(input).into_tvalue()))?;
                 let outputs = result
                     .iter()
-                    .map(|t| Ok(t.to_array_view::<f32>()?.iter().copied().collect()))
+                    .map(|t| Ok(t.to_plain_array_view::<f32>()?.iter().copied().collect()))
                     .collect::<anyhow::Result<_>>()?;
                 Ok((outputs, *threshold))
             }

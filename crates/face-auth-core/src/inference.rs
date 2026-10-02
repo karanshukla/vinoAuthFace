@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tract_onnx::prelude::*;
 
 #[cfg(feature = "npu")]
@@ -9,7 +10,7 @@ const ENCODER_SIZE: i64 = 112;
 // One encoder per process, so the size gap between variants costs nothing.
 #[cfg_attr(feature = "npu", allow(clippy::large_enum_variant))]
 pub enum FaceEncoder {
-    Tract(TypedRunnableModel<TypedModel>),
+    Tract(Arc<TypedRunnableModel>),
     #[cfg(feature = "npu")]
     OpenVino {
         request: InferRequest,
@@ -74,7 +75,7 @@ impl FaceEncoder {
                 let mut input = input.to_owned().into_dyn();
                 input.insert_axis_inplace(tract_ndarray::Axis(0));
                 let result = model.run(tvec!(Tensor::from(input).into_tvalue()))?;
-                result[0].to_array_view::<f32>()?.iter().copied().collect()
+                result[0].to_plain_array_view::<f32>()?.iter().copied().collect()
             }
             #[cfg(feature = "npu")]
             Self::OpenVino { request, input_name, output_name } => {
