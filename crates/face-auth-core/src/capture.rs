@@ -545,22 +545,27 @@ pub fn name_suggests_ir(name: &str) -> bool {
         .any(|word| word == "ir" || word == "infrared")
 }
 
-/// Is this node a physical sensor streaming native greyscale?
+/// Is this node backed by real hardware rather than a virtual (v4l2loopback)
+/// device? Any local user can write frames into an existing loopback node,
+/// and its name is just a module parameter, so it is never auto-detected or
+/// accepted from a user's config, however IR-like its name. Root can still
+/// name one with `device` in the system config, e.g. for testing.
+fn is_physical(path: &str) -> bool {
+    device_bus_path(path).is_ok_and(|p| !p.contains("/virtual/"))
+}
+
+/// Does this node stream native greyscale?
 ///
 /// Catches IR sensors whose sysfs name says nothing useful (e.g. a combined
 /// module named "Integrated_Webcam_FHD: Integrat", truncated at 32 bytes).
-/// RGB webcams do not stream GREY or Y16. Virtual nodes are excluded: an
-/// existing v4l2loopback device takes whatever format its writer sets, which
-/// any local user can do.
-fn is_physical_greyscale(path: &str) -> bool {
-    let physical = device_bus_path(path).is_ok_and(|p| !p.contains("/virtual/"));
-    physical
-        && query_format(path)
-            .is_ok_and(|(_, _, fourcc)| matches!(fourcc, V4L2_PIX_FMT_GREY | V4L2_PIX_FMT_Y16))
+/// RGB webcams do not stream GREY or Y16.
+fn streams_greyscale(path: &str) -> bool {
+    query_format(path)
+        .is_ok_and(|(_, _, fourcc)| matches!(fourcc, V4L2_PIX_FMT_GREY | V4L2_PIX_FMT_Y16))
 }
 
 fn looks_like_ir(path: &str, name: &str) -> bool {
-    name_suggests_ir(name) || is_physical_greyscale(path)
+    is_physical(path) && (name_suggests_ir(name) || streams_greyscale(path))
 }
 
 /// Enumerate IR capture devices, best candidate first.
@@ -615,9 +620,9 @@ pub fn detect_ir_camera() -> Option<String> {
 /// Is `path` a real IR capture device on this machine?
 ///
 /// Lets an unprivileged setting name *which* IR sensor to use without letting
-/// it name an arbitrary video source: the device must live under `/dev`, carry
-/// an IR-looking name in sysfs or be a physical greyscale sensor, and open as a
-/// supported capture node. Selecting
+/// it name an arbitrary video source: the device must live under `/dev`, be
+/// physical hardware with an IR-looking name in sysfs or a greyscale format,
+/// and open as a supported capture node. Selecting
 /// among the sensors physically present is a preference; pointing the
 /// authentication camera at some other stream is not.
 pub fn is_ir_capture_device(path: &str) -> bool {

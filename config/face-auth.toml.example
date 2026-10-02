@@ -148,6 +148,9 @@ scan_duration_ms = 5000
 # /dev/video2 captures, /dev/video3 does not), and guessing wrong here is the
 # most common setup mistake. Run `cargo run --example detect-camera` to see
 # what your hardware exposes.
+#
+# Auto-detection never picks a virtual (v4l2loopback) camera, and a user's own
+# config can't select one. Setting it here can, which is only for testing.
 # device = "/dev/video2"
 
 # Recognition model path (default: /usr/local/share/face-auth/w600k_mbf.onnx).

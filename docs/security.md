@@ -120,8 +120,10 @@ re-verifies that identity on every authentication and enrolment, independent of 
 Opt-in ([install.md](install.md#pinning-the-camera-recommended)). This is separate from the
 presentation defences above; you want both.
 
-Auto-detect only ever considers IR-named nodes or physical greyscale sensors, and never virtual
-(v4l2loopback) nodes, whose format any local user can set.
+Auto-detect only ever considers physical IR-named or greyscale nodes, and never virtual
+(v4l2loopback) nodes, whose frames any local user can write and whose name is just a module
+parameter. A user's own `device` setting is held to the same rule. Only `device` in
+`/etc/face-auth.toml` can name a virtual node, for testing.
 
 ## Other limitations
 
