@@ -53,17 +53,23 @@ BUNDLE="vinoauthface-source.tar.gz"
 # Installed by deploy.sh from scripts/verify-release.sh.
 VERIFY_RELEASE="/usr/local/share/face-auth/verify-release.sh"
 
-# The bundle is unpacked and built as the user who ran sudo, like a checkout
-# in their home: deploy.sh compiles as that user, never as root. On disk, not
-# /tmp, which is RAM on many systems and an NPU build's target/ is gigabytes.
+# The release is downloaded, verified and unpacked by root, into a root-owned
+# directory, and deploy.sh runs from there: nothing the user can write sits
+# between the signature check and root running what was checked. deploy.sh
+# still compiles as the user who ran sudo, never as root; the sources are
+# world-readable and the build writes only to the user's TARGET_DIR.
 ACTUAL_USER="${SUDO_USER:-root}"
 ACTUAL_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
 as_user() {
     if [ "$ACTUAL_USER" != root ]; then sudo -u "$ACTUAL_USER" -H "$@"; else "$@"; fi
 }
-CACHE_DIR="$ACTUAL_HOME/.cache/vinoauthface/src"
-# One build directory for every release, outside the per-tag sources, so an
-# upgrade recompiles only what changed rather than every dependency.
+# Not under /tmp or /var/tmp: cargo and rustup look for .cargo/config.toml and
+# rust-toolchain.toml in every parent of the sources, and anyone can create
+# those in a world-writable directory. Every parent here is root's. On disk,
+# not /tmp, which is RAM on many systems.
+STAGE_PARENT="/var/cache/vinoauthface-upgrade"
+# One build directory for every release, so an upgrade recompiles only what
+# changed rather than every dependency. The user's: the build runs as them.
 TARGET_DIR="$ACTUAL_HOME/.cache/vinoauthface/target"
 
 printf '%svinoAuthFace upgrade%s\n' "$BOLD" "$RESET"
@@ -102,51 +108,56 @@ if [ "$ACTUAL_USER" = root ] \
 fi
 
 BASE="${FACE_AUTH_DEPLOY_RELEASE_BASE:-https://github.com/$RELEASE_REPO/releases/download/$TAG}"
-DEST="$CACHE_DIR/$TAG"
-as_user mkdir -p "$CACHE_DIR" "$TARGET_DIR"
-as_user rm -rf "$DEST.download"
-as_user mkdir "$DEST.download"
+as_user mkdir -p "$TARGET_DIR"
+install -d -o root -g root -m 0755 "$STAGE_PARENT"
+STAGE="$(mktemp -d "$STAGE_PARENT/XXXXXXXX")"
+trap 'rm -rf "$STAGE"; rmdir "$STAGE_PARENT" 2>/dev/null || true' EXIT
+DOWNLOAD="$STAGE/download"
+DEST="$STAGE/src"
+mkdir "$DOWNLOAD"
 
 step "downloading $BASE/$BUNDLE"
 for asset in "$BUNDLE" SHA256SUMS SHA256SUMS.minisig; do
-    if ! as_user curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
-            -o "$DEST.download/$asset" "$BASE/$asset"; then
+    if ! curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+            -o "$DOWNLOAD/$asset" "$BASE/$asset"; then
         fail "Download failed: $BASE/$asset" \
             "Releases before v6 aren't signed, and those before the upgrade command have no" \
             "source bundle: use a git checkout for those."
-        as_user rm -rf "$DEST.download"
         exit 1
     fi
 done
 # A checksum file from the same place as the bundle only catches a bad
 # download; the signature is what ties it to a release CI built.
-if ! "$VERIFY_RELEASE" "$DEST.download/SHA256SUMS" "$DEST.download/SHA256SUMS.minisig"; then
+if ! "$VERIFY_RELEASE" "$DOWNLOAD/SHA256SUMS" "$DOWNLOAD/SHA256SUMS.minisig"; then
     fail "Signature verification failed for the release's SHA256SUMS" \
         "If $VERIFY_RELEASE is missing, re-run deploy.sh from a checkout."
-    as_user rm -rf "$DEST.download"
     exit 1
 fi
 # The bundle must be listed, not just match: --ignore-missing alone would pass
 # a file SHA256SUMS never mentions.
-if ! (cd "$DEST.download" \
+if ! (cd "$DOWNLOAD" \
         && grep -E "[ *]$BUNDLE\$" SHA256SUMS > want \
         && [ "$(wc -l < want)" -eq 1 ] \
         && sha256sum -c --strict --quiet want); then
     fail "Checksum verification failed for $BUNDLE"
-    as_user rm -rf "$DEST.download"
     exit 1
 fi
 ok Download "source bundle, signature and checksum verified"
 
-as_user rm -rf "$DEST"
-as_user mkdir "$DEST"
-as_user tar -xzf "$DEST.download/$BUNDLE" -C "$DEST" --strip-components=1 --no-same-owner
-as_user rm -rf "$DEST.download"
+# Readable by the user's build, writable by root only, whatever the archive's
+# modes or the caller's umask.
+mkdir "$DEST"
+tar -xzf "$DOWNLOAD/$BUNDLE" -C "$DEST" --strip-components=1 --no-same-owner
+chmod -R u+rwX,go+rX,go-w "$DEST"
+chmod 0755 "$STAGE"
 if [ "$(cat "$DEST/VERSION" 2>/dev/null)" != "$TAG" ] || [ ! -f "$DEST/deploy.sh" ]; then
     fail "The bundle isn't the $TAG release"
-    as_user rm -rf "$DEST"
     exit 1
 fi
+
+# Sources earlier versions of this script unpacked into the user's cache. As
+# the user: root deleting inside a directory they own could be pointed elsewhere.
+as_user rm -rf -- "$ACTUAL_HOME/.cache/vinoauthface/src" 2>/dev/null || true
 
 # A --no-tray install stays one.
 DEPLOY_ARGS=()
@@ -155,9 +166,6 @@ DEPLOY_ARGS=()
 printf '\n'
 cd "$DEST"
 # Forced: the shared build directory still holds the previous release's
-# binaries, which deploy.sh would otherwise install as they are.
+# binaries, which deploy.sh would otherwise install as they are. The sources
+# are removed on exit; the build directory is kept for the next upgrade.
 CARGO_TARGET_DIR="$TARGET_DIR" FACE_AUTH_FORCE_BUILD=1 ./deploy.sh "${DEPLOY_ARGS[@]}"
-
-# The previous releases' sources aren't needed again. The build directory is
-# kept for the next upgrade.
-find "$CACHE_DIR" -mindepth 1 -maxdepth 1 ! -name "$TAG" -exec rm -rf {} +

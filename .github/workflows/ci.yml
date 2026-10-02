@@ -298,10 +298,15 @@ jobs:
           # Not signed yet: refused.
           if upgrade v999; then echo "upgraded to an unsigned release"; exit 1; fi
           minisign -S -s /tmp/release-key.sec -m /tmp/fake-release/SHA256SUMS -t "fake release"
+          # Sources an older upgrade unpacked into the user's cache.
+          mkdir -p "$HOME/.cache/vinoauthface/src/v998"
           upgrade v999
-          test "$(cat "$HOME/.cache/vinoauthface/src/v999/VERSION")" = v999
           test "$(readlink /usr/local/bin/vinoauthface-update)" = vinoauthface-upgrade
-          test "$(stat -c %U "$HOME/.cache/vinoauthface/src/v999/deploy.sh")" = "$(id -un)"
+          # Unpacked into a root-owned directory that's gone once it's done; only
+          # the build directory is in the user's cache, and it's theirs.
+          test ! -e /var/cache/vinoauthface-upgrade
+          test ! -e "$HOME/.cache/vinoauthface/src"
+          test "$(stat -c %U "$HOME/.cache/vinoauthface/target")" = "$(id -un)"
           cmp /usr/local/bin/vinoauthface-auth /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
           # Asking for v998 fetches the v999 bundle from the override: refused.
           if upgrade v998; then echo "installed a bundle for the wrong release"; exit 1; fi

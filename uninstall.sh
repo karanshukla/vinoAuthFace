@@ -64,6 +64,8 @@ rm -f /usr/local/share/applications/vinoauthface-enrol.desktop
 rm -f /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
 rm -f /usr/local/share/icons/hicolor/symbolic/apps/vinoauthface{,-scanning,-attention}-symbolic.svg
 rm -rf "$NPU_CACHE_DIR"
+# Only left behind if a vinoauthface-upgrade was killed mid-run.
+rm -rf /var/cache/vinoauthface-upgrade
 
 # Only remove the Bitwarden action if deploy.sh wrote it, not one Bitwarden
 # or the admin installed. The marker lives in $SHARE_DIR, so check first.

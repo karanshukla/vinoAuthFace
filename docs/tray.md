@@ -69,10 +69,11 @@ icon.
   with `exec.argv1`, so the login-screen mode is one action per mode rather than an argument. The
   target user comes from `PKEXEC_UID`, which pkexec sets, so there's no way to name another
   account. All seven actions are `auth_admin`.
-- **Upgrade and uninstall never touch your home.** They run as plain root with no `SUDO_USER`, so
-  the upgrade downloads and unpacks the release under root's home, where nothing you run can swap
-  it between the signature and checksum checks and `deploy.sh` running it. Upgrade only installs the newest
-  release: no version can be named.
+- **Upgrade and uninstall never touch your home.** They run as plain root with no `SUDO_USER`.
+  The upgrade unpacks the release into a root-owned directory (as it does from a terminal), so
+  nothing you run can swap it between the signature and checksum checks and `deploy.sh` running
+  it, and builds in root's home, not yours. Upgrade only installs the newest release: no version
+  can be named.
 - **Enrolment status without reading the store.** The store is closed to you, so the tray asks
   `vinoauthface-auth --enrolled`, which runs with the `face-auth` group and only answers for your own
   user ID.

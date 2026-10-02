@@ -78,9 +78,9 @@ pub fn command(verb: Verb, user: &str) -> (&'static str, Vec<String>) {
         // Run as root with no SUDO_USER, so its per-user cleanup looks in
         // root's home, not in one the caller controls.
         Verb::Uninstall => ("/bin/bash", vec![UNINSTALLER.into()]),
-        // The same: no SUDO_USER, so the release is downloaded and unpacked
-        // under root's home, never somewhere the caller could swap it between
-        // the checksum and deploy.sh running it.
+        // The same: no SUDO_USER, so the release builds as root in root's
+        // home, never in a directory the caller could write to, and what
+        // deploy.sh installs is what was built from the checked release.
         Verb::Upgrade => ("/bin/bash", vec![UPGRADER.into()]),
         Verb::LoginOff => ("/bin/bash", vec![LOGIN_MODE.into(), "off".into()]),
         Verb::LoginBoth => ("/bin/bash", vec![LOGIN_MODE.into(), "both".into()]),

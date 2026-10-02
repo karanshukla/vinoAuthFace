@@ -179,11 +179,13 @@ sudo vinoauthface-upgrade --force  # reinstall the one you're on
 `vinoauthface-update` is the same command under another name.
 
 It downloads the release's source bundle (`vinoauthface-source.tar.gz`), checks it against the
-release's `SHA256SUMS` and that file's signature, unpacks it into `~/.cache/vinoauthface/src/<tag>` and runs that release's
-own `deploy.sh`. Every upgrade is a full reinstall by the release's deploy logic, so anything a
-release changes beyond the binaries (models, config, PAM, SELinux) comes with it. A `--no-tray`
-install stays one. Older releases' unpacked sources are deleted once it succeeds, but the build
-directory, `~/.cache/vinoauthface/target`, is kept and shared by every release, so an upgrade
+release's `SHA256SUMS` and that file's signature, unpacks it into a root-owned directory under
+`/var/cache/vinoauthface-upgrade` and runs that release's own `deploy.sh` from there. Every upgrade
+is a full reinstall by the release's deploy logic, so anything a release changes beyond the
+binaries (models, config, PAM, SELinux) comes with it. A `--no-tray` install stays one. The
+sources are deleted when it finishes, and nothing you can write sits between the signature check
+and root running them. The build still runs as you, and its directory,
+`~/.cache/vinoauthface/target`, is kept and shared by every release, so an upgrade
 recompiles only vinoAuthFace's own crates, not its dependencies. It can take a few GB (more for
 an OpenVINO build); `uninstall.sh` removes it, and deleting it by hand is safe. Releases before
 the command existed have no bundle; use a checkout for those.
