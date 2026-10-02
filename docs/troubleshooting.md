@@ -79,11 +79,11 @@ If you're still in front of the camera, it sees you and unlocks. Known issue:
 
 ## Face auth never runs over SSH, or with the lid closed
 
-On purpose. Under SSH nobody is at the camera, and a built-in camera can't see through a closed
-lid, so vinoAuthFace goes straight to the password. An IR camera on a port the firmware reports as
-removable is still used with the lid shut. If yours isn't (a hub can hide it), set
-`abort_if_lid_closed = false` in `/etc/face-auth.toml`. `abort_if_ssh = false` turns the SSH check
-off.
+On purpose. Under SSH nobody is at the camera, so vinoAuthFace goes straight to the password
+(`guards.abort_if_ssh`, on by default; `false` in `/etc/face-auth.toml` turns it off). A built-in
+camera can't see through a closed lid either; `guards.abort_if_lid_closed = true` (off by default)
+skips the scan then too. An IR camera on a port the firmware reports as removable is still used
+with the lid shut. If yours isn't (a hub can hide it), leave the lid check off.
 
 ## The lock screen waits a couple of seconds before scanning
 
