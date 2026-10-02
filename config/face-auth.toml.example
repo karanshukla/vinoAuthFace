@@ -146,8 +146,9 @@ scan_duration_ms = 5000
 # IR-named node and picks the first that is really a GREY capture device. UVC
 # cameras usually expose a metadata node right next to the capture node (e.g.
 # /dev/video2 captures, /dev/video3 does not), and guessing wrong here is the
-# most common setup mistake. Run `cargo run --example detect-camera` to see
-# what your hardware exposes.
+# most common setup mistake. If none qualifies, face auth declines (no guessing
+# /dev/video0, usually the RGB webcam). Run `cargo run --example detect-camera`
+# to see what your hardware exposes.
 # device = "/dev/video2"
 
 # Recognition model path (default: /usr/local/share/face-auth/w600k_mbf.onnx).

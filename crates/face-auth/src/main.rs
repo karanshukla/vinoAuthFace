@@ -49,7 +49,9 @@ fn skip_reason(config: &FaceAuthConfig) -> Option<SkipReason> {
     }
     if config.abort_if_lid_closed() && environment::lid_closed(Path::new("/proc/acpi/button/lid")) {
         // An external IR camera still sees a docked user with the lid shut.
-        let external = capture::device_bus_path(&config.device())
+        let external = config
+            .device()
+            .and_then(|device| capture::device_bus_path(&device))
             .is_ok_and(|bus| environment::camera_is_external(Path::new(&bus)));
         if !external {
             return Some(SkipReason::LidClosed);

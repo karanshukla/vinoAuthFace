@@ -424,11 +424,12 @@ impl FaceAuthConfig {
         Ok(())
     }
 
-    pub fn device(&self) -> String {
-        self.device
-            .clone()
-            .or_else(crate::capture::detect_ir_camera)
-            .unwrap_or_else(|| "/dev/video0".to_string())
+    /// The configured camera, else the best auto-detected IR sensor. No
+    /// guess beyond that: the next node along is usually the RGB webcam, and
+    /// capture accepts its YUYV, so an IR enrolment would be matched against
+    /// colour frames. Failing here sends PAM straight to the password.
+    pub fn device(&self) -> Result<String> {
+        resolve_device(self.device.clone(), crate::capture::detect_ir_camera)
     }
 
     pub fn threshold(&self) -> f32 {
@@ -610,7 +611,7 @@ impl FaceAuthConfig {
             return Ok(());
         };
 
-        let device = self.device();
+        let device = self.device()?;
         let path = crate::capture::device_bus_path(&device)?;
         let index = crate::capture::device_capture_index(&device)?;
         if path != pinned_path || index != pinned_index {
@@ -679,6 +680,12 @@ impl FaceAuthConfig {
     }
 }
 
+fn resolve_device(configured: Option<String>, detect: impl FnOnce() -> Option<String>) -> Result<String> {
+    configured
+        .or_else(detect)
+        .ok_or_else(|| crate::error::FaceAuthError::NoCamera.into())
+}
+
 /// Read `~/.config/face-auth.toml` for the account being authenticated.
 ///
 /// Resolved through NSS rather than `$HOME`, which under `pam_exec` belongs to
@@ -732,6 +739,14 @@ mod tests {
         assert!(read_user_file(&link, me).is_err(), "symlink must not be followed");
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn no_camera_is_an_error_not_a_guess() {
+        assert!(resolve_device(None, || None).is_err(), "must not fall back to /dev/video0");
+        assert_eq!(resolve_device(None, || Some("/dev/video2".into())).unwrap(), "/dev/video2");
+        let set = resolve_device(Some("/dev/face-auth-ir".into()), || panic!("set device skips detection"));
+        assert_eq!(set.unwrap(), "/dev/face-auth-ir");
     }
 
     fn system_baseline() -> FaceAuthConfig {
