@@ -18,7 +18,9 @@ report a vulnerability, see [SECURITY.md](../SECURITY.md).
   lets a non-root caller authenticate its own account.
 - **The PAM path trusts only `/etc/face-auth.toml`.** A user's own config may make matching
   stricter, never looser, and may not redirect model or template paths, unpin the camera, or lift
-  the lockout. `FACE_AUTH_*` environment variables are ignored during authentication. Details:
+  the lockout. `FACE_AUTH_*` environment variables are ignored during authentication. Enrolment
+  as root ignores both too, so `sudo -E` can't choose the camera, model or store root writes
+  templates for, and a `--device` must be an IR sensor or the configured `device`. Details:
   [configuration.md](configuration.md).
 - **Identity comes from `PAM_USER` only.** `vinoauthface-auth` refuses to run if PAM didn't set it.
 - **Remote sessions are refused.** If `PAM_RHOST` is set to anything but `localhost` or a

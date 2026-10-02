@@ -236,8 +236,10 @@ impl FaceAuthConfig {
     /// `FACE_AUTH_*` environment overrides.
     ///
     /// Every source here is writable by whoever runs the process, so this is
-    /// for unprivileged tools only — `face-enroll` and the settings GUI. The
-    /// authentication path must use [`FaceAuthConfig::load_for_auth`].
+    /// for unprivileged tools only: the offline tools, and `face-enroll` when
+    /// not root. The authentication path must use
+    /// [`FaceAuthConfig::load_for_auth`], and anything running as root
+    /// [`FaceAuthConfig::load_system`].
     pub fn load() -> Result<Self> {
         let mut builder = Config::builder();
 
