@@ -6,10 +6,6 @@ targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
 [advisories]
 yanked = "deny"
 ignore = [
-    # time: stack exhaustion while parsing. Only reachable through liquid, a
-    # build-dependency of tract-linalg's build script, which pins time and has
-    # no fixed release on the 0.21 line. Never linked into a shipped binary.
-    { id = "RUSTSEC-2026-0009", reason = "build-script only (tract-linalg -> liquid); tract 0.21 pins time" },
     # paste: unmaintained proc-macro, no successor release. Pulled in by tract
     # and image's codec stack at compile time only.
     { id = "RUSTSEC-2024-0436", reason = "compile-time proc-macro, no safe upgrade" },

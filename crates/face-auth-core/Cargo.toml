@@ -7,7 +7,7 @@ publish.workspace = true
 
 [dependencies]
 tract-onnx = { workspace = true }
-tract-core = { version = "0.21", package = "tract-core" }
+tract-core = { version = "0.23", package = "tract-core" }
 image = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
