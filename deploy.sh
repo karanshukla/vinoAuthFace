@@ -697,9 +697,16 @@ fi
 # directory libopenvino.so lives in, so intel64/ is copied as a unit.
 if [ "$NPU_ACTIVE" = 1 ] && [ "$OPENVINO_MODE" = "archive" ]; then
     rm -rf "$OPENVINO_INSTALL_DIR"
-    mkdir -p "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb"
-    cp -a "$OPENVINO_SRC/runtime/lib/intel64/." "$OPENVINO_INSTALL_DIR/intel64/"
-    cp -a "$OPENVINO_SRC/runtime/3rdparty/tbb/lib/." "$OPENVINO_INSTALL_DIR/tbb/"
+    install -d -o root -g root -m 0755 "$OPENVINO_INSTALL_DIR" \
+        "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb"
+    # Not cp -a: the archive is the user's, and keeping its ownership would put
+    # user-writable directories on the system library path below, where every
+    # root process would load from them. Copied as root, everything is root's;
+    # the chown and chmod cover anything the archive marked group/other-writable.
+    cp -R --preserve=timestamps "$OPENVINO_SRC/runtime/lib/intel64/." "$OPENVINO_INSTALL_DIR/intel64/"
+    cp -R --preserve=timestamps "$OPENVINO_SRC/runtime/3rdparty/tbb/lib/." "$OPENVINO_INSTALL_DIR/tbb/"
+    chown -hR root:root "$OPENVINO_INSTALL_DIR"
+    chmod -R go-w "$OPENVINO_INSTALL_DIR"
     printf '%s\n' "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb" \
         > /etc/ld.so.conf.d/face-auth-openvino.conf
     command -v restorecon &>/dev/null && restorecon -R "$OPENVINO_INSTALL_DIR" 2>/dev/null || true
