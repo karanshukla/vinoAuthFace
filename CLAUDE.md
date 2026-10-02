@@ -196,8 +196,12 @@ separate PAM invocations (each `vinoauthface-auth` run is a fresh process). Only
 factor (never PAM's password fallback) and caps the actual sleep at `max_tarpit_ms`
 regardless of the computed cooldown, so a long lockout window still can't stall the password
 prompt. `authenticate_scan` only counts a scan toward failure if a face was actually detected
-during it (`face_seen`): an unattended `sudo` invocation with nobody in front of the camera
-isn't a failed *attempt*.
+during it: an unattended `sudo` invocation with nobody in front of the camera isn't a failed
+*attempt*. It counts the failure up front, when the first face is seen (`record_pending_failure`),
+and a match resets it, so a scan that errors out or is killed (the `sudo` caller can kill the
+`pam_exec` child) is still counted. Every update is load-modify-save under an exclusive `flock` on
+`lockout/state.lock`, so parallel scans don't lose increments; if another process holds it past
+`LOCK_WAIT` (`LockBusy`), the scan declines rather than run uncounted.
 
 ### On-disk formats
 

@@ -126,7 +126,9 @@ Auto-detect only ever considers IR-named nodes or physical greyscale sensors, an
 ## Other limitations
 
 - **Rate limiting covers the face factor only.** The lockout throttles repeated face attempts;
-  PAM's password fallback is untouched, so wire `pam_faillock` for that separately.
+  PAM's password fallback is untouched, so wire `pam_faillock` for that separately. A scan is
+  counted as failed the moment it sees a face and reset only by a match, so killing it (Ctrl-C at
+  `sudo`) or running several at once doesn't dodge the count.
 - **`sufficient` bypasses the rest of the auth stack.** A successful match satisfies
   authentication outright, so the strength of the stack becomes the strength of the face match.
   The vinoAuthFace line currently sits above `pam_nologin` and `pam_faillock`

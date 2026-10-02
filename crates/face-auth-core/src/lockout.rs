@@ -5,20 +5,34 @@
 //! the store: lock screens run the set-group-ID binary as the user, and it
 //! still has to record their failures. Only the face factor is throttled; PAM
 //! falls through to the password, so nobody is locked out of the machine.
+//!
+//! Every update is a load-modify-save under an exclusive `flock` on
+//! `lockout/state.lock`, so scans running in parallel each count.
 
 use crate::storage::{ensure_dir, lockout_dir, user_store_dir, LOCKOUT_DIR_MODE, LOCKOUT_FILE_MODE};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const LOCKOUT_VERSION: u32 = 1;
 const STATE_FILE: &str = "state.bin";
+const LOCK_FILE: &str = "state.lock";
+/// How long an update waits for another one. Each holder only reads and
+/// writes a few bytes, so only a stopped or hung process takes this long.
+const LOCK_WAIT: Duration = Duration::from_secs(2);
 const MAX_STATE_FILE_LEN: u64 = 64;
 /// Caps the doubling exponent so the shift cannot overflow.
 const MAX_DOUBLINGS: u32 = 20;
+
+/// Another process held the lockout state lock for all of `LOCK_WAIT`.
+/// Distinct from a failed write: a scan that can't be counted must not run.
+#[derive(Debug, thiserror::Error)]
+#[error("lockout state is held by another process")]
+pub struct LockBusy;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct LockoutState {
@@ -76,17 +90,8 @@ impl LockoutState {
         parse().unwrap_or_default()
     }
 
-    fn save(&self, user: &str, embeddings_dir: &Path) -> anyhow::Result<()> {
-        let user_dir = user_store_dir(user, embeddings_dir)?;
-        if !user_dir.is_dir() {
-            // Only enrolment creates the user directory; the group cannot.
-            anyhow::bail!("no store for '{user}'");
-        }
-        let dir = lockout_dir(&user_dir);
-        // Stores enrolled before the lockout directory existed get it here when
-        // running as root; the group alone gets a permission error.
-        ensure_dir(&dir, LOCKOUT_DIR_MODE)?;
-
+    /// Write into `dir`, the user's `lockout/`. Callers hold the lock.
+    fn save(&self, dir: &Path) -> anyhow::Result<()> {
         // Unique and never followed: the directory is group-writable, so a
         // fixed name could be pre-created or pointed elsewhere.
         let tmp_path = dir.join(format!("{STATE_FILE}.{}.tmp", std::process::id()));
@@ -108,11 +113,78 @@ impl LockoutState {
             writer.get_ref().sync_all()?;
         }
         fs::rename(&tmp_path, dir.join(STATE_FILE))?;
-        if let Ok(d) = File::open(&dir) {
+        if let Ok(d) = File::open(dir) {
             let _ = d.sync_all();
         }
         Ok(())
     }
+}
+
+/// Take the exclusive lock on `dir/state.lock`, released when the returned
+/// file is dropped. Never follows a link, for the same reason as `load`.
+///
+/// `None` if `flock` itself is refused (an SELinux policy from before this
+/// lock existed denies it to the greeters): the update then goes ahead
+/// unlocked, as it always used to.
+fn lock(dir: &Path) -> anyhow::Result<Option<File>> {
+    let path = dir.join(LOCK_FILE);
+    let open = |create: bool| {
+        OpenOptions::new()
+            .read(true)
+            .write(create)
+            .create_new(create)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .mode(LOCKOUT_FILE_MODE)
+            .open(&path)
+    };
+    let file = match open(true) {
+        Ok(file) => {
+            // The umask strips the group bits from the create mode.
+            file.set_permissions(fs::Permissions::from_mode(LOCKOUT_FILE_MODE))?;
+            file
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => open(false)?,
+        Err(e) => return Err(e.into()),
+    };
+    if !file.metadata()?.is_file() {
+        anyhow::bail!("{} is not a regular file", path.display());
+    }
+
+    let deadline = Instant::now() + LOCK_WAIT;
+    loop {
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(Some(file));
+        }
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(libc::EINTR) => {}
+            Some(libc::EWOULDBLOCK) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Some(libc::EWOULDBLOCK) => return Err(LockBusy.into()),
+            _ => {
+                tracing::warn!("cannot lock {}, updating unlocked: {err}", path.display());
+                return Ok(None);
+            }
+        }
+    }
+}
+
+/// Load, change and save `user`'s state under the lock.
+fn update(user: &str, embeddings_dir: &Path, change: impl FnOnce(&mut LockoutState)) -> anyhow::Result<()> {
+    let user_dir = user_store_dir(user, embeddings_dir)?;
+    if !user_dir.is_dir() {
+        // Only enrolment creates the user directory; the group cannot.
+        anyhow::bail!("no store for '{user}'");
+    }
+    let dir = lockout_dir(&user_dir);
+    // Stores enrolled before the lockout directory existed get it here when
+    // running as root; the group alone gets a permission error.
+    ensure_dir(&dir, LOCKOUT_DIR_MODE)?;
+    let _lock = lock(&dir)?;
+    let mut state = LockoutState::load(user, embeddings_dir);
+    change(&mut state);
+    state.save(&dir)
 }
 
 fn now_unix_ms() -> u64 {
@@ -152,16 +224,18 @@ pub fn peek(user: &str, embeddings_dir: &Path, policy: &LockoutPolicy) -> (u32, 
     (state.failures, remaining_cooldown(&state, policy))
 }
 
-/// Record a completed scan that saw a face and did not match.
+/// Count one failed attempt. Called when a scan first sees a face, before
+/// anything can match, and undone by [`record_success`] on a match. An error
+/// that is [`LockBusy`] means nothing was counted.
 pub fn record_failure(user: &str, embeddings_dir: &Path) -> anyhow::Result<()> {
-    let mut state = LockoutState::load(user, embeddings_dir);
-    state.failures = state.failures.saturating_add(1);
-    state.last_failure_unix_ms = now_unix_ms();
-    state.save(user, embeddings_dir)
+    update(user, embeddings_dir, |state| {
+        state.failures = state.failures.saturating_add(1);
+        state.last_failure_unix_ms = now_unix_ms();
+    })
 }
 
 pub fn record_success(user: &str, embeddings_dir: &Path) -> anyhow::Result<()> {
-    LockoutState::default().save(user, embeddings_dir)
+    update(user, embeddings_dir, |state| *state = LockoutState::default())
 }
 
 #[cfg(test)]
@@ -244,6 +318,56 @@ mod tests {
         assert_eq!(failures, policy.threshold);
         assert!(remaining.is_some());
         assert_eq!(LockoutState::load("alice", &dir).failures, policy.threshold);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parallel_failures_all_count() {
+        let dir = tmpdir("parallel");
+        fs::create_dir_all(dir.join("alice")).unwrap();
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let dir = dir.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..5 {
+                        record_failure("alice", &dir).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(LockoutState::load("alice", &dir).failures, 40, "no increment may be lost");
+        let mode = fs::metadata(dir.join("alice/lockout/state.lock")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7777, 0o660);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_held_lock_is_busy_not_skipped() {
+        let dir = tmpdir("busy");
+        fs::create_dir_all(dir.join("alice/lockout")).unwrap();
+        let held = lock(&dir.join("alice/lockout")).unwrap().expect("flock works here");
+        let err = record_failure("alice", &dir).unwrap_err();
+        assert!(err.is::<LockBusy>(), "{err}");
+        assert_eq!(LockoutState::load("alice", &dir).failures, 0);
+        drop(held);
+        record_failure("alice", &dir).unwrap();
+        assert_eq!(LockoutState::load("alice", &dir).failures, 1);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn lock_file_is_never_followed() {
+        let dir = tmpdir("locklink");
+        let lockout = dir.join("alice/lockout");
+        fs::create_dir_all(&lockout).unwrap();
+        let target = dir.join("elsewhere");
+        fs::write(&target, b"").unwrap();
+        std::os::unix::fs::symlink(&target, lockout.join(LOCK_FILE)).unwrap();
+        assert!(record_failure("alice", &dir).is_err());
+        assert_eq!(LockoutState::load("alice", &dir).failures, 0);
         fs::remove_dir_all(&dir).unwrap();
     }
 

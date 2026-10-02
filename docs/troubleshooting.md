@@ -104,9 +104,11 @@ is a caller with no terminal (`pkexec` from a GUI). Set it back to `false` to tu
 
 ## Face auth stopped being tried after a few failures
 
-That's the lockout. After 5 failed matches (a face was seen and rejected) vinoAuthFace skips the
-camera with a doubling cooldown, up to 5 minutes, and PAM goes straight to the password. The next
-successful face match resets it. Tune it with `lockout.*` in `/etc/face-auth.toml`.
+That's the lockout. After 5 failed attempts vinoAuthFace skips the camera with a doubling
+cooldown, up to 5 minutes, and PAM goes straight to the password. An attempt counts as failed as
+soon as the scan sees a face, so one that's cancelled or errors out still counts; a scan with
+nobody in front of the camera doesn't. The next successful face match resets it. Tune it with
+`lockout.*` in `/etc/face-auth.toml`.
 
 ## My threshold change did nothing
 

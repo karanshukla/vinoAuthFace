@@ -183,13 +183,18 @@ impl FaceAuth {
             tracing::debug!(ratio = face_box.size_ratio(), "face too small");
             return Err(FaceAuthError::NoFaceDetected.into());
         }
+        if !record_pending_failure(user, &embeddings_dir) {
+            return Ok(false);
+        }
 
         let input = face_input(&frame, &face_box)?;
         let embedding = self.encoder.encode(input.view())?;
         tracing::debug!(elapsed = ?t0.elapsed(), "authenticate_once complete");
 
         let matched = verify_embedding(&embedding, &store, self.config.threshold())?;
-        record_attempt(user, &embeddings_dir, matched);
+        if matched {
+            record_success(user, &embeddings_dir);
+        }
         Ok(matched)
     }
 
@@ -224,8 +229,9 @@ impl FaceAuth {
         let mut consecutive_errors = 0u32;
         let mut last_reject: Option<FrameQuality> = None;
         // Only a scan that saw a face counts toward lockout: an unattended
-        // `sudo` with nobody at the camera is not a failed attempt.
-        let mut face_seen = false;
+        // `sudo` with nobody at the camera is not a failed attempt. Counted
+        // on the first face, not at the end (see `record_pending_failure`).
+        let mut counted = false;
         // A match only counts once motion has been seen (see `motion_passes`).
         let motion_threshold = self.config.liveness_motion_threshold();
         let residual_threshold = self.config.liveness_residual_motion_threshold();
@@ -260,9 +266,6 @@ impl FaceAuth {
                         "scan window elapsed; no frame passed quality checks — last: {q}"
                     ),
                     None => tracing::debug!(frames = frame_num, "scan window elapsed without a match"),
-                }
-                if face_seen {
-                    record_attempt(user, &embeddings_dir, false);
                 }
                 return Ok(false);
             }
@@ -307,7 +310,12 @@ impl FaceAuth {
                 nap(deadline);
                 continue;
             }
-            face_seen = true;
+            if !counted {
+                counted = true;
+                if !record_pending_failure(user, &embeddings_dir) {
+                    return Ok(false);
+                }
+            }
 
             // The first face frame is only a baseline and is never encoded.
             // Both patches are cut with the earlier frame's box: the detector's
@@ -373,7 +381,7 @@ impl FaceAuth {
                     continue;
                 }
                 tracing::debug!(frame = frame_num, elapsed = ?t0.elapsed(), "match");
-                record_attempt(user, &embeddings_dir, true);
+                record_success(user, &embeddings_dir);
                 return Ok(true);
             }
 
@@ -534,15 +542,30 @@ impl FaceAuth {
     }
 }
 
-/// Lockout bookkeeping must never turn a result into an error: a write that
-/// fails just means the backoff does not advance this time.
-fn record_attempt(user: &str, embeddings_dir: &std::path::Path, matched: bool) {
-    let result = if matched {
-        lockout::record_success(user, embeddings_dir)
-    } else {
-        lockout::record_failure(user, embeddings_dir)
-    };
-    if let Err(e) = result {
+/// Count the attempt as failed as soon as a face is seen, before anything can
+/// match. A scan that then errors out, or is killed (whoever runs `sudo` can
+/// kill its `pam_exec` child), has already been counted; a match resets it.
+///
+/// `false` when another process holds the state lock: the scan must stop,
+/// since going on uncounted is the bypass this closes. A write that fails for
+/// any other reason never turns a result into an error; the backoff just
+/// doesn't advance this time.
+fn record_pending_failure(user: &str, embeddings_dir: &std::path::Path) -> bool {
+    match lockout::record_failure(user, embeddings_dir) {
+        Ok(()) => true,
+        Err(e) if e.is::<lockout::LockBusy>() => {
+            tracing::warn!("{e}; declining this scan");
+            false
+        }
+        Err(e) => {
+            tracing::warn!("could not update lockout state: {e}");
+            true
+        }
+    }
+}
+
+fn record_success(user: &str, embeddings_dir: &std::path::Path) {
+    if let Err(e) = lockout::record_success(user, embeddings_dir) {
         tracing::warn!("could not update lockout state: {e}");
     }
 }

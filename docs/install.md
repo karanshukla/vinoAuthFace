@@ -134,7 +134,7 @@ don't need it. `deploy.sh` installs a module, `selinux/face-auth.te` plus the la
 | `map` on the camera (`v4l_device_t`) | Frame capture |
 | `/dev/accel/*` labelled `dri_device_t`, the GPU's type | Stock policy leaves the NPU unlabelled (`device_t`), so OpenVINO can't open it |
 | Read on `/var/lib/face-auth` (`face_auth_var_lib_t`) | Templates |
-| Write on `<user>/lockout` (`face_auth_lockout_t`) | Without it the lockout never advances at the greeter |
+| Write and `lock` on `<user>/lockout` (`face_auth_lockout_t`) | Without it the lockout never advances at the greeter |
 | Read and `map` on `/var/cache/face-auth` (`face_auth_cache_t`) | The compiled NPU models |
 | `getattr` on `/usr/lib64/games` | A cold NPU cache recompiles, and the driver's compiler stats every directory there |
 

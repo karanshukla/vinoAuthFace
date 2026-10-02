@@ -100,7 +100,8 @@ scan_duration_ms = 5000
 # ---------------------------------------------------------------------------
 # Lockout
 # ---------------------------------------------------------------------------
-# Backoff after repeated failed face matches (a face was seen and rejected).
+# Backoff after repeated failed face attempts. A scan counts as failed once it
+# sees a face, unless it then matches; one with nobody at the camera doesn't.
 # Only throttles the face check: PAM still falls through to the password
 # prompt, and a locked-out attempt sleeps at most 3s before doing so.
 # System policy only; ignored in a user's own config.
