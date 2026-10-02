@@ -50,6 +50,13 @@ sudo vinoauthface-auth --warm-cache
 The selected device isn't an IR sensor: it's an ordinary RGB webcam, or the metadata node next to
 the real capture node. Let auto-detection pick one, or check `vinoauthface-camera-diag list`.
 
+## "no IR camera found"
+
+`device` is unset and auto-detection found no IR-named node or physical greyscale sensor that
+opens as a capture device. Face auth declines and PAM goes straight to the password; it no longer
+falls back to `/dev/video0`, which is usually the RGB webcam. Check the camera is connected and
+shows up in `vinoauthface-camera-diag list`, or set `device` in `/etc/face-auth.toml`.
+
 ## "camera identity mismatch"
 
 The camera is pinned and `device` now resolves to a different physical port or node. If you

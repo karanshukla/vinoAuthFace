@@ -72,7 +72,8 @@ edit `/etc/face-auth.toml` as root.
 UVC cameras normally expose a metadata node right beside the capture node under the same name
 (`/dev/video2` captures, `/dev/video3` doesn't). Auto-detection opens each candidate and takes the
 first that really is a capture device in a supported format. A hand-written path often gets this
-wrong. `pin-camera.sh` sets `device` for you.
+wrong. `pin-camera.sh` sets `device` for you. If nothing qualifies, there's no fallback node: face
+auth declines and PAM asks for the password.
 
 ## Enrolment
 

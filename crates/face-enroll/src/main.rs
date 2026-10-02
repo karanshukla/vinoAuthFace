@@ -144,9 +144,10 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
         config.threshold = Some(threshold);
     }
     config.validate()?;
+    let device = config.device()?;
 
     println!("Enrolling '{}'", info.name);
-    println!("  camera:     {}", config.device());
+    println!("  camera:     {device}");
     println!("  model:      {}", config.model_path());
     println!("  templates:  {}", config.embeddings_dir().display());
     if config.seal_embeddings() {
@@ -156,7 +157,6 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
     println!();
 
     let pinned = config.pinned_camera_path.is_some();
-    let device = config.device();
     let mut auth = FaceAuth::new(config)?;
 
     let mut progress = |p: EnrollProgress| match p {

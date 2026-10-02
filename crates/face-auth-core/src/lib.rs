@@ -137,7 +137,7 @@ impl FaceAuth {
             return Ok(());
         }
         let enrolled = cameras::load(user, &self.config.embeddings_dir())?;
-        let device = self.config.device();
+        let device = self.config.device()?;
         cameras::check(&enrolled, cameras::camera_id(&device).as_deref(), &device)
     }
 
@@ -162,7 +162,7 @@ impl FaceAuth {
 
         let t1 = Instant::now();
         let frame = crate::capture::capture_ir_frame(
-            &self.config.device(),
+            &self.config.device()?,
             self.config.capture_timeout_ms(),
         )?;
         tracing::debug!(elapsed = ?t1.elapsed(), "frame captured");
@@ -216,7 +216,7 @@ impl FaceAuth {
         self.check_model_tag(&store)?;
         tracing::debug!(elapsed = ?t0.elapsed(), "store loaded");
 
-        let mut cam = Camera::open(&self.config.device())?;
+        let mut cam = Camera::open(&self.config.device()?)?;
         tracing::debug!(elapsed = ?t0.elapsed(), "camera open");
 
         let mut deadline = Instant::now() + Duration::from_millis(duration_ms);
@@ -474,7 +474,7 @@ impl FaceAuth {
         self.config.verify_pinned_camera()?;
         crate::storage::check_room(0, frames)?;
         let mut store = EmbeddingStore::default();
-        let device = self.config.device();
+        let device = self.config.device()?;
         let mut cam = Camera::open(&device)?;
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms, progress)?;
 
@@ -518,7 +518,7 @@ impl FaceAuth {
 
         let existing = store.embeddings.len();
         crate::storage::check_room(existing, frames)?;
-        let device = self.config.device();
+        let device = self.config.device()?;
         let mut cam = Camera::open(&device)?;
         self.capture_embeddings(&mut cam, &mut store, frames, interval_ms, progress)?;
 
