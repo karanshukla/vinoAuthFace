@@ -15,7 +15,7 @@ If the bug is also in [upstream authFace](https://github.com/pfalkingham/authFac
 | Local user plants or swaps a face template | Store is root-owned `0700`, templates `0600`, enrolment needs root. `deploy.sh` re-secures an old world-writable store in place and removes planted symlinks. |
 | Local user loosens matching via their own config or env | The PAM path reads `/etc/face-auth.toml` only and ignores `FACE_AUTH_*`. A user's config can only tighten thresholds or pick a validated IR device; paths, camera pin, lockout and backend are system policy. |
 | Wrong account's template decides the result | Identity comes from `PAM_USER` only, resolved through NSS and validated before becoming a path component. |
-| Remote session triggers the local camera | Non-local `PAM_RHOST` is refused. |
+| Remote session triggers the local camera | A `PAM_RHOST` other than empty, `localhost` or a loopback IP address is refused. `sudo` doesn't set it, so the scan is also skipped when an ancestor process is `sshd` (`abort_if_ssh`, on by default). Not covered: a `tmux`/`screen` session started over SSH and reattached, or a remote desktop session; `guards.seat_check` (opt-in) narrows the latter to the account at the seat. |
 | Photo or screen held up to the camera | Active-NIR camera: screens emit no usable IR. Motion liveness rejects a rigidly held image. |
 | Spoofed USB device injecting frames | `pin-camera.sh` pins the physical port and V4L2 index; vinoauthface-auth re-checks it from sysfs on every attempt and fails closed. Auto-detect ignores virtual (v4l2loopback) nodes. |
 | Scripted retry loop | Exponential lockout after 5 failed matches, stored in the root-owned store so a user cannot reset it. |

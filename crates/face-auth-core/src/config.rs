@@ -645,15 +645,17 @@ impl FaceAuthConfig {
     }
 
     /// Only authenticate the user who owns the active seat0 session. See
-    /// `seat::check`.
+    /// `seat::check`. Default off: it refuses root as the target (sudo's
+    /// `targetpw`, polkit set to ask for root), which some installs rely on.
     pub fn seat_check(&self) -> bool {
         self.seat_check.unwrap_or(false)
     }
 
     /// Skip the scan when face-auth runs under an SSH session. See
-    /// `environment::under_ssh`.
+    /// `environment::under_ssh`. Default on: sudo doesn't set `PAM_RHOST`, so
+    /// without this a `sudo` typed over SSH scans the camera at the desk.
     pub fn abort_if_ssh(&self) -> bool {
-        self.abort_if_ssh.unwrap_or(false)
+        self.abort_if_ssh.unwrap_or(true)
     }
 
     /// Skip the scan when the lid is closed and the camera is built in. See
@@ -814,6 +816,12 @@ mod tests {
         let mut cfg: FaceAuthConfig = toml::from_str(toml_src).unwrap();
         cfg.fold_sections().unwrap();
         cfg
+    }
+
+    #[test]
+    fn ssh_guard_is_on_by_default() {
+        assert!(FaceAuthConfig::default().abort_if_ssh());
+        assert!(!parse("guards.abort_if_ssh = false\n").abort_if_ssh());
     }
 
     #[test]
