@@ -116,7 +116,7 @@ fn audit(priority: libc::c_int, msg: &str) {
 /// borrowed privileges: the set-group-ID `face-auth` group for lock screens
 /// that run as the user (KScreenLocker, swaylock), or root from sudo's own
 /// set-user-ID process. Only what `pam_exec` sets survives, and `PATH` is
-/// pinned because `user::lookup` runs `getent` through it.
+/// pinned for anything that might still search it.
 fn scrub_caller_environment() {
     let borrowed = unsafe { libc::getuid() != libc::geteuid() || libc::getgid() != libc::getegid() };
     if !borrowed {
