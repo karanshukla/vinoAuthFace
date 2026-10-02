@@ -23,7 +23,7 @@ the release's `SHA256SUMS`. Build from source for an unreleased change or the NP
 | Binaries | Installs to `/usr/local/bin` | `vinoauthface-auth` (set-group-ID `face-auth`, see [security.md](security.md#trust-model)) and `vinoauthface`, plus its bash, zsh and fish completions under `/usr/local/share` (regenerate with `vinoauthface completions bash`, `zsh` or `fish`) |
 | Models | Downloads and SHA-256 verifies | Recognition model (`w600k_r50.onnx` for an NPU build, `w600k_mbf.onnx` otherwise) and the `det_500m.onnx` (SCRFD) detector, to `/usr/local/share/face-auth/`. Installing the detector over an older install means re-enrolling; `deploy.sh` says so. A copy in `models/` is used first, and verified too |
 | Config | Installs default config | `/etc/face-auth.toml`, kept if it already exists; the deploy appends any settings from `config/face-auth.toml.example` it lacks, commented out at their defaults |
-| PAM | Patches PAM service files | See [pam.md](pam.md). Each file is backed up with a `.face-auth.bak` suffix |
+| PAM | Patches PAM service files | See [pam.md](pam.md). Each file is backed up with a `.face-auth.bak` suffix (for you; `uninstall.sh` strips the line instead of restoring it) |
 | Bitwarden | Only if installed | Adds Bitwarden's polkit unlock action |
 | SELinux | Compiles and loads policy | Lets the greeters (`xdm_t`) use the camera, NPU, template store and lockout state. See [SELinux](#selinux) |
 | NPU cache | Empties and refills it | `/var/cache/face-auth`, root-owned. Emptied because a new model or driver leaves stale entries, then refilled with `vinoauthface-auth --warm-cache` (NPU builds only) |
@@ -221,6 +221,8 @@ sudo ./uninstall.sh           # binaries, models, config, PAM changes, camera pi
 sudo ./uninstall.sh --purge   # ...plus face templates and the face-auth group
 ```
 
-This restores the PAM backups, removes a PAM override (`polkit-1`, KDE, COSMIC) only if `deploy.sh` created it, and
-removes the Bitwarden action only if `deploy.sh` installed it. It also cleans up leftovers from
-older installs that had the GTK GUI.
+PAM goes first, before any binary is removed: it strips the vinoAuthFace line from each service
+and deletes the `.face-auth.bak` backups rather than restoring them, so edits made since the
+install (a distro update, your own) are kept. It removes a PAM override (`polkit-1`, KDE, COSMIC)
+only if `deploy.sh` created it, and removes the Bitwarden action only if `deploy.sh` installed
+it. It also cleans up leftovers from older installs that had the GTK GUI.
