@@ -107,9 +107,23 @@ mod tests {
     fn shows_then_erases() {
         let (mut master, slave) = pty();
         drop(ScanPrompt::on(Some(slave)));
-        let mut out = [0u8; 128];
-        let n = master.read(&mut out).unwrap();
-        let text = String::from_utf8_lossy(&out[..n]);
+        // The message and the clear are two writes, and can arrive in two
+        // reads. Read until the clear shows up, with a deadline in case it
+        // never does.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut text = Vec::new();
+            let mut buf = [0u8; 128];
+            while !text.ends_with(CLEAR.as_bytes()) {
+                match master.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => text.extend_from_slice(&buf[..n]),
+                }
+            }
+            let _ = tx.send(text);
+        });
+        let text = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("clear never arrived");
+        let text = String::from_utf8_lossy(&text);
         assert!(text.starts_with(MESSAGE), "{text:?}");
         assert!(text.ends_with(CLEAR), "{text:?}");
     }
