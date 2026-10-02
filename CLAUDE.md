@@ -50,7 +50,7 @@ cargo deny check
 - `ci.yml`'s `npu` job builds, lints and tests the `npu` feature against an OpenVINO that
   ovfetch provisions, then runs the ovfetch deploy path (compiling on OpenVINO's CPU plugin,
   since runners have no NPU). It isn't a required check. `release.yml` still ships musl only.
-- `guard.yml` fails any non-owner PR touching security-relevant paths (see SECURITY.md). It runs
+- `guard.yml` fails any non-owner PR touching anything outside its prose allow-list (see SECURITY.md). It runs
   from main's copy via `pull_request_target`, so changes to it only take effect once merged.
 - The `main` ruleset requires a PR plus `test`, `clippy`, `deny`, `deploy-script` and `guard`.
   Dependabot PRs always trip `guard` by design and merge through the owner bypass.

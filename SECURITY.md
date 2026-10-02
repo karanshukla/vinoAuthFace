@@ -21,7 +21,7 @@ If the bug is also in [upstream authFace](https://github.com/pfalkingham/authFac
 | Scripted retry loop | Exponential lockout after 5 failed matches, stored in the root-owned store so a user cannot reset it. |
 | Crafted template file or driver data | Every length read from disk or the driver is bounded before use; non-finite values and trailing bytes are rejected. |
 | Tampered model or release binary | Models are pinned by SHA-256 (detector URL pinned to a commit). Release binaries are verified against `SHA256SUMS` before install. |
-| PR that weakens any of the above | The `guard` check fails any PR from someone other than the owner that touches `crates/`, the scripts, `selinux/`, `pam/`, `config/`, `.github/`, dependencies or this file. It runs from main's copy (`pull_request_target`) and never executes PR code. Only the owner's ruleset bypass can merge a flagged PR. |
+| PR that weakens any of the above | The `guard` check fails any PR from someone other than the owner that touches anything but prose (`docs/`, `README.md`, `CHANGELOG.md`, `LICENSE`, issue templates): code, scripts, policy, config, CI, build settings and this file are all protected, and so is any new path. It also fails if it can't read the PR's complete file list. It runs from main's copy (`pull_request_target`) and never executes PR code. Only the owner's ruleset bypass can merge a flagged PR. |
 | Compromised dependency or action | Crates from crates.io only (cargo-deny), `Cargo.lock` enforced, every CI action pinned to a commit, Dependabot waits 7 days and nothing auto-merges. |
 
 ## What it does not defend against

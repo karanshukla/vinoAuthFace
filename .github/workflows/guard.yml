@@ -1,10 +1,12 @@
 name: Guard
 
-# Fails any PR from someone other than the owner that touches what decides
-# who gets authenticated: the Rust sources, the install/uninstall/pin scripts
-# (they write PAM stacks, the template store and SELinux policy), the default
-# config, dependencies, CI, or security policy. `guard` is a required check, so
-# such a PR can only merge through the owner's ruleset bypass.
+# Fails any PR from someone other than the owner that touches anything outside
+# a short allow-list of prose (docs/, README, changelog, licence, issue
+# templates). Everything else either decides who gets authenticated, runs as
+# root at install time, or shapes the build or the release bundle, and new
+# files are protected until someone deliberately allows them. `guard` is a
+# required check, so such a PR can only merge through the owner's ruleset
+# bypass.
 #
 # pull_request_target runs THIS file from main, never the PR's copy, so a PR
 # cannot edit the guard to pass itself. That trigger is only safe because
@@ -13,7 +15,8 @@ name: Guard
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # edited: retargeting the base branch changes the diff without a push.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
 
 permissions: {}
 
@@ -29,6 +32,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           OWNER: karanshukla
         run: |
@@ -38,15 +42,37 @@ jobs:
             exit 0
           fi
 
+          # The files endpoint stops at 3000 entries and reads whatever the
+          # head is at the time, so check the PR's own count and head on both
+          # sides of it. A push mid-check, or a list that can't be complete,
+          # fails; the next run (or a rerun) decides.
+          pr_state() {
+            gh api "repos/$REPO/pulls/$PR" --jq '[.head.sha, .changed_files] | @tsv'
+          }
+          IFS=$'\t' read -r head expected < <(pr_state)
           gh api --paginate "repos/$REPO/pulls/$PR/files" \
             --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > files.tsv
+          IFS=$'\t' read -r head_after expected_after < <(pr_state)
+          if [ "$head" != "$HEAD_SHA" ] || [ "$head_after" != "$HEAD_SHA" ] \
+            || [ "$expected" != "$expected_after" ]; then
+            echo "::error::PR head moved off $HEAD_SHA during the check; rerun it."
+            exit 1
+          fi
+          read_rows=$(wc -l < files.tsv)
+          if [ "$expected" -ge 3000 ] || [ "$read_rows" -ne "$expected" ]; then
+            echo "::error::Read $read_rows of $expected changed files; can't check a partial list."
+            exit 1
+          fi
 
+          # Allow-list, not deny-list: a path is protected unless it's prose
+          # nothing builds, installs or executes. Scripts, .cargo/, the
+          # toolchain file and .gitattributes (git archive honours
+          # export-ignore and export-subst for the source bundle) all count.
           sensitive() {
             case "$1" in
-              crates/* | pam/* | selinux/* | config/* | .github/* \
-              | deploy.sh | update.sh | uninstall.sh | pin-camera.sh | login-mode.sh \
-              | Cargo.toml | Cargo.lock | deny.toml | SECURITY.md) return 0 ;;
-              *) return 1 ;;
+              docs/* | README.md | CHANGELOG.md | LICENSE \
+              | .github/ISSUE_TEMPLATE/* | .github/FUNDING.yml) return 1 ;;
+              *) return 0 ;;
             esac
           }
 
@@ -71,5 +97,7 @@ jobs:
             echo
             printf -- '- `%s`\n' "${flagged[@]}"
           } >> "$GITHUB_STEP_SUMMARY"
-          printf '::error::%s changed protected path %s\n' "$AUTHOR" "${flagged[@]}"
+          for path in "${flagged[@]}"; do
+            echo "::error::$AUTHOR changed protected path $path"
+          done
           exit 1
