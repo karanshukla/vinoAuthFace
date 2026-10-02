@@ -31,9 +31,10 @@
 #   liveness.window_ms, bind_camera, seal_embeddings, guards.*
 #                                   ignored — system policy only
 #
-# FACE_AUTH_* environment variables affect the vinoauthface CLI and the offline
-# tools, under the flat names (FACE_AUTH_LIVENESS_MOTION_THRESHOLD). They are
-# ignored entirely during PAM authentication.
+# FACE_AUTH_* environment variables affect the vinoauthface CLI run as a normal
+# user and the offline tools, under the flat names
+# (FACE_AUTH_LIVENESS_MOTION_THRESHOLD). They are ignored entirely during PAM
+# authentication, and by enrolment as root, which reads this file only.
 
 # ---------------------------------------------------------------------------
 # Everyday settings
