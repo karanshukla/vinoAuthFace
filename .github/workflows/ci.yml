@@ -59,8 +59,13 @@ jobs:
 
       # --locked: build against exactly what's committed in Cargo.lock, erroring loudly if it's
       # out of date instead of silently re-resolving to something never actually tested locally.
+      # One at a time: bash -n parses only its first argument, the rest are its $@.
       - name: Syntax-check shell scripts
-        run: bash -n deploy.sh uninstall.sh pin-camera.sh
+        run: |
+          for script in deploy.sh uninstall.sh pin-camera.sh update.sh upgrade.sh login-mode.sh \
+              install.sh scripts/*.sh; do
+            bash -n "$script"
+          done
 
       - name: Run unit tests
         run: cargo test --workspace --locked

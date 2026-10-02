@@ -67,7 +67,9 @@ npu` and sets `backend = "openvino"` in `/etc/face-auth.toml`. Pick the device w
 ovfetch is the recommended one. It picks the OpenVINO build your NPU and its installed driver
 need, and refuses anything whose hash independent sources don't agree on. It installs to
 `/usr/local/lib/face-auth/openvino`, and later deploys only download again when a different build
-resolves. Install it with `cargo install ovfetch --locked`, or grab the attested binary from its
+resolves. ovfetch runs as you, into a staging directory; once root has copied that into place,
+`deploy.sh` checks every file against ovfetch's `SHA256SUMS` and removes the directory if anything
+doesn't match or isn't listed (face unlock then falls back to the password). Install it with `cargo install ovfetch --locked`, or grab the attested binary from its
 releases.
 
 If the NPU driver has no compiler library (Fedora's 1.32.0 rpm ships none), OpenVINO can't compile
