@@ -3,11 +3,18 @@ set -euo pipefail
 
 PURGE=false
 
+USAGE="Usage: sudo ./uninstall.sh [--purge]"
 for arg in "$@"; do
     case "$arg" in
         --purge) PURGE=true ;;
+        *) printf 'Unknown option %s\n%s\n' "'$arg'" "$USAGE" >&2; exit 1 ;;
     esac
 done
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Run this with sudo: it removes files from /usr/local, /etc and /var/lib." >&2
+    exit 1
+fi
 
 # ---- Detect actual user (handles sudo) ----
 if [ -n "${SUDO_USER:-}" ]; then
@@ -44,6 +51,53 @@ else
     APP_DIR="${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/applications"
     GUI_DATA_DIR="${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/face-auth-gtk"
 fi
+
+# PAM first, while the binaries are still there. A required line (login-mode
+# both) pointing at a missing vinoauthface-auth fails every login, so if
+# anything below stops the script, PAM must already be clean. No `|| true`
+# on the edits for the same reason: better to stop here with the binaries
+# in place than carry on and remove them.
+echo "Removing vinoAuthFace from PAM configs..."
+for service in $PAM_SERVICES; do
+    conf="$PAM_DIR/$service"
+    marker="$PAM_DIR/.face-auth-$service-created"
+    if [ -f "$marker" ]; then
+        # deploy.sh created this override from the vendor default. Remove it
+        # only if it is still what deploy.sh wrote; if the user has edited
+        # it since, strip our line and keep their changes. A marker with no
+        # recorded hash (older deploy) falls back to comparing against the
+        # vendor file once our line is gone.
+        recorded=$(cat "$marker" 2>/dev/null)
+        if [ -n "$recorded" ]; then
+            unchanged=false
+            [ "$(sha256sum "$conf" 2>/dev/null | cut -d' ' -f1)" = "$recorded" ] && unchanged=true
+        else
+            unchanged=false
+            if [ -f "/usr/lib/pam.d/$service" ] && [ -f "$conf" ] \
+               && sed '/pam_exec\.so.*face-auth/d' "$conf" | cmp -s - "/usr/lib/pam.d/$service"; then
+                unchanged=true
+            fi
+        fi
+        if [ "$unchanged" = true ] || [ ! -f "$conf" ]; then
+            rm -f "$conf" "$conf.face-auth.bak" "$marker"
+            echo "Removed $conf (created by vinoAuthFace)"
+        else
+            sed -i '/pam_exec\.so.*face-auth/d' "$conf"
+            rm -f "$conf.face-auth.bak" "$marker"
+            echo "Kept $conf (edited since deploy); removed only the vinoAuthFace line"
+        fi
+        continue
+    fi
+    # Strip our line rather than restoring the .face-auth.bak: the backup is
+    # from before deploy.sh's last run, so putting it back would undo any
+    # distro update or admin edit since. Anchored to our own stanza: a bare
+    # /face-auth/d would delete any unrelated line that happens to mention it.
+    if [ -f "$conf" ]; then
+        sed -i '/pam_exec\.so.*face-auth/d' "$conf"
+        echo "Cleaned $conf"
+    fi
+    rm -f "$conf.face-auth.bak"
+done
 
 echo "Removing binaries..."
 rm -f "$BIN_DIR/vinoauthface-auth" "$BIN_DIR/face-auth"
@@ -89,8 +143,15 @@ rm -rf "$SHARE_DIR"
 echo "Removing config..."
 rm -f "$CONFIG_DIR/face-auth.toml"
 
-# Release sources vinoauthface-upgrade unpacked, and its build directory.
-rm -rf "$ACTUAL_HOME/.cache/vinoauthface"
+# Release sources vinoauthface-upgrade unpacked, and its build directory. As
+# the user under sudo: the path is in their home, so root resolving it could
+# be steered elsewhere by a symlinked ~/.cache.
+if [ -n "${SUDO_USER:-}" ]; then
+    sudo -u "$SUDO_USER" -H rm -rf -- "$ACTUAL_HOME/.cache/vinoauthface" \
+        || echo "Could not remove $ACTUAL_HOME/.cache/vinoauthface; delete it by hand." >&2
+else
+    rm -rf -- "$ACTUAL_HOME/.cache/vinoauthface"
+fi
 
 if [ -f /etc/udev/rules.d/99-face-auth-camera.rules ]; then
     echo "Removing pinned-camera udev rule..."
@@ -110,49 +171,6 @@ rm -f "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/icons/hicolor/scalable/apps/c
 rm -rf "$GUI_DATA_DIR"
 rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/face-auth-gtk"
 rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/gnome-shell/extensions/authface-scan-indicator@samvivan.local"
-
-echo "Restoring PAM configs..."
-for service in $PAM_SERVICES; do
-    conf="$PAM_DIR/$service"
-    marker="$PAM_DIR/.face-auth-$service-created"
-    if [ -f "$marker" ]; then
-        # deploy.sh created this override from the vendor default. Remove it
-        # only if it is still what deploy.sh wrote; if the user has edited
-        # it since, strip our line and keep their changes. A marker with no
-        # recorded hash (older deploy) falls back to comparing against the
-        # vendor file once our line is gone.
-        recorded=$(cat "$marker" 2>/dev/null)
-        if [ -n "$recorded" ]; then
-            unchanged=false
-            [ "$(sha256sum "$conf" 2>/dev/null | cut -d' ' -f1)" = "$recorded" ] && unchanged=true
-        else
-            unchanged=false
-            if [ -f "/usr/lib/pam.d/$service" ] && [ -f "$conf" ] \
-               && sed '/pam_exec\.so.*face-auth/d' "$conf" | cmp -s - "/usr/lib/pam.d/$service"; then
-                unchanged=true
-            fi
-        fi
-        if [ "$unchanged" = true ] || [ ! -f "$conf" ]; then
-            rm -f "$conf" "$conf.face-auth.bak" "$marker"
-            echo "Removed $conf (created by vinoAuthFace)"
-        else
-            sed -i '/pam_exec\.so.*face-auth/d' "$conf" 2>/dev/null || true
-            rm -f "$conf.face-auth.bak" "$marker"
-            echo "Kept $conf (edited since deploy); removed only the vinoAuthFace line"
-        fi
-        continue
-    fi
-    [ -f "$conf" ] || continue
-    if [ -f "$conf.face-auth.bak" ]; then
-        mv "$conf.face-auth.bak" "$conf"
-        echo "Restored $conf from backup"
-    else
-        # Anchored to our own stanza: a bare /face-auth/d would delete any
-        # unrelated line that happens to mention it.
-        sed -i '/pam_exec\.so.*face-auth/d' "$conf" 2>/dev/null || true
-        echo "Cleaned $conf"
-    fi
-done
 
 echo "Removing SELinux policy module..."
 semodule -r face_auth 2>/dev/null || true
