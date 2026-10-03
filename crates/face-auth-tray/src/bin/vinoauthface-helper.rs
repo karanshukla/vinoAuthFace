@@ -16,7 +16,7 @@ fn main() {
     if unsafe { libc::geteuid() } != 0 {
         die("run this through pkexec");
     }
-    // getent, below, runs through PATH.
+    // Nothing here should search PATH, but pin it anyway.
     std::env::set_var("PATH", SAFE_PATH);
 
     let args: Vec<String> = std::env::args().skip(1).collect();

@@ -11,12 +11,17 @@ on:
       - "v*"
   workflow_dispatch: {}
 
-permissions:
-  contents: write
+# Two jobs so the write token never shares a runner with the build. Dependency build scripts
+# and proc macros run during `cargo build`, so `build` gets a read-only token and no
+# rust-cache (a restored cache is state other workflows wrote). `publish` only downloads
+# the finished files and attaches them to the release.
+permissions: {}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -25,8 +30,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: x86_64-unknown-linux-musl
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       # musl-tools: musl-gcc, needed to link the static target. cmake: required by a transitive
       # dependency of vinoauthface-similarity-check's image-decoding stack.
@@ -57,21 +60,32 @@ jobs:
             -o dist/vinoauthface-source.tar.gz HEAD
           (cd dist && sha256sum -- * > SHA256SUMS)
 
-      # Manual/branch runs just verify the build succeeds and leave artifacts attached to the
-      # workflow run — only an actual tag push publishes a release, so a test run can't create
+      # Every run uploads dist/. Manual/branch runs stop there and leave it attached to the
+      # workflow run; only an actual tag push publishes a release, so a test run can't create
       # or clobber one.
-      - name: Upload build artifact (manual/dry runs)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: vinoauthface-binaries
           path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: vinoauthface-binaries
+          path: dist
 
       # Full releases (not pre-releases) since v2, so GitHub's "latest" and the repo sidebar
       # point at them and releases/latest/download/... URLs resolve. Revert to prerelease: true
       # deliberately if a release shouldn't be offered as the current one.
       - name: Publish release assets
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

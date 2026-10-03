@@ -59,8 +59,13 @@ jobs:
 
       # --locked: build against exactly what's committed in Cargo.lock, erroring loudly if it's
       # out of date instead of silently re-resolving to something never actually tested locally.
+      # One at a time: bash -n parses only its first argument, the rest are its $@.
       - name: Syntax-check shell scripts
-        run: bash -n deploy.sh uninstall.sh pin-camera.sh
+        run: |
+          for script in deploy.sh uninstall.sh pin-camera.sh update.sh upgrade.sh login-mode.sh \
+              install.sh scripts/*.sh; do
+            bash -n "$script"
+          done
 
       - name: Run unit tests
         run: cargo test --workspace --locked
@@ -200,15 +205,26 @@ jobs:
 
       # deploy.sh records the sha256 of each vendor copy it created. A copy the
       # user edited afterwards must survive uninstall (minus our line); an
-      # untouched one is deleted.
+      # untouched one is deleted. A file deploy.sh only patched keeps edits
+      # made since: uninstall strips our line rather than restoring the .bak.
       - name: Reset install
         run: |
+          refuses() { if "$@"; then echo "uninstall accepted: $*"; exit 1; fi; }
+          refuses ./uninstall.sh
+          refuses sudo ./uninstall.sh --purgee
+          grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/sudo
+          test -f /etc/pam.d/sudo.face-auth.bak
           test -s /etc/pam.d/.face-auth-cosmic-greeter-created
           echo 'auth       optional     pam_permit.so' | sudo tee -a /etc/pam.d/cosmic-greeter
+          echo '# edited after deploy' | sudo tee -a /etc/pam.d/sudo
           sudo ./uninstall.sh
+          grep -q 'edited after deploy' /etc/pam.d/sudo
+          if grep -q face-auth /etc/pam.d/sudo; then exit 1; fi
+          test ! -e /etc/pam.d/sudo.face-auth.bak
+          sudo sed -i '/edited after deploy/d' /etc/pam.d/sudo
           test -f /etc/pam.d/cosmic-greeter
           grep -q pam_permit /etc/pam.d/cosmic-greeter
-          ! grep -q face-auth /etc/pam.d/cosmic-greeter
+          if grep -q face-auth /etc/pam.d/cosmic-greeter; then exit 1; fi
           test ! -e /etc/pam.d/.face-auth-cosmic-greeter-created
           sudo rm /etc/pam.d/cosmic-greeter
           test ! -e /etc/pam.d/kde-fingerprint

@@ -14,7 +14,10 @@ pub enum FaceAuthError {
     #[error("Verification failed: {0}")]
     VerificationFailed(String),
 
-    #[error("No IR camera found")]
+    #[error(
+        "no IR camera found: auto-detect matched no IR or greyscale capture node; check \
+         `vinoauthface-camera-diag list` and set `device` in /etc/face-auth.toml"
+    )]
     NoCamera,
 
     #[error("Camera busy")]

@@ -116,7 +116,7 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
     // Canonical name: `getent passwd 0` would otherwise enrol into a directory "0".
     let info = user::lookup(&args.user)?;
 
-    // The system store is root-only (0700); say so up front rather
+    // The system store is root-owned; say so up front rather
     // than failing on EACCES. An explicit --embeddings-dir is the caller's business.
     let euid = unsafe { libc::geteuid() };
     if euid != 0 && args.embeddings_dir.is_none() {
@@ -129,9 +129,16 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
         );
     }
 
-    let mut config = FaceAuthConfig::load()?;
+    // As root, only root's own choices count: /etc/face-auth.toml and this
+    // command line. `sudo -E` or doas `keepenv` would otherwise let the
+    // caller's ~/.config/face-auth.toml and FACE_AUTH_* pick the camera, model
+    // and store root writes templates for.
+    let mut config = if euid == 0 { FaceAuthConfig::load_system()? } else { FaceAuthConfig::load()? };
 
     if let Some(device) = args.device {
+        if euid == 0 {
+            check_device(&device, config.device.as_deref(), face_auth_core::capture::is_ir_capture_device)?;
+        }
         config.device = Some(device);
     }
     if let Some(model) = args.model {
@@ -144,9 +151,10 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
         config.threshold = Some(threshold);
     }
     config.validate()?;
+    let device = config.device()?;
 
     println!("Enrolling '{}'", info.name);
-    println!("  camera:     {}", config.device());
+    println!("  camera:     {device}");
     println!("  model:      {}", config.model_path());
     println!("  templates:  {}", config.embeddings_dir().display());
     if config.seal_embeddings() {
@@ -156,7 +164,6 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
     println!();
 
     let pinned = config.pinned_camera_path.is_some();
-    let device = config.device();
     let mut auth = FaceAuth::new(config)?;
 
     let mut progress = |p: EnrollProgress| match p {
@@ -186,4 +193,31 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// A `--device` given to root must be an IR capture node, or the one
+/// `/etc/face-auth.toml` already names (root's own choice, which may be a
+/// pin-camera.sh symlink or a test loopback the IR checks can't vouch for).
+fn check_device(device: &str, system: Option<&str>, is_ir: impl Fn(&str) -> bool) -> anyhow::Result<()> {
+    if system == Some(device) || is_ir(device) {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "--device {device} is not an IR capture device on this machine; see \
+         `vinoauthface-camera-diag list`, or set `device` in /etc/face-auth.toml to use it anyway"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn root_device_must_be_ir_or_the_system_choice() {
+        let never_ir = |_: &str| false;
+        assert!(check_device("/dev/video0", None, never_ir).is_err());
+        assert!(check_device("/dev/video0", Some("/dev/video10"), never_ir).is_err());
+        assert!(check_device("/dev/video10", Some("/dev/video10"), never_ir).is_ok());
+        assert!(check_device("/dev/video2", None, |d: &str| d == "/dev/video2").is_ok());
+    }
 }
