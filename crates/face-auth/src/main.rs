@@ -26,16 +26,22 @@ fn reject_remote_session() -> Result<(), String> {
         return Ok(());
     };
     let rhost = rhost.trim();
-    let local = rhost.is_empty()
-        || rhost == "localhost"
-        || rhost == "localhost.localdomain"
-        || rhost == "::1"
-        || rhost.starts_with("127.");
-    if local {
+    if rhost_is_local(rhost) {
         Ok(())
     } else {
         Err(format!("remote session from {rhost}"))
     }
+}
+
+/// Empty, exactly `localhost`, or a loopback IP address. Anything else is
+/// remote, hostnames included: `127.evil.example.com` is a name, not an
+/// address, and resolving it would let DNS decide.
+fn rhost_is_local(rhost: &str) -> bool {
+    rhost.is_empty()
+        || rhost == "localhost"
+        || rhost
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.to_canonical().is_loopback())
 }
 
 /// A scan that can't succeed: nobody at the camera over SSH, or a built-in
@@ -49,7 +55,9 @@ fn skip_reason(config: &FaceAuthConfig) -> Option<SkipReason> {
     }
     if config.abort_if_lid_closed() && environment::lid_closed(Path::new("/proc/acpi/button/lid")) {
         // An external IR camera still sees a docked user with the lid shut.
-        let external = capture::device_bus_path(&config.device())
+        let external = config
+            .device()
+            .and_then(|device| capture::device_bus_path(&device))
             .is_ok_and(|bus| environment::camera_is_external(Path::new(&bus)));
         if !external {
             return Some(SkipReason::LidClosed);
@@ -116,7 +124,7 @@ fn audit(priority: libc::c_int, msg: &str) {
 /// borrowed privileges: the set-group-ID `face-auth` group for lock screens
 /// that run as the user (KScreenLocker, swaylock), or root from sudo's own
 /// set-user-ID process. Only what `pam_exec` sets survives, and `PATH` is
-/// pinned because `user::lookup` runs `getent` through it.
+/// pinned for anything that might still search it.
 fn scrub_caller_environment() {
     let borrowed = unsafe { libc::getuid() != libc::geteuid() || libc::getgid() != libc::getegid() };
     if !borrowed {
@@ -432,5 +440,29 @@ fn main() {
             fail_auth(&format!("face not recognised for '{}'", info.name))
         }
         Err(e) => fail_setup(&outcome(&format!("face authentication error: {e:#}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_loopback_addresses_and_localhost_are_local() {
+        for local in ["", "localhost", "127.0.0.1", "127.1.2.3", "::1", "::ffff:127.0.0.1"] {
+            assert!(rhost_is_local(local), "{local:?} should be local");
+        }
+        for remote in [
+            "127.evil.example.com",
+            "127.0.0.1.evil.example.com",
+            "localhost.evil.example.com",
+            "localhost.localdomain",
+            "10.0.0.5",
+            "::ffff:10.0.0.5",
+            "fe80::1",
+            "laptop",
+        ] {
+            assert!(!rhost_is_local(remote), "{remote:?} should be remote");
+        }
     }
 }

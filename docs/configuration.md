@@ -16,10 +16,16 @@ The authentication path and the unprivileged tools trust different things.
 | `~/.config/face-auth.toml` | May only make authentication **stricter**, see below |
 | `FACE_AUTH_*` environment | **Ignored entirely** |
 
-**For `vinoauthface enroll` and the offline tools**, the usual layering applies: environment variables,
-then `~/.config/face-auth.toml`, then `/etc/face-auth.toml`. Environment variable names follow the
-flat field names, so the capture timeout is `FACE_AUTH_CAPTURE_TIMEOUT_MS` and the liveness motion
-threshold is `FACE_AUTH_LIVENESS_MOTION_THRESHOLD`.
+**For `vinoauthface enroll` and `improve` run as root** (the normal case), only
+`/etc/face-auth.toml` and the command-line flags count: a `~/.config/face-auth.toml` or `FACE_AUTH_*`
+carried over by `sudo -E` or doas `keepenv` is ignored. A `--device` must be an IR capture node, or
+the `device` already set in `/etc/face-auth.toml`.
+
+**For the offline tools, and enrolment as a normal user into your own `--embeddings-dir`**, the
+usual layering applies: environment variables, then `~/.config/face-auth.toml`, then
+`/etc/face-auth.toml`. Environment variable names follow the flat field names, so the capture
+timeout is `FACE_AUTH_CAPTURE_TIMEOUT_MS` and the liveness motion threshold is
+`FACE_AUTH_LIVENESS_MOTION_THRESHOLD`.
 
 Example `/etc/face-auth.toml`:
 
@@ -72,7 +78,8 @@ edit `/etc/face-auth.toml` as root.
 UVC cameras normally expose a metadata node right beside the capture node under the same name
 (`/dev/video2` captures, `/dev/video3` doesn't). Auto-detection opens each candidate and takes the
 first that really is a capture device in a supported format. A hand-written path often gets this
-wrong. `pin-camera.sh` sets `device` for you.
+wrong. `pin-camera.sh` sets `device` for you. If nothing qualifies, there's no fallback node: face
+auth declines and PAM asks for the password.
 
 ## Enrolment
 

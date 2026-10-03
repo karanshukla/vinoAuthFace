@@ -159,8 +159,11 @@ enrolment does not.
 
 Two loaders, deliberately different:
 
-- `FaceAuthConfig::load()` (vinoauthface enroll and the offline tools) merges struct defaults →
-  `/etc/face-auth.toml` → `~/.config/face-auth.toml` → `FACE_AUTH_*` env vars.
+- `FaceAuthConfig::load()` (the offline tools, and `vinoauthface enroll` when not root) merges
+  struct defaults → `/etc/face-auth.toml` → `~/.config/face-auth.toml` → `FACE_AUTH_*` env vars.
+  Enrolment as root uses `load_system()` plus its CLI flags instead, and only accepts a `--device`
+  that passes `capture::is_ir_capture_device` or equals the system `device`: under `sudo -E` the
+  user's file and environment would pick what root writes templates for.
 - `FaceAuthConfig::load_for_auth(user)` (the PAM path) reads `/etc/face-auth.toml` only, ignores
   the environment, and applies the target user's `~/.config/face-auth.toml` through
   `apply_user_overlay`, a whitelist that may only *tighten* thresholds
@@ -215,8 +218,8 @@ read from disk before allocating (`MAX_EMBEDDINGS`, `MAX_MODEL_TAG_LEN`) and rej
 non-finite values. Follow this pattern for any new per-user state file; `cameras.rs` (the
 text `<user>/cameras` list of enrolled USB IDs) is the small example.
 
-`/var/lib/face-auth` itself is root:root `0700`. Never make it user-writable: whatever can write
-a template chooses whose face unlocks the account (upstream's privesc fix, issue #25).
+`/var/lib/face-auth` itself is `root:face-auth` `2750`. Never make it user-writable: whatever can
+write a template chooses whose face unlocks the account (upstream's privesc fix, issue #25).
 
 ### Deploy/uninstall scripts
 

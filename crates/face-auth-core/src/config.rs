@@ -13,7 +13,8 @@ pub const DEFAULT_DETECTOR: &str = "det_500m.onnx";
 /// The box-only detector installs had before SCRFD.
 pub const LEGACY_DETECTOR: &str = "version-slim-320.onnx";
 
-/// Default embeddings location. Must stay root-owned and 0700 — see deploy.sh.
+/// Default embeddings location. Must stay root-owned (`root:face-auth`
+/// `2750`) — see deploy.sh.
 pub const DEFAULT_EMBEDDINGS_DIR: &str = "/var/lib/face-auth";
 
 // Bounds applied to every config source. A threshold near zero accepts any
@@ -236,8 +237,10 @@ impl FaceAuthConfig {
     /// `FACE_AUTH_*` environment overrides.
     ///
     /// Every source here is writable by whoever runs the process, so this is
-    /// for unprivileged tools only — `face-enroll` and the settings GUI. The
-    /// authentication path must use [`FaceAuthConfig::load_for_auth`].
+    /// for unprivileged tools only: the offline tools, and `face-enroll` when
+    /// not root. The authentication path must use
+    /// [`FaceAuthConfig::load_for_auth`], and anything running as root
+    /// [`FaceAuthConfig::load_system`].
     pub fn load() -> Result<Self> {
         let mut builder = Config::builder();
 
@@ -424,11 +427,12 @@ impl FaceAuthConfig {
         Ok(())
     }
 
-    pub fn device(&self) -> String {
-        self.device
-            .clone()
-            .or_else(crate::capture::detect_ir_camera)
-            .unwrap_or_else(|| "/dev/video0".to_string())
+    /// The configured camera, else the best auto-detected IR sensor. No
+    /// guess beyond that: the next node along is usually the RGB webcam, and
+    /// capture accepts its YUYV, so an IR enrolment would be matched against
+    /// colour frames. Failing here sends PAM straight to the password.
+    pub fn device(&self) -> Result<String> {
+        resolve_device(self.device.clone(), crate::capture::detect_ir_camera)
     }
 
     pub fn threshold(&self) -> f32 {
@@ -610,7 +614,7 @@ impl FaceAuthConfig {
             return Ok(());
         };
 
-        let device = self.device();
+        let device = self.device()?;
         let path = crate::capture::device_bus_path(&device)?;
         let index = crate::capture::device_capture_index(&device)?;
         if path != pinned_path || index != pinned_index {
@@ -644,15 +648,17 @@ impl FaceAuthConfig {
     }
 
     /// Only authenticate the user who owns the active seat0 session. See
-    /// `seat::check`.
+    /// `seat::check`. Default off: it refuses root as the target (sudo's
+    /// `targetpw`, polkit set to ask for root), which some installs rely on.
     pub fn seat_check(&self) -> bool {
         self.seat_check.unwrap_or(false)
     }
 
     /// Skip the scan when face-auth runs under an SSH session. See
-    /// `environment::under_ssh`.
+    /// `environment::under_ssh`. Default on: sudo doesn't set `PAM_RHOST`, so
+    /// without this a `sudo` typed over SSH scans the camera at the desk.
     pub fn abort_if_ssh(&self) -> bool {
-        self.abort_if_ssh.unwrap_or(false)
+        self.abort_if_ssh.unwrap_or(true)
     }
 
     /// Skip the scan when the lid is closed and the camera is built in. See
@@ -677,6 +683,12 @@ impl FaceAuthConfig {
             max_tarpit_ms: d.max_tarpit_ms,
         }
     }
+}
+
+fn resolve_device(configured: Option<String>, detect: impl FnOnce() -> Option<String>) -> Result<String> {
+    configured
+        .or_else(detect)
+        .ok_or_else(|| crate::error::FaceAuthError::NoCamera.into())
 }
 
 /// Read `~/.config/face-auth.toml` for the account being authenticated.
@@ -732,6 +744,14 @@ mod tests {
         assert!(read_user_file(&link, me).is_err(), "symlink must not be followed");
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn no_camera_is_an_error_not_a_guess() {
+        assert!(resolve_device(None, || None).is_err(), "must not fall back to /dev/video0");
+        assert_eq!(resolve_device(None, || Some("/dev/video2".into())).unwrap(), "/dev/video2");
+        let set = resolve_device(Some("/dev/face-auth-ir".into()), || panic!("set device skips detection"));
+        assert_eq!(set.unwrap(), "/dev/face-auth-ir");
     }
 
     fn system_baseline() -> FaceAuthConfig {
@@ -799,6 +819,12 @@ mod tests {
         let mut cfg: FaceAuthConfig = toml::from_str(toml_src).unwrap();
         cfg.fold_sections().unwrap();
         cfg
+    }
+
+    #[test]
+    fn ssh_guard_is_on_by_default() {
+        assert!(FaceAuthConfig::default().abort_if_ssh());
+        assert!(!parse("guards.abort_if_ssh = false\n").abort_if_ssh());
     }
 
     #[test]

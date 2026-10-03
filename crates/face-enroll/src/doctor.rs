@@ -414,8 +414,10 @@ pub fn run(pam_dir: &Path, etc: &Path) -> Vec<Check> {
                 .iter()
                 .map(|(user, _)| (user.clone(), cameras::load(user, &dir).unwrap_or_default()))
                 .collect();
-            let device = config.device();
-            out.push(binding_verdict(config.bind_camera(), &device, cameras::camera_id(&device).as_deref(), &bound));
+            // No camera at all is reported once, by the camera check below.
+            if let Ok(device) = config.device() {
+                out.push(binding_verdict(config.bind_camera(), &device, cameras::camera_id(&device).as_deref(), &bound));
+            }
             let policy = config.lockout_policy();
             let locked: Vec<(String, u32, std::time::Duration)> = stored
                 .iter()
@@ -448,9 +450,7 @@ pub fn run(pam_dir: &Path, etc: &Path) -> Vec<Check> {
     }
     out.push(selinux_check());
 
-    // `config.device()` falls back to /dev/video0 when detection finds
-    // nothing, which reads as a missing node rather than a missing camera.
-    let Some(device) = config.device.clone().or_else(capture::detect_ir_camera) else {
+    let Ok(device) = config.device() else {
         out.push(check(
             Status::Fail,
             "camera",
@@ -519,7 +519,7 @@ pub fn facts() -> Facts {
     for (label, path) in [("recognition model", config.model_path()), ("detector model", config.detector_model_path())] {
         rows.push((label, file_name(&path)));
     }
-    if let Some(device) = config.device.clone().or_else(capture::detect_ir_camera) {
+    if let Ok(device) = config.device() {
         if let Ok(caps) = capture::query_caps(&device) {
             rows.push(("camera", format!("{} ({})", caps.card, caps.driver)));
         }

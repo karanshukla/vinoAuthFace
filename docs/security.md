@@ -18,24 +18,31 @@ report a vulnerability, see [SECURITY.md](../SECURITY.md).
   lets a non-root caller authenticate its own account.
 - **The PAM path trusts only `/etc/face-auth.toml`.** A user's own config may make matching
   stricter, never looser, and may not redirect model or template paths, unpin the camera, or lift
-  the lockout. `FACE_AUTH_*` environment variables are ignored during authentication. Details:
+  the lockout. `FACE_AUTH_*` environment variables are ignored during authentication. Enrolment
+  as root ignores both too, so `sudo -E` can't choose the camera, model or store root writes
+  templates for, and a `--device` must be an IR sensor or the configured `device`. Details:
   [configuration.md](configuration.md).
 - **Identity comes from `PAM_USER` only.** `vinoauthface-auth` refuses to run if PAM didn't set it.
-- **Remote sessions are refused.** If `PAM_RHOST` names a non-local host, face authentication is
-  declined: the camera is at the console, so otherwise whoever sits at the desk would authenticate
-  an SSH session. `sudo` over SSH doesn't set `PAM_RHOST`, so vinoAuthFace also walks its own
-  process ancestry and skips the scan if an `sshd` is found (`abort_if_ssh`, on by default). A
-  `tmux` or `screen` session started over SSH and reattached later isn't caught: its server's
-  parent is init, not `sshd`.
+- **Remote sessions are refused.** If `PAM_RHOST` is set to anything but `localhost` or a
+  loopback IP address (`127.0.0.0/8`, `::1`), face authentication is declined: the camera is at
+  the console, so otherwise whoever sits at the desk would authenticate an SSH session. Hostnames
+  aren't resolved, so `127.example.com` counts as remote. `sudo` over SSH doesn't set
+  `PAM_RHOST`, so vinoAuthFace also walks its own process ancestry and skips the scan if an `sshd`
+  is found (`guards.abort_if_ssh`, on by default). A `tmux` or `screen` session started over SSH
+  and reattached later isn't caught: its server's parent is init, not `sshd`. Neither is a remote
+  desktop session; `guards.seat_check` below covers that for accounts other than the one at the
+  seat.
 - **The tray acts only through a fixed root helper.** The optional tray runs as the user. For
   enrol, retrain and uninstall it runs `vinoauthface-helper` through pkexec. The helper takes one verb,
   no flags, and acts only for `PKEXEC_UID`. A face match can approve those polkit prompts, the same
   as `sudo`. See [tray.md](tray.md#privileges).
-- **Only the user at the seat.** vinoAuthFace reads logind's state in `/run/systemd` and declines
-  unless the target account owns the active seat0 session, or seat0 is showing a login greeter.
-  With fast user switching, a `sudo` in B's background session won't match A's face while A is at
-  the desk. No active session, or state it can't read, declines too. Without `/run/systemd/seats`
-  (no logind) the check is skipped. `guards.seat_check = false` turns it off.
+- **Only the user at the seat (opt-in).** With `guards.seat_check = true`, vinoAuthFace reads
+  logind's state in `/run/systemd` and declines unless the target account owns the active seat0
+  session, or seat0 is showing a login greeter. With fast user switching, a `sudo` in B's
+  background session won't match A's face while A is at the desk. No active session, or state it
+  can't read, declines too. Without `/run/systemd/seats` (no logind) the check is skipped. It's
+  off by default because it also declines root as the target, which is what sudo's
+  `targetpw`/`rootpw` and a polkit set to ask for root's password authenticate.
 
 ## Templates at rest (TPM sealing)
 
@@ -138,7 +145,9 @@ Auto-detect only ever considers IR-named nodes or physical greyscale sensors, an
   open it. Narrowing either requires custom udev device types. Only `xdm_t` is covered: TTY
   `login` (`local_login_t`) isn't wired by `deploy.sh`, and confined users' `sudo_t` is untested.
 - **Model integrity:** both models are pinned by SHA-256 and the detector URL is pinned to a
-  commit. `deploy.sh` aborts on mismatch. Release binaries, and the source bundle `vinoauthface-upgrade` installs from, are verified
+  commit. They're verified at install, where `deploy.sh` aborts on a mismatch, and by
+  `vinoauthface doctor`, not each time they're loaded: a model swapped in place afterwards (which
+  takes root) runs until doctor flags it. Release binaries, and the source bundle `vinoauthface-upgrade` installs from, are verified
   against the release's `SHA256SUMS`. That catches a corrupted or truncated download, not a
   compromised release: `SHA256SUMS` is published alongside the files it covers, so the trust
   anchor is GitHub over TLS.

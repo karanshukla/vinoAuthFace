@@ -31,9 +31,10 @@
 #   liveness.window_ms, bind_camera, seal_embeddings, guards.*
 #                                   ignored — system policy only
 #
-# FACE_AUTH_* environment variables affect the vinoauthface CLI and the offline
-# tools, under the flat names (FACE_AUTH_LIVENESS_MOTION_THRESHOLD). They are
-# ignored entirely during PAM authentication.
+# FACE_AUTH_* environment variables affect the vinoauthface CLI run as a normal
+# user and the offline tools, under the flat names
+# (FACE_AUTH_LIVENESS_MOTION_THRESHOLD). They are ignored entirely during PAM
+# authentication, and by enrolment as root, which reads this file only.
 
 # ---------------------------------------------------------------------------
 # Everyday settings
@@ -115,15 +116,18 @@ scan_duration_ms = 5000
 # Only authenticate the account that owns the active session on seat0 (any
 # account while seat0 shows a login greeter). Stops a sudo in a background or
 # fast-switched session matching whoever is at the camera. Skipped on systems
-# without logind.
-# guards.seat_check = true
+# without logind. Default false: it also declines root as the target (sudo's
+# targetpw/rootpw, polkit asking for root).
+# guards.seat_check = false
 
 # Skip the scan, straight to the password, where it can't succeed.
-# abort_if_ssh: any ancestor process is sshd. Nobody is at the camera.
-# abort_if_lid_closed: an ACPI lid is closed and the camera's USB port isn't
-# reported removable. Set false for an external IR camera behind a hub.
+# abort_if_ssh (default true): any ancestor process is sshd. Nobody is at the
+# camera, and sudo over SSH doesn't set PAM_RHOST.
+# abort_if_lid_closed (default false): an ACPI lid is closed and the camera's
+# USB port isn't reported removable. Leave off for an external IR camera
+# behind a hub.
 # guards.abort_if_ssh = true
-# guards.abort_if_lid_closed = true
+# guards.abort_if_lid_closed = false
 
 # start_delay_scope: "screen_lock" (default; sudo, polkit and login are not
 # delayed) or "all". Decided from PAM_SERVICE; unknown services count as
@@ -147,8 +151,9 @@ scan_duration_ms = 5000
 # IR-named node and picks the first that is really a GREY capture device. UVC
 # cameras usually expose a metadata node right next to the capture node (e.g.
 # /dev/video2 captures, /dev/video3 does not), and guessing wrong here is the
-# most common setup mistake. Run `cargo run --example detect-camera` to see
-# what your hardware exposes.
+# most common setup mistake. If none qualifies, face auth declines (no guessing
+# /dev/video0, usually the RGB webcam). Run `cargo run --example detect-camera`
+# to see what your hardware exposes.
 # device = "/dev/video2"
 
 # Recognition model path (default: /usr/local/share/face-auth/w600k_mbf.onnx).
@@ -158,8 +163,9 @@ scan_duration_ms = 5000
 # with a different model.
 # model_path = "/usr/local/share/face-auth/w600k_mbf.onnx"
 
-# Template storage directory. Must be root-owned and 0700 — anything that can
-# write here can choose whose face unlocks an account.
+# Template storage directory. Must be root-owned (deploy.sh makes it
+# root:face-auth 2750) — anything that can write here can choose whose face
+# unlocks an account.
 # embeddings_dir = "/var/lib/face-auth"
 
 # Seal stored face templates to this machine's TPM (systemd-creds, no PCR
