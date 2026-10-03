@@ -16,7 +16,7 @@ fn main() -> anyhow::Result<()> {
         .unwrap_or(10);
 
     let config = FaceAuthConfig::load()?;
-    let device = config.device();
+    let device = config.device()?;
     println!("device: {device}\n");
 
     let t = Instant::now();

@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+# Everything below (config/, selinux/, target/, the scripts it installs) is
+# relative to the checkout. Run from another directory, it would read those
+# from wherever the caller happened to be, which may be writable by others.
+cd "$(dirname "$(readlink -f "$0")")"
+
 # ---- Output ----
 # One line per step: ok (done), skip (nothing to do), warn (needs a look).
 # Colour only on a terminal, and never with NO_COLOR set.
@@ -275,7 +280,8 @@ find_ovfetch() {
     for bin in "$(command -v ovfetch 2>/dev/null)" "$ACTUAL_HOME/.cargo/bin/ovfetch"; do
         [ -n "$bin" ] && [ -x "$bin" ] || continue
         local have
-        have="$("$bin" --version 2>/dev/null | awk '{print $2}')"
+        # As the user: ~/.cargo/bin is theirs, so root must not run what's in it.
+        have="$(as_user "$bin" --version 2>/dev/null | awk '{print $2}')"
         if [ -n "$have" ] && [ "$(printf '%s\n' "$OVFETCH_MIN" "$have" | sort -V | head -1)" = "$OVFETCH_MIN" ]; then
             echo "$bin"
             return 0
@@ -337,6 +343,30 @@ BIN_SRC="$ARTIFACT_DIR"
 # against that, and the system prefix is only replaced once the new binaries
 # are installed, so a failed build leaves the working install alone.
 OV_STAGE=""
+# sha256sum -c checks what SHA256SUMS lists, not what it doesn't, and the
+# prefix is on vinoauthface-auth's rpath (OpenVINO also loads plugins by
+# scanning it). So, as ovfetch's own verify does, only allow its sums and
+# lock files, the files listed, and SONAME symlinks to a listed file in the
+# same directory. Prints whatever else is there.
+ov_untracked() {
+    local dir path name target real listed
+    real="$(readlink -f "$1")"
+    listed="$(sed -E 's/^[0-9a-f]{64} [ *]//' "$real/SHA256SUMS" 2>/dev/null || true)"
+    while IFS= read -r -d '' path; do
+        name="${path##*/}"
+        if [ -L "$path" ]; then
+            target="$(readlink -f "$path" || true)"
+            if [ "${target%/*}" = "$real" ] && [ -f "$target" ] \
+               && grep -qxF -- "${target##*/}" <<<"$listed"; then
+                continue
+            fi
+        elif [ -f "$path" ]; then
+            case "$name" in SHA256SUMS|ovfetch.lock.json) continue ;; esac
+            grep -qxF -- "$name" <<<"$listed" && continue
+        fi
+        printf '%s\n' "$name"
+    done < <(find "$real" -mindepth 1 -maxdepth 1 -print0)
+}
 # The full version (2025.4.1); the plan's floor only has two parts.
 ov_version() { grep -oE '"openvino": "[0-9]+\.[0-9]+\.[0-9]+"' <<<"$1" | head -1 | cut -d'"' -f4 || true; }
 stage_ovfetch() {
@@ -344,7 +374,8 @@ stage_ovfetch() {
     want="$(grep -o '"sha256": "[0-9a-f]*"' <<<"$OVFETCH_PLAN" | head -1 || true)"
     have="$(grep -o '"sha256": "[0-9a-f]*"' "$OPENVINO_INSTALL_DIR/ovfetch.lock.json" 2>/dev/null | head -1 || true)"
     if [ -n "$want" ] && [ "$want" = "$have" ] \
-       && (cd "$OPENVINO_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS) 2>/dev/null; then
+       && (cd "$OPENVINO_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS) 2>/dev/null \
+       && [ -z "$(ov_untracked "$OPENVINO_INSTALL_DIR")" ]; then
         ok OpenVINO "$(ov_version "$OVFETCH_PLAN") via ovfetch (installed, hashes verified)"
         OV_LIB_DIR="$OPENVINO_INSTALL_DIR"
         return 0
@@ -681,8 +712,20 @@ if [ -n "$OV_STAGE" ]; then
     # cp -a keeps the staging dir's user_tmp_t label, which confined PAM
     # callers (local_login_t, xdm_t) can't map.
     command -v restorecon &>/dev/null && restorecon -R "$OPENVINO_INSTALL_DIR" 2>/dev/null || true
+    # The staging copy was the user's until now; this is the first check of
+    # what root actually installed. On a mismatch the directory goes, so the
+    # rpath finds nothing and face unlock falls back to the password.
     if ! (cd "$OPENVINO_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS); then
-        fail "$OPENVINO_INSTALL_DIR does not match its SHA256SUMS after copying"
+        rm -rf "$OPENVINO_INSTALL_DIR"
+        fail "$OPENVINO_INSTALL_DIR does not match its SHA256SUMS after copying, so it was removed" \
+            "Face unlock falls back to your password until sudo ./deploy.sh succeeds."
+        exit 1
+    fi
+    mapfile -t OV_EXTRA < <(ov_untracked "$OPENVINO_INSTALL_DIR")
+    if [ "${#OV_EXTRA[@]}" -gt 0 ]; then
+        rm -rf "$OPENVINO_INSTALL_DIR"
+        fail "$OPENVINO_INSTALL_DIR has files its SHA256SUMS doesn't list, so it was removed:" \
+            "${OV_EXTRA[@]}" "Face unlock falls back to your password until sudo ./deploy.sh succeeds."
         exit 1
     fi
     ok OpenVINO "runtime in $OPENVINO_INSTALL_DIR"
@@ -697,9 +740,16 @@ fi
 # directory libopenvino.so lives in, so intel64/ is copied as a unit.
 if [ "$NPU_ACTIVE" = 1 ] && [ "$OPENVINO_MODE" = "archive" ]; then
     rm -rf "$OPENVINO_INSTALL_DIR"
-    mkdir -p "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb"
-    cp -a "$OPENVINO_SRC/runtime/lib/intel64/." "$OPENVINO_INSTALL_DIR/intel64/"
-    cp -a "$OPENVINO_SRC/runtime/3rdparty/tbb/lib/." "$OPENVINO_INSTALL_DIR/tbb/"
+    install -d -o root -g root -m 0755 "$OPENVINO_INSTALL_DIR" \
+        "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb"
+    # Not cp -a: the archive is the user's, and keeping its ownership would put
+    # user-writable directories on the system library path below, where every
+    # root process would load from them. Copied as root, everything is root's;
+    # the chown and chmod cover anything the archive marked group/other-writable.
+    cp -R --preserve=timestamps "$OPENVINO_SRC/runtime/lib/intel64/." "$OPENVINO_INSTALL_DIR/intel64/"
+    cp -R --preserve=timestamps "$OPENVINO_SRC/runtime/3rdparty/tbb/lib/." "$OPENVINO_INSTALL_DIR/tbb/"
+    chown -hR root:root "$OPENVINO_INSTALL_DIR"
+    chmod -R go-w "$OPENVINO_INSTALL_DIR"
     printf '%s\n' "$OPENVINO_INSTALL_DIR/intel64" "$OPENVINO_INSTALL_DIR/tbb" \
         > /etc/ld.so.conf.d/face-auth-openvino.conf
     command -v restorecon &>/dev/null && restorecon -R "$OPENVINO_INSTALL_DIR" 2>/dev/null || true
