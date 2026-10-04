@@ -8,7 +8,7 @@
   its only argument (the first-argument annotation), so pkexec cannot be pointed at vinoauthface
   with caller-chosen flags. The helper acts only for PKEXEC_UID.
   auth_admin, never yes: every action changes who a face unlocks, what unlocks the login
-  screen, or (upgrade) runs a downloaded deploy.sh as root.
+  screen, how strict matching is, or (upgrade) runs a downloaded deploy.sh as root.
 -->
 <policyconfig>
   <vendor>vinoAuthFace</vendor>
@@ -96,5 +96,257 @@
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">login-face</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-liveness-off">
+    <description>Change liveness check: Off (a photo can unlock)</description>
+    <message>Authentication is required to change liveness check</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-liveness-off</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-liveness-standard">
+    <description>Change liveness check: Standard</description>
+    <message>Authentication is required to change liveness check</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-liveness-standard</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-liveness-strict">
+    <description>Change liveness check: Strict (sit naturally)</description>
+    <message>Authentication is required to change liveness check</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-liveness-strict</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-match-relaxed">
+    <description>Change match strictness: Relaxed (0.5)</description>
+    <message>Authentication is required to change match strictness</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-match-relaxed</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-match-standard">
+    <description>Change match strictness: Standard (0.6)</description>
+    <message>Authentication is required to change match strictness</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-match-standard</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-match-strict">
+    <description>Change match strictness: Strict (0.7)</description>
+    <message>Authentication is required to change match strictness</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-match-strict</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-scan-3s">
+    <description>Change scan time: 3 seconds</description>
+    <message>Authentication is required to change scan time</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-scan-3s</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-scan-5s">
+    <description>Change scan time: 5 seconds</description>
+    <message>Authentication is required to change scan time</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-scan-5s</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-scan-8s">
+    <description>Change scan time: 8 seconds</description>
+    <message>Authentication is required to change scan time</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-scan-8s</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-scan-12s">
+    <description>Change scan time: 12 seconds</description>
+    <message>Authentication is required to change scan time</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-scan-12s</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-minface-off">
+    <description>Change minimum face size: Any size</description>
+    <message>Authentication is required to change minimum face size</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-minface-off</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-minface-near">
+    <description>Change minimum face size: Fairly close</description>
+    <message>Authentication is required to change minimum face size</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-minface-near</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-minface-close">
+    <description>Change minimum face size: Close to the camera</description>
+    <message>Authentication is required to change minimum face size</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-minface-close</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-delay-off">
+    <description>Change lock screen start delay: None (unlocks at once)</description>
+    <message>Authentication is required to change lock screen start delay</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-delay-off</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-delay-1s">
+    <description>Change lock screen start delay: 1 second</description>
+    <message>Authentication is required to change lock screen start delay</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-delay-1s</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-delay-2s">
+    <description>Change lock screen start delay: 2 seconds</description>
+    <message>Authentication is required to change lock screen start delay</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-delay-2s</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-delay-5s">
+    <description>Change lock screen start delay: 5 seconds</description>
+    <message>Authentication is required to change lock screen start delay</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-delay-5s</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-confirm-off">
+    <description>Change sudo confirmation: Off</description>
+    <message>Authentication is required to change sudo confirmation</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-confirm-off</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-confirm-on">
+    <description>Change sudo confirmation: On</description>
+    <message>Authentication is required to change sudo confirmation</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-confirm-on</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-updates-on">
+    <description>Change update checks: On</description>
+    <message>Authentication is required to change update checks</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-updates-on</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.set-updates-off">
+    <description>Change update checks: Off</description>
+    <message>Authentication is required to change update checks</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">set-updates-off</annotate>
   </action>
 </policyconfig>

@@ -8,7 +8,7 @@
 //! know the tray exists.
 
 use face_auth_core::{capture, update, user, Camera, FaceAuthConfig};
-use face_auth_tray::helper::{Verb, FACE_AUTH, HELPER, LOGIN_MODE, SAFE_PATH};
+use face_auth_tray::helper::{Verb, FACE_AUTH, Choice, Setting, HELPER, LOGIN_MODE, SAFE_PATH, SETTING_MODE, SETTINGS};
 use face_auth_tray::icon::{self, State};
 use face_auth_tray::idle::{self, Idle};
 use face_auth_tray::{progress, scanning, single_instance};
@@ -44,6 +44,7 @@ enum Action {
     Uninstall,
     Upgrade,
     Login(LoginMode),
+    Set(&'static Setting, &'static Choice),
 }
 
 /// Face unlock at the Plasma login screen, as `login-mode.sh` names it.
@@ -112,6 +113,9 @@ struct Status {
     backend: String,
     /// `None` without Plasma Login, which hides the menu entry.
     login: Option<LoginMode>,
+    /// Each setting's current choice id, from `setting-mode.sh status`; empty
+    /// when it is missing (an install from before it), which hides the menu.
+    settings: HashMap<String, String>,
 }
 
 impl Status {
@@ -129,7 +133,7 @@ impl Status {
             Some(_) => "tract (CPU)".into(),
             None => "unknown (cannot read /etc/face-auth.toml)".into(),
         };
-        Status { camera, enrolled: enrolled(), backend, login: login_mode() }
+        Status { camera, enrolled: enrolled(), backend, login: login_mode(), settings: settings() }
     }
 
     fn ready(&self) -> bool {
@@ -192,6 +196,28 @@ fn login_mode() -> Option<LoginMode> {
         .output()
         .ok()?;
     LoginMode::parse(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Reads /etc/face-auth.toml, which needs no privileges. "custom" is a value
+/// the menu doesn't offer, set by hand.
+fn settings() -> HashMap<String, String> {
+    let out = Command::new("/bin/bash")
+        .args([SETTING_MODE, "status"])
+        .env_clear()
+        .env("PATH", SAFE_PATH)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    let Ok(out) = out else { return HashMap::new() };
+    parse_settings(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn parse_settings(status: &str) -> HashMap<String, String> {
+    status
+        .lines()
+        .filter_map(|l| l.split_once(' '))
+        .map(|(k, v)| (k.to_string(), v.trim().to_string()))
+        .collect()
 }
 
 /// Desktop notifications over the session bus. Best effort: without a
@@ -436,6 +462,18 @@ impl ksni::Tray for Tray {
             );
         }
 
+        if !s.settings.is_empty() {
+            menu.push(
+                SubMenu {
+                    label: "Settings".into(),
+                    icon_name: "preferences-system".into(),
+                    submenu: SETTINGS.iter().map(|setting| setting_menu(setting, s, idle)).collect(),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+
         menu.push(MenuItem::Separator);
         if self.confirm == Some(Confirm::Uninstall) {
             menu.push(item("Uninstall vinoAuthFace? Click to confirm", "dialog-warning", idle, |t| {
@@ -460,6 +498,38 @@ impl ksni::Tray for Tray {
     }
 }
 
+/// One entry of the Settings submenu: its current choice in the label, the
+/// choices as radio items. A value set by hand that the menu doesn't offer
+/// shows as "custom" with nothing selected.
+fn setting_menu(setting: &'static Setting, status: &Status, idle: bool) -> MenuItem<Tray> {
+    let current = status.settings.get(setting.key).map(String::as_str);
+    let selected = setting.choices.iter().position(|c| Some(c.id) == current);
+    let shown = match (selected, current) {
+        (Some(i), _) => setting.choices[i].label,
+        (None, Some("custom")) => "custom",
+        _ => "unknown",
+    };
+    SubMenu {
+        label: format!("{}: {shown}", setting.title),
+        submenu: vec![RadioGroup {
+            selected: selected.unwrap_or(usize::MAX),
+            select: Box::new(move |t: &mut Tray, i| {
+                if Some(i) != selected {
+                    t.run(Action::Set(setting, &setting.choices[i]))
+                }
+            }),
+            options: setting
+                .choices
+                .iter()
+                .map(|c| RadioItem { label: c.label.into(), enabled: idle, ..Default::default() })
+                .collect(),
+        }
+        .into()],
+        ..Default::default()
+    }
+    .into()
+}
+
 /// Run `pkexec vinoauthface-helper <verb>`, reading vinoauthface enroll's progress off
 /// its stdout. `Ok(None)` when the password prompt was dismissed.
 fn run_helper(
@@ -467,7 +537,7 @@ fn run_helper(
     mut on_line: impl FnMut(&str),
 ) -> std::io::Result<Option<(bool, String)>> {
     let mut child = Command::new("pkexec")
-        .args([HELPER, verb.arg()])
+        .args([HELPER, verb.arg().as_str()])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -596,6 +666,21 @@ fn perform(action: Action, handle: &Handle<Tray>, notifier: &Notifier, user: &st
                 }
                 Ok(Some((false, err))) => {
                     notifier.send(0, "Could not change the login screen", &err);
+                }
+                Err(e) => {
+                    notifier.send(0, "Cannot run pkexec", &e.to_string());
+                }
+            }
+        }
+        Action::Set(setting, choice) => {
+            set_busy(Some(format!("{}: waiting for authentication", setting.title)));
+            match run_helper(Verb::Set(setting, choice), |_| {}) {
+                Ok(None) => {}
+                Ok(Some((true, _))) => {
+                    notifier.send(0, &format!("{}: {}", setting.title, choice.label), choice.note);
+                }
+                Ok(Some((false, err))) => {
+                    notifier.send(0, &format!("Could not change {}", setting.title.to_lowercase()), &err);
                 }
                 Err(e) => {
                     notifier.send(0, "Cannot run pkexec", &e.to_string());
@@ -785,7 +870,7 @@ mod tests {
 
     #[test]
     fn status_lines_name_what_is_missing() {
-        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into(), login: None };
+        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into(), login: None, settings: HashMap::new() };
         let lines = s.lines();
         assert_eq!(lines[0], "Camera: no IR camera found");
         assert_eq!(lines[1], "Face: unknown (is vinoauthface installed?)");
@@ -798,6 +883,7 @@ mod tests {
             enrolled: Some(true),
             backend: "OpenVINO (NPU)".into(),
             login: Some(LoginMode::Face),
+            settings: HashMap::new(),
         };
         assert!(s.ready());
         assert_eq!(s.lines()[..2], ["Camera: /dev/video2", "Face: enrolled"]);
@@ -814,6 +900,23 @@ mod tests {
         for m in LoginMode::ALL {
             assert_eq!(m.verb().arg(), format!("login-{m:?}").to_lowercase());
             assert!(!m.label().contains('_'));
+        }
+    }
+
+    #[test]
+    fn settings_status_parses_one_pair_per_line() {
+        let parsed = parse_settings("liveness strict\nscan 5s\ndelay custom\n");
+        assert_eq!(parsed["liveness"], "strict");
+        assert_eq!(parsed["delay"], "custom");
+        assert!(parse_settings("").is_empty());
+    }
+
+    #[test]
+    fn setting_labels_avoid_the_access_key_marker() {
+        // ksni treats "_" as an access-key marker.
+        for setting in SETTINGS {
+            assert!(!setting.title.contains('_'));
+            assert!(setting.choices.iter().all(|c| !c.label.contains('_')));
         }
     }
 }

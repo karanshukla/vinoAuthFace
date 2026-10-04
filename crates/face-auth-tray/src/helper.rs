@@ -12,7 +12,104 @@ pub const FACE_AUTH: &str = "/usr/local/bin/vinoauthface-auth";
 pub const UNINSTALLER: &str = "/usr/local/share/face-auth/uninstall.sh";
 pub const UPGRADER: &str = "/usr/local/bin/vinoauthface-upgrade";
 pub const LOGIN_MODE: &str = "/usr/local/share/face-auth/login-mode.sh";
+pub const SETTING_MODE: &str = "/usr/local/share/face-auth/setting-mode.sh";
 pub const SAFE_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
+
+/// One choice in a setting's menu. `id` is `setting-mode.sh`'s word for it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Choice {
+    pub id: &'static str,
+    pub label: &'static str,
+    /// Shown in the notification after it is chosen; for a choice that
+    /// weakens something.
+    pub note: &'static str,
+}
+
+/// A setting in `/etc/face-auth.toml` the tray's Settings menu can change.
+/// Each choice is one polkit action. Only what is listed here (and in
+/// `setting-mode.sh`) can be set: the camera, models, template directory,
+/// lockout, camera pin, backend and the rest of the guards are system policy
+/// and stay out of the menu on purpose.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Setting {
+    pub key: &'static str,
+    pub title: &'static str,
+    pub choices: &'static [Choice],
+}
+
+const fn choice(id: &'static str, label: &'static str, note: &'static str) -> Choice {
+    Choice { id, label, note }
+}
+
+pub const SETTINGS: &[Setting] = &[
+    Setting {
+        key: "liveness",
+        title: "Liveness check",
+        choices: &[
+            choice("off", "Off (a photo can unlock)", "No motion check: a photo or screen replay can unlock. Turn it back on unless you need this."),
+            choice("standard", "Standard", "Your face must move a little during the scan. Still faces pass by drifting over the window."),
+            choice("strict", "Strict (sit naturally)", "Also rejects a photo moved by hand. It may fail if you sit very still."),
+        ],
+    },
+    Setting {
+        key: "match",
+        title: "Match strictness",
+        choices: &[
+            choice("relaxed", "Relaxed (0.5)", "Matches more easily, and so does a lookalike. Retrain if it still misses you."),
+            choice("standard", "Standard (0.6)", "The default."),
+            choice("strict", "Strict (0.7)", "Fewer false matches. It may need better light or a Retrain."),
+        ],
+    },
+    Setting {
+        key: "scan",
+        title: "Scan time",
+        choices: &[
+            choice("3s", "3 seconds", ""),
+            choice("5s", "5 seconds", "The default."),
+            choice("8s", "8 seconds", ""),
+            choice("12s", "12 seconds", ""),
+        ],
+    },
+    Setting {
+        key: "minface",
+        title: "Minimum face size",
+        choices: &[
+            choice("off", "Any size", ""),
+            choice("near", "Fairly close", "Faces smaller than this are ignored at login and rejected at enrolment."),
+            choice("close", "Close to the camera", "Faces smaller than this are ignored at login and rejected at enrolment."),
+        ],
+    },
+    Setting {
+        key: "delay",
+        title: "Lock screen start delay",
+        choices: &[
+            choice("off", "None (unlocks at once)", "Someone still at the camera when you lock the screen is unlocked at once."),
+            choice("1s", "1 second", ""),
+            choice("2s", "2 seconds", "The default."),
+            choice("5s", "5 seconds", ""),
+        ],
+    },
+    Setting {
+        key: "confirm",
+        title: "Confirm sudo with Enter",
+        choices: &[
+            choice("off", "Off", ""),
+            choice("on", "On", "After a face match for sudo, su or polkit in a terminal, press Enter to let it through."),
+        ],
+    },
+    Setting {
+        key: "updates",
+        title: "Check for updates",
+        choices: &[
+            choice("on", "On", "One anonymous request a day to GitHub's releases API."),
+            choice("off", "Off", "No update checks. Restart the tray for it to stop asking."),
+        ],
+    },
+];
+
+pub fn setting(key: &str) -> Option<&'static Setting> {
+    SETTINGS.iter().find(|s| s.key == key)
+}
 
 /// One per polkit action in `data/io.github.karanshukla.vinoauthface.policy`,
 /// matched there by `exec.argv1`.
@@ -30,26 +127,36 @@ pub enum Verb {
     LoginOff,
     LoginBoth,
     LoginFace,
+    /// `setting-mode.sh set KEY CHOICE`, one verb per choice of each entry in
+    /// `SETTINGS`, for the same reason: polkit pins the argument per action.
+    Set(&'static Setting, &'static Choice),
 }
 
 impl Verb {
-    pub fn arg(self) -> &'static str {
+    pub fn arg(self) -> String {
         match self {
-            Verb::Enrol => "enrol",
-            Verb::Retrain => "retrain",
-            Verb::Uninstall => "uninstall",
-            Verb::Upgrade => "upgrade",
-            Verb::LoginOff => "login-off",
-            Verb::LoginBoth => "login-both",
-            Verb::LoginFace => "login-face",
+            Verb::Enrol => "enrol".into(),
+            Verb::Retrain => "retrain".into(),
+            Verb::Uninstall => "uninstall".into(),
+            Verb::Upgrade => "upgrade".into(),
+            Verb::LoginOff => "login-off".into(),
+            Verb::LoginBoth => "login-both".into(),
+            Verb::LoginFace => "login-face".into(),
+            Verb::Set(setting, choice) => format!("set-{}-{}", setting.key, choice.id),
         }
     }
 
-    const ALL: [Verb; 7] =
+    const FIXED: [Verb; 7] =
         [Verb::Enrol, Verb::Retrain, Verb::Uninstall, Verb::Upgrade, Verb::LoginOff, Verb::LoginBoth, Verb::LoginFace];
 
+    /// Every verb there is: the fixed ones, then one per setting choice.
+    pub fn all() -> Vec<Verb> {
+        let sets = SETTINGS.iter().flat_map(|s| s.choices.iter().map(move |c| Verb::Set(s, c)));
+        Verb::FIXED.into_iter().chain(sets).collect()
+    }
+
     fn parse(arg: &str) -> Option<Verb> {
-        Verb::ALL.into_iter().find(|v| v.arg() == arg)
+        Verb::all().into_iter().find(|v| v.arg() == arg)
     }
 }
 
@@ -58,7 +165,7 @@ impl Verb {
 /// rather than ignored.
 pub fn parse_request(args: &[String], pkexec_uid: Option<&str>) -> Result<(Verb, u32), String> {
     let [arg] = args else {
-        let verbs: Vec<_> = Verb::ALL.iter().map(|v| v.arg()).collect();
+        let verbs: Vec<_> = Verb::all().iter().map(|v| v.arg()).collect();
         return Err(format!("expected exactly one of {}; got {} arguments", verbs.join(", "), args.len()));
     };
     let verb = Verb::parse(arg).ok_or_else(|| format!("unknown action {arg:?}"))?;
@@ -85,6 +192,9 @@ pub fn command(verb: Verb, user: &str) -> (&'static str, Vec<String>) {
         Verb::LoginOff => ("/bin/bash", vec![LOGIN_MODE.into(), "off".into()]),
         Verb::LoginBoth => ("/bin/bash", vec![LOGIN_MODE.into(), "both".into()]),
         Verb::LoginFace => ("/bin/bash", vec![LOGIN_MODE.into(), "face".into()]),
+        Verb::Set(setting, choice) => {
+            ("/bin/bash", vec![SETTING_MODE.into(), "set".into(), setting.key.into(), choice.id.into()])
+        }
     }
 }
 
@@ -145,5 +255,66 @@ mod tests {
         assert_eq!(command(Verb::LoginOff, "alice").1, [LOGIN_MODE, "off"]);
         assert_eq!(command(Verb::LoginBoth, "alice").1, [LOGIN_MODE, "both"]);
         assert_eq!(command(Verb::LoginFace, "alice").1, [LOGIN_MODE, "face"]);
+        let strict = setting("liveness").unwrap();
+        assert_eq!(command(Verb::Set(strict, &strict.choices[2]), "alice").1, [SETTING_MODE, "set", "liveness", "strict"]);
+    }
+
+    #[test]
+    fn parses_a_setting_verb_and_nothing_near_it() {
+        let (verb, uid) = parse_request(&args(&["set-liveness-strict"]), Some("1000")).unwrap();
+        assert_eq!(uid, 1000);
+        assert!(matches!(verb, Verb::Set(s, c) if s.key == "liveness" && c.id == "strict"));
+        for bad in ["set-liveness", "set-liveness-", "set-liveness-loose", "set-lockout-off", "set-liveness-strict ", "set"] {
+            assert!(parse_request(&args(&[bad]), Some("1000")).is_err(), "{bad:?}");
+        }
+        assert!(parse_request(&args(&["set-scan-5s", "x"]), Some("1000")).is_err());
+    }
+
+    /// Every verb has its polkit action, pinned to that verb's argument, and
+    /// the policy has no action that no verb uses.
+    #[test]
+    fn the_policy_has_one_action_per_verb() {
+        let policy = include_str!("../data/io.github.karanshukla.vinoauthface.policy");
+        let mut ids: Vec<_> = policy
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("<annotate key=\"org.freedesktop.policykit.exec.argv1\">"))
+            .map(|l| l.trim_end_matches("</annotate>").to_string())
+            .collect();
+        let mut verbs: Vec<_> = Verb::all().iter().map(|v| v.arg()).collect();
+        ids.sort();
+        verbs.sort();
+        assert_eq!(ids, verbs);
+        for verb in Verb::all() {
+            let action = format!("<action id=\"io.github.karanshukla.vinoauthface.{}\">", verb.arg());
+            assert!(policy.contains(&action), "{action}");
+        }
+    }
+
+    /// `setting-mode.sh` accepts exactly the menu's choices and reads each
+    /// back as the choice written.
+    #[test]
+    fn the_script_agrees_with_the_menu() {
+        let dir = std::env::temp_dir().join(format!("vinoauthface-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conf = dir.join("face-auth.toml");
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../setting-mode.sh");
+        let run = |args: &[&str]| {
+            std::process::Command::new("bash")
+                .arg(script)
+                .args(args)
+                .env("FACE_AUTH_SETTINGS_CONF", &conf)
+                .output()
+                .unwrap()
+        };
+        for setting in SETTINGS {
+            for choice in setting.choices {
+                assert!(run(&["set", setting.key, choice.id]).status.success(), "{} {}", setting.key, choice.id);
+                let status = String::from_utf8(run(&["status"]).stdout).unwrap();
+                assert!(status.lines().any(|l| l == format!("{} {}", setting.key, choice.id)), "{status}");
+            }
+            assert!(!run(&["set", setting.key, "bogus"]).status.success());
+        }
+        assert!(!run(&["set", "lockout", "off"]).status.success());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
