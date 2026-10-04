@@ -659,8 +659,8 @@ rm -f "$BIN_DIR/face-auth" "$BIN_DIR/face-enroll" "$BIN_DIR/face-auth-tray" \
 install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"
 # The same for the tray's login-screen entries.
 install -D -o root -g root -m 0755 login-mode.sh "$SHARE_DIR/login-mode.sh"
-# And its liveness-preset entries.
-install -D -o root -g root -m 0755 liveness-mode.sh "$SHARE_DIR/liveness-mode.sh"
+# And its Settings menu.
+install -D -o root -g root -m 0755 setting-mode.sh "$SHARE_DIR/setting-mode.sh"
 # Upgrades without a checkout (docs/install.md).
 install -D -o root -g root -m 0755 upgrade.sh "$BIN_DIR/vinoauthface-upgrade"
 ln -sfn vinoauthface-upgrade "$BIN_DIR/vinoauthface-update"

@@ -23,7 +23,7 @@ It starts at the next login, or run `vinoauthface-tray` now (it detaches from th
 | `/usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy` | One polkit action per helper verb. On a read-only `/usr` it goes in `/usr/local/share/polkit-1/actions` instead, which needs polkit 124 or later |
 | `/etc/xdg/autostart/vinoauthface-tray.desktop` | Starts it at login |
 | `/usr/local/share/applications/vinoauthface-{tray,enrol}.desktop` | Launchers. "Enrol face" works without the tray running |
-| `/usr/local/share/face-auth/{login,liveness}-mode.sh` | What the login-screen and liveness entries run |
+| `/usr/local/share/face-auth/{login,setting}-mode.sh` | What the login-screen and Settings entries run |
 | `/usr/local/share/face-auth/uninstall.sh` | Installed by every deploy, so the uninstall entry works after the repo is gone |
 | `/usr/local/bin/vinoauthface-upgrade` | Installed by every deploy (not only with the tray). The upgrade entry runs it |
 
@@ -37,8 +37,33 @@ It starts at the next login, or run `vinoauthface-tray` now (it detaches from th
 | Retrain face | `vinoauthface improve --user <you>`: captures more frames (new lighting, glasses) and keeps the old ones | root, via pkexec |
 | Test scan | One live scan, the same way the lock screen runs it. The result is a notification | you |
 | Login screen | Only with Plasma Login. Password only, password then face, or face: see [pam.md](pam.md#login-screen). Runs `login-mode.sh` | root, via pkexec |
-| Liveness check | Off, Standard or Strict: the motion liveness preset in `/etc/face-auth.toml` (see [configuration.md](configuration.md#config-sources)). Off lets a photo unlock, so the notification says so. An explicit `liveness.*` threshold in the file still overrides the preset. Runs `liveness-mode.sh` | root, via pkexec |
+| Settings | A submenu of the settings people actually change, each a radio list showing its current choice. Changes `/etc/face-auth.toml` through `setting-mode.sh` (see the table below). A value you set by hand that the menu doesn't offer shows as "custom" with nothing selected | root, via pkexec |
 | Uninstall | Runs `uninstall.sh` after a second click. Your templates are kept, as with `sudo ./uninstall.sh`. The tray exits when it finishes | root, via pkexec |
+
+### Settings
+
+Each choice is one polkit action (`set-<setting>-<choice>`), so there is no value the caller can
+pass. A flat key already in the file (`start_delay_ms`) is replaced too, since it would win over the
+dotted one. A threshold written in the file that no choice matches still works; the menu just calls
+it "custom".
+
+| Setting | Key | Choices (default first) |
+|---|---|---|
+| Liveness check | `liveness.preset` | Standard, Off, Strict. An explicit `liveness.*` threshold in the file still overrides the preset |
+| Match strictness | `threshold` | Standard 0.6, Relaxed 0.5, Strict 0.7 |
+| Scan time | `scan_duration_ms` | 5 s, 3 s, 8 s, 12 s |
+| Minimum face size | `min_face_size_ratio` | Any size, Fairly close 0.1, Close 0.2 |
+| Lock screen start delay | `guards.start_delay_ms` | 2 s, None, 1 s, 5 s |
+| Confirm sudo with Enter | `guards.require_confirmation_elevation` | Off, On |
+| Check for updates | `update_check` | On, Off. Restart the tray after turning it off |
+
+Choices that weaken something (liveness off, relaxed matching, no start delay) say so in the
+notification. Deliberately not in the menu, because a wrong value locks you out, breaks enrolment or
+loosens the system: the camera and its pin, the models and backend, the template directory and
+sealing, `bind_camera`, `lockout.*`, the other `guards.*`, `liveness.window_ms`, `detector_threshold`,
+and the capture timeout and scan interval. Edit `/etc/face-auth.toml` for those
+([configuration.md](configuration.md)). `tray_idle_minutes` stays a file setting too: it is per
+user and read at startup.
 
 Enrolment progress ("Capturing frame 3/30", "Face too small: move closer") shows in the tooltip
 and a notification. The tray reads it from `vinoauthface enroll`'s normal output.
@@ -67,10 +92,10 @@ icon.
 - **pkexec runs a fixed helper, never `vinoauthface enroll`.** polkit's `exec.path` pins a binary but not
   its arguments, so `pkexec vinoauthface enroll --embeddings-dir …` would let the caller choose where
   root writes. `vinoauthface-helper` takes exactly one verb (`enrol`, `retrain`, `uninstall`,
-  `upgrade`, `login-off`, `login-both`, `login-face`, `liveness-off`, `liveness-standard` or `liveness-strict`) and no flags. The policy pins each verb
+  `upgrade`, `login-off`, `login-both`, `login-face`, or `set-<setting>-<choice>`, one per row of the Settings table) and no flags. The policy pins each verb
   with `exec.argv1`, so the login-screen mode is one action per mode rather than an argument. The
   target user comes from `PKEXEC_UID`, which pkexec sets, so there's no way to name another
-  account. All ten actions are `auth_admin`.
+  account. All 28 actions are `auth_admin`.
 - **Upgrade and uninstall never touch your home.** They run as plain root with no `SUDO_USER`, so
   the upgrade downloads and unpacks the release under root's home, where nothing you run can swap
   it between the checksum check and `deploy.sh` running it. Upgrade only installs the newest

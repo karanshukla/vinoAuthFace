@@ -62,7 +62,7 @@ jobs:
       # One at a time: bash -n parses only its first argument, the rest are its $@.
       - name: Syntax-check shell scripts
         run: |
-          for script in deploy.sh uninstall.sh pin-camera.sh update.sh upgrade.sh login-mode.sh liveness-mode.sh \
+          for script in deploy.sh uninstall.sh pin-camera.sh update.sh upgrade.sh login-mode.sh setting-mode.sh \
               install.sh scripts/*.sh; do
             bash -n "$script"
           done
@@ -178,19 +178,26 @@ jobs:
           # Left on, for uninstall to clean up below.
           sudo "$lm" face
 
-      # What the tray's liveness entries run through the helper.
-      - name: Liveness presets
+      # What the tray's Settings menu runs through the helper.
+      - name: Settings menu
         run: |
-          lv=/usr/local/share/face-auth/liveness-mode.sh
-          test "$(stat -c %U:%a "$lv")" = root:755
-          sudo "$lv" strict
-          test "$("$lv" status)" = strict
-          sudo "$lv" off
-          test "$("$lv" status)" = off
+          sm=/usr/local/share/face-auth/setting-mode.sh
+          test "$(stat -c %U:%a "$sm")" = root:755
+          sudo "$sm" set liveness strict
+          "$sm" status | grep -qx 'liveness strict'
+          sudo "$sm" set match relaxed
+          sudo "$sm" set delay 5s
+          sudo "$sm" set liveness standard
+          "$sm" status | grep -qx 'match relaxed'
+          "$sm" status | grep -qx 'delay 5s'
+          # One line per key, and the file still parses for the auth path.
           test "$(grep -c '^liveness.preset' /etc/face-auth.toml)" = 1
-          sudo "$lv" standard
-          test "$("$lv" status)" = standard
-          ! sudo "$lv" bogus
+          test "$(grep -cE '^(guards[.])?start_delay_ms' /etc/face-auth.toml)" = 1
+          # Nothing outside the menu can be set.
+          if sudo "$sm" set lockout off; then exit 1; fi
+          if sudo "$sm" set scan 1s; then exit 1; fi
+          sudo "$sm" set match standard
+          sudo "$sm" set delay 2s
 
       # The helper is the tray's only root entry point: it must refuse
       # anything that did not come through pkexec, and any named target.
