@@ -62,7 +62,7 @@ jobs:
       # One at a time: bash -n parses only its first argument, the rest are its $@.
       - name: Syntax-check shell scripts
         run: |
-          for script in deploy.sh uninstall.sh pin-camera.sh update.sh upgrade.sh login-mode.sh \
+          for script in deploy.sh uninstall.sh pin-camera.sh update.sh upgrade.sh login-mode.sh liveness-mode.sh \
               install.sh scripts/*.sh; do
             bash -n "$script"
           done
@@ -177,6 +177,20 @@ jobs:
           test ! -e /etc/pam.d/.face-auth-plasmalogin-created
           # Left on, for uninstall to clean up below.
           sudo "$lm" face
+
+      # What the tray's liveness entries run through the helper.
+      - name: Liveness presets
+        run: |
+          lv=/usr/local/share/face-auth/liveness-mode.sh
+          test "$(stat -c %U:%a "$lv")" = root:755
+          sudo "$lv" strict
+          test "$("$lv" status)" = strict
+          sudo "$lv" off
+          test "$("$lv" status)" = off
+          test "$(grep -c '^liveness.preset' /etc/face-auth.toml)" = 1
+          sudo "$lv" standard
+          test "$("$lv" status)" = standard
+          ! sudo "$lv" bogus
 
       # The helper is the tray's only root entry point: it must refuse
       # anything that did not come through pkexec, and any named target.

@@ -12,6 +12,7 @@ pub const FACE_AUTH: &str = "/usr/local/bin/vinoauthface-auth";
 pub const UNINSTALLER: &str = "/usr/local/share/face-auth/uninstall.sh";
 pub const UPGRADER: &str = "/usr/local/bin/vinoauthface-upgrade";
 pub const LOGIN_MODE: &str = "/usr/local/share/face-auth/login-mode.sh";
+pub const LIVENESS_MODE: &str = "/usr/local/share/face-auth/liveness-mode.sh";
 pub const SAFE_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 
 /// One per polkit action in `data/io.github.karanshukla.vinoauthface.policy`,
@@ -30,6 +31,11 @@ pub enum Verb {
     LoginOff,
     LoginBoth,
     LoginFace,
+    /// `liveness-mode.sh`: the motion liveness preset. One verb per preset,
+    /// for the same reason.
+    LivenessOff,
+    LivenessStandard,
+    LivenessStrict,
 }
 
 impl Verb {
@@ -42,11 +48,24 @@ impl Verb {
             Verb::LoginOff => "login-off",
             Verb::LoginBoth => "login-both",
             Verb::LoginFace => "login-face",
+            Verb::LivenessOff => "liveness-off",
+            Verb::LivenessStandard => "liveness-standard",
+            Verb::LivenessStrict => "liveness-strict",
         }
     }
 
-    const ALL: [Verb; 7] =
-        [Verb::Enrol, Verb::Retrain, Verb::Uninstall, Verb::Upgrade, Verb::LoginOff, Verb::LoginBoth, Verb::LoginFace];
+    const ALL: [Verb; 10] = [
+        Verb::Enrol,
+        Verb::Retrain,
+        Verb::Uninstall,
+        Verb::Upgrade,
+        Verb::LoginOff,
+        Verb::LoginBoth,
+        Verb::LoginFace,
+        Verb::LivenessOff,
+        Verb::LivenessStandard,
+        Verb::LivenessStrict,
+    ];
 
     fn parse(arg: &str) -> Option<Verb> {
         Verb::ALL.into_iter().find(|v| v.arg() == arg)
@@ -85,6 +104,9 @@ pub fn command(verb: Verb, user: &str) -> (&'static str, Vec<String>) {
         Verb::LoginOff => ("/bin/bash", vec![LOGIN_MODE.into(), "off".into()]),
         Verb::LoginBoth => ("/bin/bash", vec![LOGIN_MODE.into(), "both".into()]),
         Verb::LoginFace => ("/bin/bash", vec![LOGIN_MODE.into(), "face".into()]),
+        Verb::LivenessOff => ("/bin/bash", vec![LIVENESS_MODE.into(), "off".into()]),
+        Verb::LivenessStandard => ("/bin/bash", vec![LIVENESS_MODE.into(), "standard".into()]),
+        Verb::LivenessStrict => ("/bin/bash", vec![LIVENESS_MODE.into(), "strict".into()]),
     }
 }
 
@@ -103,6 +125,7 @@ mod tests {
         assert_eq!(parse_request(&args(&["uninstall"]), Some("0")), Ok((Verb::Uninstall, 0)));
         assert_eq!(parse_request(&args(&["upgrade"]), Some("1000")), Ok((Verb::Upgrade, 1000)));
         assert_eq!(parse_request(&args(&["login-both"]), Some("1000")), Ok((Verb::LoginBoth, 1000)));
+        assert_eq!(parse_request(&args(&["liveness-strict"]), Some("1000")), Ok((Verb::LivenessStrict, 1000)));
     }
 
     #[test]
@@ -145,5 +168,8 @@ mod tests {
         assert_eq!(command(Verb::LoginOff, "alice").1, [LOGIN_MODE, "off"]);
         assert_eq!(command(Verb::LoginBoth, "alice").1, [LOGIN_MODE, "both"]);
         assert_eq!(command(Verb::LoginFace, "alice").1, [LOGIN_MODE, "face"]);
+        assert_eq!(command(Verb::LivenessOff, "alice").1, [LIVENESS_MODE, "off"]);
+        assert_eq!(command(Verb::LivenessStandard, "alice").1, [LIVENESS_MODE, "standard"]);
+        assert_eq!(command(Verb::LivenessStrict, "alice").1, [LIVENESS_MODE, "strict"]);
     }
 }

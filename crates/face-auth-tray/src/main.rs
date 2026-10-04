@@ -8,7 +8,7 @@
 //! know the tray exists.
 
 use face_auth_core::{capture, update, user, Camera, FaceAuthConfig};
-use face_auth_tray::helper::{Verb, FACE_AUTH, HELPER, LOGIN_MODE, SAFE_PATH};
+use face_auth_tray::helper::{Verb, FACE_AUTH, HELPER, LIVENESS_MODE, LOGIN_MODE, SAFE_PATH};
 use face_auth_tray::icon::{self, State};
 use face_auth_tray::idle::{self, Idle};
 use face_auth_tray::{progress, scanning, single_instance};
@@ -44,6 +44,44 @@ enum Action {
     Uninstall,
     Upgrade,
     Login(LoginMode),
+    Liveness(Liveness),
+}
+
+/// Motion liveness preset, as `liveness-mode.sh` names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Liveness {
+    Off,
+    Standard,
+    Strict,
+}
+
+impl Liveness {
+    const ALL: [Liveness; 3] = [Liveness::Off, Liveness::Standard, Liveness::Strict];
+
+    fn parse(status: &str) -> Option<Liveness> {
+        match status.trim() {
+            "off" => Some(Liveness::Off),
+            "standard" => Some(Liveness::Standard),
+            "strict" => Some(Liveness::Strict),
+            _ => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Liveness::Off => "Off (a photo can unlock)",
+            Liveness::Standard => "Standard",
+            Liveness::Strict => "Strict (sit naturally)",
+        }
+    }
+
+    fn verb(self) -> Verb {
+        match self {
+            Liveness::Off => Verb::LivenessOff,
+            Liveness::Standard => Verb::LivenessStandard,
+            Liveness::Strict => Verb::LivenessStrict,
+        }
+    }
 }
 
 /// Face unlock at the Plasma login screen, as `login-mode.sh` names it.
@@ -112,6 +150,8 @@ struct Status {
     backend: String,
     /// `None` without Plasma Login, which hides the menu entry.
     login: Option<LoginMode>,
+    /// `None` when `liveness-mode.sh` is missing (an install from before it).
+    liveness: Option<Liveness>,
 }
 
 impl Status {
@@ -129,7 +169,7 @@ impl Status {
             Some(_) => "tract (CPU)".into(),
             None => "unknown (cannot read /etc/face-auth.toml)".into(),
         };
-        Status { camera, enrolled: enrolled(), backend, login: login_mode() }
+        Status { camera, enrolled: enrolled(), backend, login: login_mode(), liveness: liveness() }
     }
 
     fn ready(&self) -> bool {
@@ -192,6 +232,19 @@ fn login_mode() -> Option<LoginMode> {
         .output()
         .ok()?;
     LoginMode::parse(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Reads /etc/face-auth.toml, which needs no privileges.
+fn liveness() -> Option<Liveness> {
+    let out = Command::new("/bin/bash")
+        .args([LIVENESS_MODE, "status"])
+        .env_clear()
+        .env("PATH", SAFE_PATH)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    Liveness::parse(&String::from_utf8_lossy(&out.stdout))
 }
 
 /// Desktop notifications over the session bus. Best effort: without a
@@ -436,6 +489,29 @@ impl ksni::Tray for Tray {
             );
         }
 
+        if let Some(mode) = s.liveness {
+            menu.push(
+                SubMenu {
+                    label: format!("Liveness check: {}", mode.label()),
+                    icon_name: "preferences-system".into(),
+                    submenu: vec![RadioGroup {
+                        selected: Liveness::ALL.iter().position(|m| *m == mode).unwrap_or(1),
+                        select: Box::new(move |t: &mut Tray, i| {
+                            if Liveness::ALL[i] != mode {
+                                t.run(Action::Liveness(Liveness::ALL[i]))
+                            }
+                        }),
+                        options: Liveness::ALL
+                            .map(|m| RadioItem { label: m.label().into(), enabled: idle, ..Default::default() })
+                            .into(),
+                    }
+                    .into()],
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+
         menu.push(MenuItem::Separator);
         if self.confirm == Some(Confirm::Uninstall) {
             menu.push(item("Uninstall vinoAuthFace? Click to confirm", "dialog-warning", idle, |t| {
@@ -596,6 +672,26 @@ fn perform(action: Action, handle: &Handle<Tray>, notifier: &Notifier, user: &st
                 }
                 Ok(Some((false, err))) => {
                     notifier.send(0, "Could not change the login screen", &err);
+                }
+                Err(e) => {
+                    notifier.send(0, "Cannot run pkexec", &e.to_string());
+                }
+            }
+        }
+        Action::Liveness(mode) => {
+            set_busy(Some("Liveness check: waiting for authentication".into()));
+            match run_helper(mode.verb(), |_| {}) {
+                Ok(None) => {}
+                Ok(Some((true, _))) => {
+                    let body = match mode {
+                        Liveness::Off => "No motion check: a photo or screen replay can unlock. Turn it back on unless you need this.",
+                        Liveness::Standard => "Your face must move a little during the scan. Still faces pass by drifting over the window.",
+                        Liveness::Strict => "Also rejects a photo moved by hand. It may fail if you sit very still.",
+                    };
+                    notifier.send(0, &format!("Liveness check: {}", mode.label()), body);
+                }
+                Ok(Some((false, err))) => {
+                    notifier.send(0, "Could not change the liveness check", &err);
                 }
                 Err(e) => {
                     notifier.send(0, "Cannot run pkexec", &e.to_string());
@@ -785,7 +881,7 @@ mod tests {
 
     #[test]
     fn status_lines_name_what_is_missing() {
-        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into(), login: None };
+        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into(), login: None, liveness: None };
         let lines = s.lines();
         assert_eq!(lines[0], "Camera: no IR camera found");
         assert_eq!(lines[1], "Face: unknown (is vinoauthface installed?)");
@@ -798,6 +894,7 @@ mod tests {
             enrolled: Some(true),
             backend: "OpenVINO (NPU)".into(),
             login: Some(LoginMode::Face),
+            liveness: None,
         };
         assert!(s.ready());
         assert_eq!(s.lines()[..2], ["Camera: /dev/video2", "Face: enrolled"]);
@@ -813,6 +910,17 @@ mod tests {
         assert_eq!(LoginMode::parse(""), None);
         for m in LoginMode::ALL {
             assert_eq!(m.verb().arg(), format!("login-{m:?}").to_lowercase());
+            assert!(!m.label().contains('_'));
+        }
+    }
+
+    #[test]
+    fn liveness_presets_round_trip_through_the_script() {
+        assert_eq!(Liveness::parse("strict\n"), Some(Liveness::Strict));
+        assert_eq!(Liveness::parse("bogus"), None);
+        assert_eq!(Liveness::parse(""), None);
+        for m in Liveness::ALL {
+            assert_eq!(m.verb().arg(), format!("liveness-{m:?}").to_lowercase());
             assert!(!m.label().contains('_'));
         }
     }
