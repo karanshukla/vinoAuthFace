@@ -206,8 +206,9 @@ jobs:
           test -x /usr/local/bin/vinoauthface-tray
           test "$(stat -c %U:%a /usr/local/libexec/vinoauthface-helper)" = root:755
           policy=/usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
-          test "$(grep -c 'exec.argv1' "$policy")" = 7
-          test "$(grep -c '<allow_active>auth_admin</allow_active>' "$policy")" = 7
+          # 7 fixed verbs plus one per Settings choice (helper.rs checks the policy against its table).
+          test "$(grep -c 'exec.argv1' "$policy")" = 28
+          test "$(grep -c '<allow_active>auth_admin</allow_active>' "$policy")" = 28
           test -f /etc/xdg/autostart/vinoauthface-tray.desktop
           test -f /usr/local/share/applications/vinoauthface-enrol.desktop
           test -f /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
