@@ -18,9 +18,10 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
     ignore:
-      # tract 0.22+ changed the plan types the detector and encoder are built
-      # on (Dependabot's 0.23 bump broke the build once already). Moving off
-      # 0.21 is a deliberate port, not a routine bump.
+      # tract 0.22 changed the plan types the detector and encoder are built
+      # on (Dependabot's 0.23 bump broke the build once, before the port to
+      # 0.23 landed). Moving to a new minor is a deliberate port, not a
+      # routine bump.
       - dependency-name: "tract-*"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
       # The npu backend is written against the openvino 0.11 API and CI

@@ -39,8 +39,9 @@ Installs from before SCRFD used the box-only `version-slim-320.onnx`
 MIT); vinoAuthFace falls back to it when `det_500m.onnx` isn't installed. The detector is part of
 the templates' model tag, so switching means re-enrolling.
 
-tract 0.21 mis-evaluates SCRFD's upsampling (`Resize` given sizes and empty scales resizes
-nothing), so `detector.rs` rewires those nodes to explicit ×2 scales before loading.
+tract 0.21 mis-evaluated SCRFD's upsampling (`Resize` given sizes and empty scales resizes
+nothing), so `detector.rs` rewires those nodes to explicit ×2 scales before loading. The rewrite
+is still applied on tract 0.23; whether 0.23 still needs it hasn't been checked.
 
 **Licensing.** InsightFace's model zoo, recognition *and* SCRFD weights, is licensed for
 non-commercial research use only (see `model_zoo/README.md` and `python-package/README.md` in the

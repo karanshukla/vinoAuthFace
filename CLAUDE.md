@@ -58,11 +58,12 @@ cargo deny check
   would make every resync conflict. Match the surrounding style by hand.
 - Every Actions `uses:` is pinned to a commit SHA with a version comment.
 - A `deny.toml` advisory ignore needs a written reason next to it.
-- tract 0.21 can't run SCRFD's `Resize` (sizes + empty scales) correctly; `detector.rs`'s
-  `fix_empty_resize_scales` patches the graph. Re-check it if tract is ever moved.
-- tract stays on 0.21 and openvino on 0.11 (Dependabot ignores their minor/major bumps): moving
-  either is a deliberate port. tract 0.22+ changed the plan types `detector.rs`/`inference.rs`
-  are built on.
+- tract 0.21 couldn't run SCRFD's `Resize` (sizes + empty scales) correctly; `detector.rs`'s
+  `fix_empty_resize_scales` patches the graph. It is still applied on 0.23 and nobody has checked
+  whether 0.23 still needs it. Re-check it if tract is ever moved.
+- tract is on 0.23 (moved from 0.21 to drop the unmaintained `anymap2`, and the stuck `time` pin
+  from #14) and openvino on 0.11. Dependabot ignores their minor/major bumps: moving either is a
+  deliberate port. tract 0.22 changed the plan types `detector.rs`/`inference.rs` are built on.
 
 To actually exercise a change end-to-end (not just unit tests), deploy and test on real
 hardware: `sudo ./deploy.sh`, `sudo vinoauthface enroll --user $USER`, `sudo -k && sudo true`.
