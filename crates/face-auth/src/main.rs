@@ -205,14 +205,15 @@ fn run_verify(name: &str) -> ! {
     };
     let window = config.scan_duration_ms();
     let interval = config.scan_interval_ms();
-    let mut auth = match FaceAuth::new(config) {
+    // The same setup as the PAM path, so timings here match an unlock.
+    let (mut auth, prepared) = match FaceAuth::new_for_scan(config, &info.name, |_| {}) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("init error: {e}");
             std::process::exit(2);
         }
     };
-    match auth.authenticate_scan(&info.name, window, interval) {
+    match auth.authenticate_prepared(&info.name, prepared, window, interval) {
         Ok(true) => {
             println!("match");
             std::process::exit(0);
