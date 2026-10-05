@@ -330,7 +330,12 @@ mod tests {
                 let dir = dir.clone();
                 std::thread::spawn(move || {
                     for _ in 0..5 {
-                        record_failure("alice", &dir).unwrap();
+                        // 40 fsynced updates queue behind one lock, which a slow
+                        // disk can stretch past LOCK_WAIT. LockBusy means nothing
+                        // was counted, so retrying keeps the exact-count check.
+                        while let Err(e) = record_failure("alice", &dir) {
+                            assert!(e.is::<LockBusy>(), "{e}");
+                        }
                     }
                 })
             })
