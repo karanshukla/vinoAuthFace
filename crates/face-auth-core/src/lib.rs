@@ -140,9 +140,43 @@ fn check_camera_binding(config: &FaceAuthConfig, user: &str) -> Result<()> {
     cameras::check(&enrolled, cameras::camera_id(&device).as_deref(), &device)
 }
 
+/// The encoder, possibly still loading on another thread (see
+/// [`FaceAuth::new_for_scan`]).
+enum EncoderSlot {
+    Ready(FaceEncoder),
+    Loading(std::thread::JoinHandle<Result<FaceEncoder>>),
+    /// A failed load, already reported.
+    Failed,
+}
+
+impl EncoderSlot {
+    /// Wait for the load if it is still running.
+    fn resolve(&mut self) -> Result<&mut FaceEncoder> {
+        if let Self::Loading(_) = self {
+            let Self::Loading(handle) = std::mem::replace(self, Self::Failed) else { unreachable!() };
+            *self = Self::Ready(
+                handle.join().unwrap_or_else(|_| Err(anyhow::anyhow!("encoder load panicked")))?,
+            );
+        }
+        match self {
+            Self::Ready(encoder) => Ok(encoder),
+            _ => anyhow::bail!("face encoder failed to load"),
+        }
+    }
+
+    /// Resolve only if the load has already finished, so a failed load
+    /// surfaces without making the scan wait.
+    fn resolve_if_finished(&mut self) -> Result<()> {
+        if matches!(self, Self::Loading(h) if h.is_finished()) {
+            self.resolve()?;
+        }
+        Ok(())
+    }
+}
+
 pub struct FaceAuth {
     config: FaceAuthConfig,
-    encoder: FaceEncoder,
+    encoder: EncoderSlot,
     detector: FaceDetector,
 }
 
@@ -157,7 +191,7 @@ impl FaceAuth {
             &backend,
             &device,
         )?;
-        Ok(Self { config, encoder, detector })
+        Ok(Self { config, encoder: EncoderSlot::Ready(encoder), detector })
     }
 
     /// Like [`FaceAuth::new`], but loads the models while another thread runs
@@ -174,22 +208,29 @@ impl FaceAuth {
     ) -> Result<(Self, PreparedScan)> {
         config.validate()?;
         let (backend, device) = (config.backend(), config.npu_device());
-        let (models, prelude) = std::thread::scope(|s| {
+        // The first face frame is only a liveness baseline, so the encoder
+        // (the slow model) loads in the background while the scan starts.
+        // Everything the loader needs is owned, so it can outlive this call.
+        let encoder = {
+            let (model_path, backend, device) = (config.model_path(), backend.clone(), device.clone());
+            std::thread::spawn(move || FaceEncoder::new(&model_path, &backend, &device))
+        };
+        let (detector, prelude) = std::thread::scope(|s| {
             let prelude = s.spawn(|| scan_prelude(&config, user, gate));
-            let models = FaceEncoder::new(&config.model_path(), &backend, &device).and_then(|encoder| {
-                let detector = FaceDetector::new(
-                    &config.detector_model_path(),
-                    config.detector_threshold(),
-                    &backend,
-                    &device,
-                )?;
-                Ok((encoder, detector))
-            });
-            (models, prelude.join())
+            let detector = FaceDetector::new(
+                &config.detector_model_path(),
+                config.detector_threshold(),
+                &backend,
+                &device,
+            );
+            (detector, prelude.join())
         });
-        let (encoder, detector) = models?;
+        let detector = detector?;
         let prelude = prelude.unwrap_or_else(|_| Err(anyhow::anyhow!("scan preparation panicked")));
-        Ok((Self { config, encoder, detector }, PreparedScan(prelude)))
+        Ok((
+            Self { config, encoder: EncoderSlot::Loading(encoder), detector },
+            PreparedScan(prelude),
+        ))
     }
 
     pub fn config(&self) -> &FaceAuthConfig {
@@ -264,7 +305,7 @@ impl FaceAuth {
         }
 
         let input = face_input(&frame, &face_box)?;
-        let embedding = self.encoder.encode(input.view())?;
+        let embedding = self.encoder.resolve()?.encode(input.view())?;
         tracing::debug!(elapsed = ?t0.elapsed(), "authenticate_once complete");
 
         let matched = verify_embedding(&embedding, &store, self.config.threshold())?;
@@ -389,6 +430,8 @@ impl FaceAuth {
             }
             if !counted {
                 counted = true;
+                // A broken encoder is a setup failure, not a failed attempt.
+                self.encoder.resolve_if_finished()?;
                 if !record_pending_failure(user, &embeddings_dir) {
                     return Ok(false);
                 }
@@ -448,7 +491,7 @@ impl FaceAuth {
                     continue;
                 }
             };
-            let embedding = self.encoder.encode(input.view())?;
+            let embedding = self.encoder.resolve()?.encode(input.view())?;
 
             if verify_embedding(&embedding, &store, self.config.threshold())? {
                 if !motion_seen {
@@ -516,7 +559,7 @@ impl FaceAuth {
                     continue;
                 }
             };
-            let embedding = self.encoder.encode(input.view())?;
+            let embedding = self.encoder.resolve()?.encode(input.view())?;
             store.add_embedding(embedding);
             captured += 1;
             progress(EnrollProgress::Captured { captured, wanted: frames });
