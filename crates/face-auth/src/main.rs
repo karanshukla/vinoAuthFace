@@ -387,8 +387,6 @@ fn main() {
         fail_auth(&format!("skipping face authentication: {reason}"));
     }
 
-    wait_for_start_delay(&config);
-
     let scan_duration = config.scan_duration_ms();
     let scan_interval = config.scan_interval_ms();
     let surface = environment::classify_pam_service(env::var("PAM_SERVICE").ok().as_deref());
@@ -400,7 +398,8 @@ fn main() {
         format!("{what} for '{}' (service {service}, {store_kind} templates)", info.name)
     };
 
-    let mut auth = match FaceAuth::new(config) {
+    // The start delay runs beside the model load, ahead of any camera use.
+    let (mut auth, prepared) = match FaceAuth::new_for_scan(config, &info.name, wait_for_start_delay) {
         Ok(a) => a,
         Err(e) => fail_setup(&format!("init error: {e}")),
     };
@@ -416,7 +415,7 @@ fn main() {
     let mut stdout = std::io::stdout();
     let relay = relayed.then_some(&mut stdout as &mut dyn std::io::Write);
     let scanning = prompt::ScanPrompt::show(env::var("PAM_TTY").ok().as_deref(), info.uid, relay);
-    let result = auth.authenticate_scan(&info.name, scan_duration, scan_interval);
+    let result = auth.authenticate_prepared(&info.name, prepared, scan_duration, scan_interval);
     drop(scanning);
     tracing::debug!(total = ?t0.elapsed(), "scan finished");
 
