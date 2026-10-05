@@ -266,23 +266,61 @@ impl Camera {
         Ok(Self { fd, buffers, width, height, pixelformat, stream_on: false, y16_bits: 8 })
     }
 
-    pub fn capture_frame(&mut self, timeout_ms: i32) -> Result<IrFrame> {
-        if !self.stream_on {
-            // Queue every buffer before streaming, so the driver always has
-            // somewhere to write and never has to drop a frame.
-            for index in 0..self.buffers.len() as u32 {
-                let buf = v4l2_buffer {
-                    index,
-                    type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
-                    memory: V4L2_MEMORY_MMAP,
-                    ..unsafe { std::mem::zeroed() }
-                };
-                ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &buf as *const _ as *mut c_void)?;
-            }
-            let stream_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            ioctl(self.fd.as_raw_fd(), VIDIOC_STREAMON, &stream_type as *const _ as *mut c_void)?;
-            self.stream_on = true;
+    /// Queue every buffer and start streaming; a no-op once streaming.
+    /// `capture_frame` calls it on first use, so calling it early only moves
+    /// the sensor's warm-up off the critical path.
+    pub fn start_stream(&mut self) -> Result<()> {
+        if self.stream_on {
+            return Ok(());
         }
+        // Queue every buffer before streaming, so the driver always has
+        // somewhere to write and never has to drop a frame.
+        for index in 0..self.buffers.len() as u32 {
+            let buf = v4l2_buffer {
+                index,
+                type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
+                memory: V4L2_MEMORY_MMAP,
+                ..unsafe { std::mem::zeroed() }
+            };
+            ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &buf as *const _ as *mut c_void)?;
+        }
+        let stream_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        ioctl(self.fd.as_raw_fd(), VIDIOC_STREAMON, &stream_type as *const _ as *mut c_void)?;
+        self.stream_on = true;
+        Ok(())
+    }
+
+    /// Hand back every frame the driver has already finished, so the next
+    /// read is a fresh one. The ring returns its oldest frame first, so when
+    /// the caller is slower than the sensor it would otherwise work on frames
+    /// several periods old.
+    pub fn discard_queued(&mut self) {
+        if !self.stream_on {
+            return;
+        }
+        // The ring holds `buffers.len()` frames at most; the bound only guards
+        // a driver that keeps reporting readiness.
+        for _ in 0..self.buffers.len() {
+            let mut pfd = pollfd { fd: self.fd.as_raw_fd(), events: POLLIN, revents: 0 };
+            if unsafe { libc::poll(&mut pfd, 1, 0) } <= 0 {
+                break;
+            }
+            let mut buf = v4l2_buffer {
+                type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
+                memory: V4L2_MEMORY_MMAP,
+                ..unsafe { std::mem::zeroed() }
+            };
+            if ioctl(self.fd.as_raw_fd(), VIDIOC_DQBUF, &mut buf as *mut _ as *mut c_void).is_err() {
+                break;
+            }
+            if ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &mut buf as *mut _ as *mut c_void).is_err() {
+                break;
+            }
+        }
+    }
+
+    pub fn capture_frame(&mut self, timeout_ms: i32) -> Result<IrFrame> {
+        self.start_stream()?;
 
         let mut pfd = pollfd {
             fd: self.fd.as_raw_fd(),
@@ -367,6 +405,7 @@ impl Camera {
     /// frames can lock onto the dark phase. The brighter of two consecutive
     /// frames avoids both without assuming a strobe exists.
     pub fn capture_illuminated_frame(&mut self, timeout_ms: i32) -> Result<IrFrame> {
+        self.discard_queued();
         let first = self.capture_frame(timeout_ms)?;
 
         // If the second capture fails, the first is still a usable answer.

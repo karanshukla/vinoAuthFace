@@ -91,6 +91,55 @@ pub enum EnrollProgress {
     Captured { captured: usize, wanted: usize },
 }
 
+/// What a scan needs before its first frame, prepared by
+/// [`FaceAuth::new_for_scan`]. `Ok(None)` means the user is locked out.
+pub struct PreparedScan(Result<Option<(EmbeddingStore, Camera)>>);
+
+fn scan_prelude(
+    config: &FaceAuthConfig,
+    user: &str,
+    gate: impl FnOnce(&FaceAuthConfig),
+) -> Result<Option<(EmbeddingStore, Camera)>> {
+    gate(config);
+    config.verify_pinned_camera()?;
+    check_camera_binding(config, user)?;
+    let embeddings_dir = config.embeddings_dir();
+    if lockout::check(user, &embeddings_dir, &config.lockout_policy()).is_some() {
+        return Ok(None);
+    }
+    let device = config.device()?;
+    // An account with no templates fails at the load below; don't light the
+    // emitter for it.
+    let enrolled = EmbeddingStore::is_enrolled(user, &embeddings_dir).unwrap_or(false);
+    std::thread::scope(|s| {
+        let camera = enrolled.then(|| {
+            s.spawn(|| {
+                let mut camera = Camera::open(&device)?;
+                camera.start_stream()?;
+                Ok::<_, anyhow::Error>(camera)
+            })
+        });
+        let t0 = Instant::now();
+        let store = EmbeddingStore::load_with(user, &embeddings_dir, config.seal_embeddings());
+        tracing::debug!(elapsed = ?t0.elapsed(), "store loaded");
+        let store = store?;
+        let camera = match camera {
+            Some(handle) => handle.join().map_err(|_| anyhow::anyhow!("camera thread panicked"))??,
+            None => Camera::open(&device)?,
+        };
+        Ok(Some((store, camera)))
+    })
+}
+
+fn check_camera_binding(config: &FaceAuthConfig, user: &str) -> Result<()> {
+    if !config.bind_camera() {
+        return Ok(());
+    }
+    let enrolled = cameras::load(user, &config.embeddings_dir())?;
+    let device = config.device()?;
+    cameras::check(&enrolled, cameras::camera_id(&device).as_deref(), &device)
+}
+
 pub struct FaceAuth {
     config: FaceAuthConfig,
     encoder: FaceEncoder,
@@ -109,6 +158,38 @@ impl FaceAuth {
             &device,
         )?;
         Ok(Self { config, encoder, detector })
+    }
+
+    /// Like [`FaceAuth::new`], but loads the models while another thread runs
+    /// everything `authenticate_scan` needs before its first frame: `gate`,
+    /// the pin, binding and lockout checks, then the template unseal alongside
+    /// the camera's open and stream start. Those steps took turns before and
+    /// the first one dominated. Nothing touches the camera until `gate`
+    /// and the checks have passed. Hand the second value to
+    /// [`FaceAuth::authenticate_prepared`].
+    pub fn new_for_scan(
+        config: FaceAuthConfig,
+        user: &str,
+        gate: impl FnOnce(&FaceAuthConfig) + Send,
+    ) -> Result<(Self, PreparedScan)> {
+        config.validate()?;
+        let (backend, device) = (config.backend(), config.npu_device());
+        let (models, prelude) = std::thread::scope(|s| {
+            let prelude = s.spawn(|| scan_prelude(&config, user, gate));
+            let models = FaceEncoder::new(&config.model_path(), &backend, &device).and_then(|encoder| {
+                let detector = FaceDetector::new(
+                    &config.detector_model_path(),
+                    config.detector_threshold(),
+                    &backend,
+                    &device,
+                )?;
+                Ok((encoder, detector))
+            });
+            (models, prelude.join())
+        });
+        let (encoder, detector) = models?;
+        let prelude = prelude.unwrap_or_else(|_| Err(anyhow::anyhow!("scan preparation panicked")));
+        Ok((Self { config, encoder, detector }, PreparedScan(prelude)))
     }
 
     pub fn config(&self) -> &FaceAuthConfig {
@@ -133,12 +214,7 @@ impl FaceAuth {
     /// not a failed attempt: nothing is recorded against the lockout, and PAM
     /// falls through to the password. See `cameras`.
     fn check_camera_binding(&self, user: &str) -> Result<()> {
-        if !self.config.bind_camera() {
-            return Ok(());
-        }
-        let enrolled = cameras::load(user, &self.config.embeddings_dir())?;
-        let device = self.config.device()?;
-        cameras::check(&enrolled, cameras::camera_id(&device).as_deref(), &device)
+        check_camera_binding(&self.config, user)
     }
 
     /// Single-shot verification. The PAM path uses
@@ -205,24 +281,25 @@ impl FaceAuth {
         duration_ms: u64,
         interval_ms: u64,
     ) -> Result<bool> {
-        self.config.verify_pinned_camera()?;
-        self.check_camera_binding(user)?;
+        let prepared = PreparedScan(scan_prelude(&self.config, user, |_| {}));
+        self.authenticate_prepared(user, prepared, duration_ms, interval_ms)
+    }
+
+    /// [`FaceAuth::authenticate_scan`] with the setup already done by
+    /// [`FaceAuth::new_for_scan`].
+    pub fn authenticate_prepared(
+        &mut self,
+        user: &str,
+        prepared: PreparedScan,
+        duration_ms: u64,
+        interval_ms: u64,
+    ) -> Result<bool> {
         let embeddings_dir = self.config.embeddings_dir();
-        if lockout::check(user, &embeddings_dir, &self.config.lockout_policy()).is_some() {
+        let Some((store, mut cam)) = prepared.0? else {
             return Ok(false);
-        }
-
-        let t0 = Instant::now();
-        let store = EmbeddingStore::load_with(
-            user,
-            &self.config.embeddings_dir(),
-            self.config.seal_embeddings(),
-        )?;
+        };
         self.check_model_tag(&store)?;
-        tracing::debug!(elapsed = ?t0.elapsed(), "store loaded");
-
-        let mut cam = Camera::open(&self.config.device()?)?;
-        tracing::debug!(elapsed = ?t0.elapsed(), "camera open");
+        let t0 = Instant::now();
 
         let mut deadline = Instant::now() + Duration::from_millis(duration_ms);
         let mut frame_num: usize = 0;
