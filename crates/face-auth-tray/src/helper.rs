@@ -55,7 +55,7 @@ pub const SETTINGS: &[Setting] = &[
             choice(
                 "strict",
                 "Strict",
-                "Rejects a photo moved by hand, matches more strictly and wants your face fairly close. It may fail if you sit very still or far back.",
+                "Rejects a photo moved by hand, matches more strictly, wants your face fairly close and waits 5 seconds before scanning a lock screen. It may fail if you sit very still or far back.",
             ),
         ],
     },

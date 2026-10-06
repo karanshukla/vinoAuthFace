@@ -34,7 +34,7 @@ parts() {
             case "$2" in
                 convenient) echo "liveness=standard match=relaxed minface=off delay=off" ;;
                 balanced)   echo "liveness=standard match=standard minface=off delay=2s" ;;
-                strict)     echo "liveness=strict match=strict minface=near delay=2s" ;;
+                strict)     echo "liveness=strict match=strict minface=near delay=5s" ;;
                 *) return 1 ;;
             esac ;;
         scan|confirm|updates)

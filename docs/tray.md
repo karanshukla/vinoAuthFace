@@ -60,7 +60,7 @@ Security sets four keys together:
 |---|---|---|---|---|
 | Convenient | standard | 0.5 | 0.0 (any size) | 0 |
 | Balanced | standard | 0.6 | 0.0 (any size) | 2000 |
-| Strict | strict | 0.7 | 0.1 (fairly close) | 2000 |
+| Strict | strict | 0.7 | 0.1 (fairly close) | 5000 |
 
 Security shows "custom" when the four keys don't all match one preset, for instance after
 setting one of them by hand. Convenient matches more easily (so does a lookalike) and scans the lock
