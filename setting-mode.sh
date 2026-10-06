@@ -7,6 +7,10 @@ set -euo pipefail
 #   status           print "KEY CHOICE" per setting; CHOICE is "custom" when
 #                    the file holds a value that is not one of the menu's
 #
+# "security" is a preset over four keys (liveness, match, minface, delay),
+# which are not settable on their own; it reads as "custom" unless all four
+# match one preset.
+#
 # Only the keys and values below can be set: the tray's root helper runs this
 # with a fixed pair, never a value from the caller. Everything else in the
 # file (camera, models, lockout, the camera pin, the backend, ...) is system
@@ -20,7 +24,28 @@ usage() {
     exit 2
 }
 
-KEYS="liveness scan match minface delay confirm updates"
+KEYS="security scan confirm updates"
+
+# parts KEY CHOICE: the "part=choice" pairs a choice writes. Fails for an
+# unknown key or choice.
+parts() {
+    case "$1" in
+        security)
+            case "$2" in
+                convenient) echo "liveness=standard match=relaxed minface=off delay=off" ;;
+                balanced)   echo "liveness=standard match=standard minface=off delay=2s" ;;
+                strict)     echo "liveness=strict match=strict minface=near delay=5s" ;;
+                *) return 1 ;;
+            esac ;;
+        scan|confirm|updates)
+            spec "$1"
+            case " $CHOICES " in
+                *" $2="*) echo "$1=$2" ;;
+                *) return 1 ;;
+            esac ;;
+        *) return 1 ;;
+    esac
+}
 
 # spec KEY: sets TOML (the key written), FLAT (its flat spelling, which wins
 # over a dotted one, or empty), DEFAULT (the choice when the file has no
@@ -79,11 +104,29 @@ current() {
     echo custom
 }
 
+# The choice of a key from KEYS. A preset is the one whose parts all read
+# back as written.
+current_key() {
+    local choice part have=""
+    if [ "$1" != security ]; then
+        spec "$1"
+        current
+        return
+    fi
+    for part in $(parts security balanced); do
+        spec "${part%%=*}"
+        have="$have ${part%%=*}=$(current)"
+    done
+    for choice in convenient balanced strict; do
+        [ "$(parts security "$choice")" = "${have# }" ] && { echo "$choice"; return; }
+    done
+    echo custom
+}
+
 status() {
     local key
     for key in $KEYS; do
-        spec "$key"
-        echo "$key $(current)"
+        echo "$key $(current_key "$key")"
     done
 }
 
@@ -95,36 +138,42 @@ case "$1" in
 esac
 KEY="$2"
 CHOICE="$3"
-spec "$KEY" || { echo "Unknown setting: $KEY" >&2; exit 2; }
-VALUE=""
-for pair in $CHOICES; do
-    [ "${pair%%=*}" = "$CHOICE" ] && VALUE="${pair#*=}"
-done
-[ -n "$VALUE" ] || { echo "Unknown choice for $KEY: $CHOICE" >&2; exit 2; }
+PARTS="$(parts "$KEY" "$CHOICE")" || { echo "Unknown setting or choice: $KEY $CHOICE" >&2; exit 2; }
 
 if [ "$EUID" -ne 0 ] && [ -z "${FACE_AUTH_SETTINGS_CONF:-}" ]; then
     echo "Must run as root: sudo $0 set $KEY $CHOICE" >&2
     exit 1
 fi
 
-# Drop the key's active lines, then add ours at the end (plain keys, as
+# Drop the parts' active lines, then add ours at the end (plain keys, as
 # deploy.sh does, so it never lands inside a table). Written beside the file and
-# renamed over it, keeping its owner and mode.
+# renamed over it, keeping its owner and mode, so a preset lands all at once.
+DROP=""
+LINES=""
+for part in $PARTS; do
+    spec "${part%%=*}"
+    for pair in $CHOICES; do
+        [ "${pair%%=*}" = "${part#*=}" ] && VALUE="${pair#*=}"
+    done
+    for name in $FLAT $TOML; do
+        DROP="$DROP${name//./[.]}|"
+    done
+    if [ "$QUOTED" = 1 ]; then
+        LINES="$LINES$TOML = \"$VALUE\""$'\n'
+    else
+        LINES="$LINES$TOML = $VALUE"$'\n'
+    fi
+done
 TMP="$(mktemp "$CONF.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
 if [ -f "$CONF" ]; then
-    DROP="$(for name in $FLAT $TOML; do printf '%s|' "${name//./[.]}"; done)"
     grep -vE "^[[:space:]]*(${DROP%|})[[:space:]]*=" "$CONF" > "$TMP" || true
     chmod --reference="$CONF" "$TMP"
     chown --reference="$CONF" "$TMP"
 else
     chmod 0644 "$TMP"
 fi
-if [ "$QUOTED" = 1 ]; then
-    echo "$TOML = \"$VALUE\"" >> "$TMP"
-else
-    echo "$TOML = $VALUE" >> "$TMP"
-fi
+printf '%s' "$LINES" >> "$TMP"
 mv "$TMP" "$CONF"
 trap - EXIT
 

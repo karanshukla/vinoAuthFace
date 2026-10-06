@@ -183,21 +183,22 @@ jobs:
         run: |
           sm=/usr/local/share/face-auth/setting-mode.sh
           test "$(stat -c %U:%a "$sm")" = root:755
-          sudo "$sm" set liveness strict
-          "$sm" status | grep -qx 'liveness strict'
-          sudo "$sm" set match relaxed
-          sudo "$sm" set delay 5s
-          sudo "$sm" set liveness standard
-          "$sm" status | grep -qx 'match relaxed'
-          "$sm" status | grep -qx 'delay 5s'
+          "$sm" status | grep -qx 'security balanced'
+          sudo "$sm" set security strict
+          "$sm" status | grep -qx 'security strict'
+          sudo "$sm" set scan 8s
+          sudo "$sm" set security convenient
+          "$sm" status | grep -qx 'security convenient'
+          "$sm" status | grep -qx 'scan 8s'
           # One line per key, and the file still parses for the auth path.
           test "$(grep -c '^liveness.preset' /etc/face-auth.toml)" = 1
           test "$(grep -cE '^(guards[.])?start_delay_ms' /etc/face-auth.toml)" = 1
-          # Nothing outside the menu can be set.
+          # Nothing outside the menu can be set, including a preset's parts.
           if sudo "$sm" set lockout off; then exit 1; fi
+          if sudo "$sm" set liveness off; then exit 1; fi
           if sudo "$sm" set scan 1s; then exit 1; fi
-          sudo "$sm" set match standard
-          sudo "$sm" set delay 2s
+          sudo "$sm" set security balanced
+          sudo "$sm" set scan 5s
 
       # The helper is the tray's only root entry point: it must refuse
       # anything that did not come through pkexec, and any named target.
@@ -207,8 +208,8 @@ jobs:
           test "$(stat -c %U:%a /usr/local/libexec/vinoauthface-helper)" = root:755
           policy=/usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
           # 7 fixed verbs plus one per Settings choice (helper.rs checks the policy against its table).
-          test "$(grep -c 'exec.argv1' "$policy")" = 28
-          test "$(grep -c '<allow_active>auth_admin</allow_active>' "$policy")" = 28
+          test "$(grep -c 'exec.argv1' "$policy")" = 18
+          test "$(grep -c '<allow_active>auth_admin</allow_active>' "$policy")" = 18
           test -f /etc/xdg/autostart/vinoauthface-tray.desktop
           test -f /usr/local/share/applications/vinoauthface-enrol.desktop
           test -f /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg

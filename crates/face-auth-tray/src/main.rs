@@ -13,7 +13,7 @@ use face_auth_tray::icon::{self, State};
 use face_auth_tray::idle::{self, Idle};
 use face_auth_tray::{progress, scanning, single_instance};
 use ksni::blocking::{Handle, TrayMethods};
-use ksni::menu::{RadioGroup, RadioItem, StandardItem, SubMenu};
+use ksni::menu::{CheckmarkItem, RadioGroup, RadioItem, StandardItem, SubMenu};
 use ksni::{Category, MenuItem, ToolTip};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
@@ -467,7 +467,7 @@ impl ksni::Tray for Tray {
                 SubMenu {
                     label: "Settings".into(),
                     icon_name: "preferences-system".into(),
-                    submenu: SETTINGS.iter().map(|setting| setting_menu(setting, s, idle)).collect(),
+                    submenu: settings_menu(s, idle),
                     ..Default::default()
                 }
                 .into(),
@@ -498,10 +498,27 @@ impl ksni::Tray for Tray {
     }
 }
 
-/// One entry of the Settings submenu: its current choice in the label, the
-/// choices as radio items. A value set by hand that the menu doesn't offer
-/// shows as "custom" with nothing selected.
-fn setting_menu(setting: &'static Setting, status: &Status, idle: bool) -> MenuItem<Tray> {
+/// The Settings submenu, one level deep: an on/off setting is a checkmark,
+/// any other a heading over its radio choices.
+fn settings_menu(status: &Status, idle: bool) -> Vec<MenuItem<Tray>> {
+    let mut menu = Vec::new();
+    for setting in SETTINGS {
+        if let Some(item) = setting_toggle(setting, status, idle) {
+            menu.push(item);
+            continue;
+        }
+        if !menu.is_empty() {
+            menu.push(MenuItem::Separator);
+        }
+        menu.extend(setting_radio(setting, status, idle));
+    }
+    menu
+}
+
+/// The index of a setting's current choice, and the word to show for it. A
+/// value set by hand that the menu doesn't offer shows as "custom" with
+/// nothing selected.
+fn current_choice(setting: &Setting, status: &Status) -> (Option<usize>, &'static str) {
     let current = status.settings.get(setting.key).map(String::as_str);
     let selected = setting.choices.iter().position(|c| Some(c.id) == current);
     let shown = match (selected, current) {
@@ -509,9 +526,42 @@ fn setting_menu(setting: &'static Setting, status: &Status, idle: bool) -> MenuI
         (None, Some("custom")) => "custom",
         _ => "unknown",
     };
-    SubMenu {
-        label: format!("{}: {shown}", setting.title),
-        submenu: vec![RadioGroup {
+    (selected, shown)
+}
+
+/// A setting whose choices are exactly "on" and "off", as one checkmark.
+fn setting_toggle(setting: &'static Setting, status: &Status, idle: bool) -> Option<MenuItem<Tray>> {
+    if setting.choices.len() != 2 {
+        return None;
+    }
+    let on = setting.choices.iter().find(|c| c.id == "on")?;
+    let off = setting.choices.iter().find(|c| c.id == "off")?;
+    let current = status.settings.get(setting.key).map(String::as_str);
+    let label = match current {
+        Some("on" | "off") => setting.title.to_string(),
+        Some(other) => format!("{} ({other})", setting.title),
+        None => format!("{} (unknown)", setting.title),
+    };
+    let checked = current == Some("on");
+    Some(
+        CheckmarkItem {
+            label,
+            enabled: idle,
+            checked,
+            activate: Box::new(move |t: &mut Tray| t.run(Action::Set(setting, if checked { off } else { on }))),
+            ..Default::default()
+        }
+        .into(),
+    )
+}
+
+/// A heading with the current choice, then the choices as radio items.
+fn setting_radio(setting: &'static Setting, status: &Status, idle: bool) -> [MenuItem<Tray>; 2] {
+    let (selected, shown) = current_choice(setting, status);
+    let heading = if selected.is_some() { setting.title.to_string() } else { format!("{}: {shown}", setting.title) };
+    [
+        info(heading),
+        RadioGroup {
             selected: selected.unwrap_or(usize::MAX),
             select: Box::new(move |t: &mut Tray, i| {
                 if Some(i) != selected {
@@ -524,10 +574,8 @@ fn setting_menu(setting: &'static Setting, status: &Status, idle: bool) -> MenuI
                 .map(|c| RadioItem { label: c.label.into(), enabled: idle, ..Default::default() })
                 .collect(),
         }
-        .into()],
-        ..Default::default()
-    }
-    .into()
+        .into(),
+    ]
 }
 
 /// Run `pkexec vinoauthface-helper <verb>`, reading vinoauthface enroll's progress off
@@ -905,9 +953,9 @@ mod tests {
 
     #[test]
     fn settings_status_parses_one_pair_per_line() {
-        let parsed = parse_settings("liveness strict\nscan 5s\ndelay custom\n");
-        assert_eq!(parsed["liveness"], "strict");
-        assert_eq!(parsed["delay"], "custom");
+        let parsed = parse_settings("security strict\nscan 5s\nconfirm custom\n");
+        assert_eq!(parsed["security"], "strict");
+        assert_eq!(parsed["confirm"], "custom");
         assert!(parse_settings("").is_empty());
     }
 
