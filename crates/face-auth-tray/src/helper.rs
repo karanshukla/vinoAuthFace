@@ -43,21 +43,20 @@ const fn choice(id: &'static str, label: &'static str, note: &'static str) -> Ch
 
 pub const SETTINGS: &[Setting] = &[
     Setting {
-        key: "liveness",
-        title: "Liveness check",
+        key: "security",
+        title: "Security",
         choices: &[
-            choice("off", "Off (a photo can unlock)", "No motion check: a photo or screen replay can unlock. Turn it back on unless you need this."),
-            choice("standard", "Standard", "Your face must move a little during the scan. Still faces pass by drifting over the window."),
-            choice("strict", "Strict (sit naturally)", "Also rejects a photo moved by hand. It may fail if you sit very still."),
-        ],
-    },
-    Setting {
-        key: "match",
-        title: "Match strictness",
-        choices: &[
-            choice("relaxed", "Relaxed (0.5)", "Matches more easily, and so does a lookalike. Retrain if it still misses you."),
-            choice("standard", "Standard (0.6)", "The default."),
-            choice("strict", "Strict (0.7)", "Fewer false matches. It may need better light or a Retrain."),
+            choice(
+                "convenient",
+                "Convenient",
+                "Matches more easily, and so does a lookalike. The lock screen scans at once, so someone at the camera when you lock it is let back in. Liveness stays on.",
+            ),
+            choice("balanced", "Balanced", "The default."),
+            choice(
+                "strict",
+                "Strict",
+                "Rejects a photo moved by hand, matches more strictly and wants your face fairly close. It may fail if you sit very still or far back.",
+            ),
         ],
     },
     Setting {
@@ -68,25 +67,6 @@ pub const SETTINGS: &[Setting] = &[
             choice("5s", "5 seconds", "The default."),
             choice("8s", "8 seconds", ""),
             choice("12s", "12 seconds", ""),
-        ],
-    },
-    Setting {
-        key: "minface",
-        title: "Minimum face size",
-        choices: &[
-            choice("off", "Any size", ""),
-            choice("near", "Fairly close", "Faces smaller than this are ignored at login and rejected at enrolment."),
-            choice("close", "Close to the camera", "Faces smaller than this are ignored at login and rejected at enrolment."),
-        ],
-    },
-    Setting {
-        key: "delay",
-        title: "Lock screen start delay",
-        choices: &[
-            choice("off", "None (unlocks at once)", "Someone still at the camera when you lock the screen is unlocked at once."),
-            choice("1s", "1 second", ""),
-            choice("2s", "2 seconds", "The default."),
-            choice("5s", "5 seconds", ""),
         ],
     },
     Setting {
@@ -255,16 +235,17 @@ mod tests {
         assert_eq!(command(Verb::LoginOff, "alice").1, [LOGIN_MODE, "off"]);
         assert_eq!(command(Verb::LoginBoth, "alice").1, [LOGIN_MODE, "both"]);
         assert_eq!(command(Verb::LoginFace, "alice").1, [LOGIN_MODE, "face"]);
-        let strict = setting("liveness").unwrap();
-        assert_eq!(command(Verb::Set(strict, &strict.choices[2]), "alice").1, [SETTING_MODE, "set", "liveness", "strict"]);
+        let security = setting("security").unwrap();
+        assert_eq!(command(Verb::Set(security, &security.choices[2]), "alice").1, [SETTING_MODE, "set", "security", "strict"]);
     }
 
     #[test]
     fn parses_a_setting_verb_and_nothing_near_it() {
-        let (verb, uid) = parse_request(&args(&["set-liveness-strict"]), Some("1000")).unwrap();
+        let (verb, uid) = parse_request(&args(&["set-security-strict"]), Some("1000")).unwrap();
         assert_eq!(uid, 1000);
-        assert!(matches!(verb, Verb::Set(s, c) if s.key == "liveness" && c.id == "strict"));
-        for bad in ["set-liveness", "set-liveness-", "set-liveness-loose", "set-lockout-off", "set-liveness-strict ", "set"] {
+        assert!(matches!(verb, Verb::Set(s, c) if s.key == "security" && c.id == "strict"));
+        // The preset's parts are not settable one by one.
+        for bad in ["set-security", "set-security-", "set-security-loose", "set-lockout-off", "set-security-strict ", "set", "set-liveness-off", "set-match-relaxed", "set-delay-off"] {
             assert!(parse_request(&args(&[bad]), Some("1000")).is_err(), "{bad:?}");
         }
         assert!(parse_request(&args(&["set-scan-5s", "x"]), Some("1000")).is_err());
