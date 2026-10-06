@@ -8,7 +8,7 @@
 | `gdm-password` | `/etc/pam.d/gdm-password` | GNOME lock screen |
 | `swaylock` | `/etc/pam.d/swaylock` | swaylock |
 | `polkit-1` | `/etc/pam.d/polkit-1` | polkit prompts |
-| `kde-fingerprint` | `/etc/pam.d/kde-fingerprint` | KDE lock screen |
+| `kde-fingerprint` or `kde-smartcard` | `/etc/pam.d/kde-fingerprint` or `kde-smartcard` | KDE lock screen (one of the two, see [KDE](#kde)) |
 | `cosmic-greeter` | `/etc/pam.d/cosmic-greeter` | COSMIC lock screen and greeter |
 
 The Plasma login screen is opt-in and set separately: see [Login screen](#login-screen).
@@ -45,9 +45,30 @@ until `deploy.sh` is re-run (`update.sh` doesn't touch PAM).
 
 ## KDE
 
-KScreenLocker starts the `kde-fingerprint` service up front, alongside the password field, so the
-KDE lock screen unlocks hands-free: look at the camera and it opens, or type your password as
-usual.
+KScreenLocker runs two background PAM services next to the password field, `kde-fingerprint` and
+`kde-smartcard`. `deploy.sh` puts face in one of them, so the KDE lock screen unlocks hands-free:
+look at the camera and it opens, or type your password as usual.
+
+| `kde-fingerprint` | `kde-smartcard` | Face goes in | Line |
+|---|---|---|---|
+| No `pam_fprintd` | any | `kde-fingerprint` | `[success=done new_authtok_reqd=done default=die]` |
+| Runs `pam_fprintd` | No smartcard module | `kde-smartcard` | `[success=done new_authtok_reqd=done default=die]` |
+| Runs `pam_fprintd` | Runs `pam_pkcs11`, `pam_p11` or `pam_sss`, or is missing | `kde-fingerprint` | `sufficient` |
+
+`pam_fprintd` and the smartcard modules count in the service's own file or in a stack it includes
+(Fedora's `fingerprint-auth` and `smartcard-auth`). In the smartcard slot, face and finger run at
+the same time and Plasma's hint reads "(or scan your smartcard)". Sharing the fingerprint slot
+with fprintd, face runs first and the reader waits until the scan ends. Re-running `deploy.sh`
+after enabling or disabling fingerprint login moves face to match.
+
+In a slot of its own, a miss ends the stack with an error instead of falling through. On Fedora
+the rest of the stack is a stub that answers "unavailable", and KScreenLocker stops using a
+service that answers that until the next lock.
+
+KScreenLocker starts these services when the lock screen wakes (a key or mouse move), not when it
+locks, so walking up to a locked laptop and moving the mouse starts a scan. It doesn't retry one
+that missed: moving the mouse again does nothing. To scan again, press Enter on an empty password
+field (or type a wrong one). The failed password restarts every service 3 seconds later.
 
 ## Login screen
 
