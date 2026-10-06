@@ -37,7 +37,7 @@ It starts at the next login, or run `vinoauthface-tray` now (it detaches from th
 | Retrain face | `vinoauthface improve --user <you>`: captures more frames (new lighting, glasses) and keeps the old ones | root, via pkexec |
 | Test scan | One live scan, the same way the lock screen runs it. The result is a notification | you |
 | Login screen | Only with Plasma Login. Password only, password then face, or face: see [pam.md](pam.md#login-screen). Runs `login-mode.sh` | root, via pkexec |
-| Settings | One submenu: a Security preset and the scan time as radio lists, and the two on/off settings as checkmarks. Changes `/etc/face-auth.toml` through `setting-mode.sh` (see the table below). A value you set by hand that the menu doesn't offer shows as "custom" with nothing selected | root, via pkexec |
+| Settings | One submenu: a Security preset and the scan time as radio lists, and the two on/off settings as checkmarks. Changes `/etc/face-auth.toml` through `setting-mode.sh` (see the table below). A value you set by hand that the menu doesn't offer shows as "custom" with nothing selected. Hide icon when idle is the exception: it writes your own `~/.config/face-auth.toml` | root, via pkexec; you, for Hide icon when idle |
 | Uninstall | Runs `uninstall.sh` after a second click. Your templates are kept, as with `sudo ./uninstall.sh`. The tray exits when it finishes | root, via pkexec |
 
 ### Settings
@@ -71,8 +71,11 @@ Deliberately not in the menu, because a wrong value locks you out, breaks enrolm
 loosens the system: liveness off, the four security keys one at a time, the camera and its pin,
 the models and backend, the template directory and sealing, `bind_camera`, `lockout.*`, the other
 `guards.*`, `liveness.window_ms`, `detector_threshold`, and the capture timeout and scan interval.
-Edit `/etc/face-auth.toml` for those ([configuration.md](configuration.md)). `tray_idle_minutes`
-stays a file setting too: it is per user and read at startup.
+Edit `/etc/face-auth.toml` for those ([configuration.md](configuration.md)).
+
+Settings also has **Hide icon when idle** (10 minutes, 30 minutes, 1 hour or Never), which is
+yours rather than the system's: it is saved as `tray_idle_minutes` in your own
+`~/.config/face-auth.toml`, with no password, and applies at once.
 
 Enrolment progress ("Capturing frame 3/30", "Face too small: move closer") shows in the tooltip
 and a notification. The tray reads it from `vinoauthface enroll`'s normal output.
@@ -88,10 +91,10 @@ the icon doesn't change.
 After 30 minutes with nothing happening, the icon reports itself Passive, which Plasma moves into
 the hidden icons behind the panel's arrow. The tray keeps running. A scan, a change of status (ready,
 not enrolled, no camera), a new release or a click on a menu entry brings it back and restarts the
-count. The 30 minutes include time spent suspended. Set the delay with `tray_idle_minutes` in
-`~/.config/face-auth.toml` or `/etc/face-auth.toml`; 0 keeps the icon in view. It is read at
-startup, so restart the tray after changing it. Other trays may ignore Passive and keep showing the
-icon.
+count. The 30 minutes include time spent suspended. Change the delay from Settings > Hide icon
+when idle, or set `tray_idle_minutes` in `~/.config/face-auth.toml` or `/etc/face-auth.toml`; 0
+keeps the icon in view. A value edited by hand is read at startup, so restart the tray after
+changing it. Other trays may ignore Passive and keep showing the icon.
 
 ## Privileges
 

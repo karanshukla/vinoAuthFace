@@ -243,5 +243,6 @@ scan_interval_ms = 0
 # Tray icon idle delay, in minutes (default 30). After this long with no scan,
 # action or status change, the tray icon reports itself Passive and Plasma
 # tucks it behind the panel's arrow. 0 keeps it in view. Also honoured from
-# ~/.config/face-auth.toml; never part of authentication.
+# ~/.config/face-auth.toml, which the tray's Settings menu writes; never part of
+# authentication.
 # tray_idle_minutes = 30

@@ -161,13 +161,18 @@ FISH_COMPLETION_DIR="/usr/local/share/fish/vendor_completions.d"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
 # The Plasma login screen's services are login-mode.sh's, not this list's.
-PAM_SERVICES="sudo swaylock gdm-password polkit-1 kde-fingerprint cosmic-greeter"
+PAM_SERVICES="sudo swaylock gdm-password polkit-1 kde-fingerprint kde-smartcard cosmic-greeter"
 VAR_DIR="/var/lib/face-auth"
 NPU_CACHE_DIR="/var/cache/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
 OPENVINO_INSTALL_DIR="/usr/local/lib/face-auth/openvino"
 
 PAM_LINE="auth       sufficient  pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth"
+# For a KDE lock screen slot with nothing after us that can authenticate. A
+# miss falling through to the stub there (Fedora's authinfo_unavail
+# fingerprint-auth or smartcard-auth) makes KScreenLocker drop the slot until
+# the next lock; failing here instead lets a wrong password rescan.
+PAM_LINE_KDE_ONLY="auth       [success=done new_authtok_reqd=done default=die]  pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth"
 
 if [ "$(id -u)" -ne 0 ]; then
     fail "Run this with sudo" "It installs into /usr/local, /etc and /var/lib."
@@ -930,13 +935,59 @@ fi
 # ---- PAM setup ----
 PAM_DONE=() PAM_ABSENT=() PAM_COVERED=()
 
+# Stacks this file pulls its auth lines from, one level deep.
+pam_included_stacks() {
+    awk '$1 ~ /^-?auth$/ && ($2 == "include" || $2 == "substack") { print $3 }
+         $1 == "@include" { print $2 }' "$1"
+}
+
+# A service's file: the override, else the vendor default.
+pam_file() {
+    if [ -f "$PAM_DIR/$1" ]; then echo "$PAM_DIR/$1"
+    elif [ -f "/usr/lib/pam.d/$1" ]; then echo "/usr/lib/pam.d/$1"
+    else return 1
+    fi
+}
+
+# stack_uses SERVICE MODULE_REGEX: an auth line in the service, or in a stack
+# it includes, runs a matching module.
+stack_uses() {
+    local file stack
+    file=$(pam_file "$1") || return 1
+    for stack in "$file" $(pam_included_stacks "$file" | while read -r s; do pam_file "$s"; done); do
+        grep -qE "^[[:space:]]*-?auth[[:space:]].*$2" "$stack" && return 0
+    done
+    return 1
+}
+
+# KScreenLocker runs kde-fingerprint and kde-smartcard side by side, next to
+# the password field. Face takes the fingerprint slot, unless fprintd owns it
+# and the smartcard slot is free: then face and finger run at once instead of
+# one after the other (#81). Both taken: face goes first, then the finger.
+KDE_SLOT=kde-fingerprint KDE_SLOT_LINE="$PAM_LINE_KDE_ONLY"
+if stack_uses kde-fingerprint pam_fprintd; then
+    if pam_file kde-smartcard >/dev/null && ! stack_uses kde-smartcard 'pam_(pkcs11|p11|sss)'; then
+        KDE_SLOT=kde-smartcard
+    else
+        KDE_SLOT_LINE="$PAM_LINE"
+    fi
+fi
+for service in kde-fingerprint kde-smartcard; do
+    [ "$service" = "$KDE_SLOT" ] && continue
+    # The slot a previous deploy used: drop its copy of the vendor file.
+    marker="$PAM_DIR/.face-auth-$service-created"
+    if [ -f "$marker" ] && cmp -s "$PAM_DIR/$service" "/usr/lib/pam.d/$service"; then
+        rm -f "$PAM_DIR/$service" "$PAM_DIR/$service.face-auth.bak" "$marker"
+    fi
+done
+
 # These services usually have no /etc/pam.d override and fall back to the
 # vendor file in /usr/lib/pam.d (polkit-1: pkexec, GUI admin prompts,
 # Bitwarden's system unlock; the KDE and COSMIC lock screens and greeters, on
 # image-based distros). Materialise the vendor file as an override so there is
 # something to patch, and mark it so uninstall.sh deletes it rather than
 # "restoring" a file that never was.
-for service in polkit-1 kde-fingerprint cosmic-greeter; do
+for service in polkit-1 "$KDE_SLOT" cosmic-greeter; do
     if [ ! -f "$PAM_DIR/$service" ] && [ -f "/usr/lib/pam.d/$service" ]; then
         cp "/usr/lib/pam.d/$service" "$PAM_DIR/$service"
         touch "$PAM_DIR/.face-auth-$service-created"
@@ -948,13 +999,13 @@ done
 # pam_faillock preauth, pam_selinux_permit) stay in front of it.
 PAM_AUTHENTICATOR='^[[:space:]]*-?auth[[:space:]]+(include|substack)[[:space:]]|^[[:space:]]*-?auth[[:space:]].*pam_(unix|sss|fprintd|u2f)|^[[:space:]]*@include[[:space:]]'
 
-# Stacks this file pulls its auth lines from, one level deep.
-pam_included_stacks() {
-    awk '$1 ~ /^-?auth$/ && ($2 == "include" || $2 == "substack") { print $3 }
-         $1 == "@include" { print $2 }' "$1"
-}
-
 for service in $PAM_SERVICES; do
+    case "$service" in
+        kde-fingerprint | kde-smartcard)
+            [ "$service" = "$KDE_SLOT" ] || continue
+            line="$KDE_SLOT_LINE" ;;
+        *) line="$PAM_LINE" ;;
+    esac
     conf="$PAM_DIR/$service"
     if [ ! -f "$conf" ]; then
         PAM_ABSENT+=("$service")
@@ -979,12 +1030,12 @@ for service in $PAM_SERVICES; do
     line_no=$(grep -nE "$PAM_AUTHENTICATOR" "$conf" | head -n1 | cut -d: -f1)
     if [ -z "$line_no" ]; then
         warn PAM "$conf has no authenticating auth line. Add this above the password module:" \
-            "$PAM_LINE"
+            "$line"
         continue
     fi
 
     cp "$conf" "$conf.face-auth.bak"
-    sed -i "${line_no}i $PAM_LINE" "$conf"
+    sed -i "${line_no}i $line" "$conf"
     PAM_DONE+=("$service")
     # Record what we wrote so uninstall.sh can tell whether the user has
     # edited the copy since. Legacy markers are empty.

@@ -126,6 +126,8 @@ jobs:
           grep -A1 'pam_exec\.so.*face-auth' /etc/pam.d/sudo | grep -q '@include common-auth'
           cmp /etc/pam.d/gdm-password /tmp/gdm-password.orig
           grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/cosmic-greeter
+          # No fprintd: the fingerprint slot, failing rather than falling through.
+          grep -qE '^auth +\[success=done new_authtok_reqd=done default=die\] +pam_exec\.so.*vinoauthface-auth' /etc/pam.d/kde-fingerprint
           test -x /usr/local/bin/vinoauthface-auth
           test -g /usr/local/bin/vinoauthface-auth
           test "$(stat -c %G /usr/local/bin/vinoauthface-auth)" = face-auth
@@ -262,15 +264,22 @@ jobs:
           test ! -e /usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
           test ! -e /etc/xdg/autostart/vinoauthface-tray.desktop
 
+      # Also: fprintd owns kde-fingerprint, so face takes the smartcard slot.
       - name: "Branch 2: no cargo -> reuse local target/ binaries"
         run: |
+          printf '%s\n' '#%PAM-1.0' 'auth       required     pam_fprintd.so' | sudo tee /usr/lib/pam.d/kde-fingerprint
+          printf '%s\n' '#%PAM-1.0' 'auth       include      login' | sudo tee /usr/lib/pam.d/kde-smartcard
           mv "$HOME/.cargo/bin" "$HOME/.cargo/bin.hidden"
           sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" ./deploy.sh
           test -x /usr/local/bin/vinoauthface-auth
           test -x /usr/local/bin/vinoauthface
+          test ! -e /etc/pam.d/kde-fingerprint
+          grep -qE '^auth +\[success=done new_authtok_reqd=done default=die\] +pam_exec\.so.*vinoauthface-auth' /etc/pam.d/kde-smartcard
 
       - name: Reset install (again)
-        run: sudo ./uninstall.sh
+        run: |
+          sudo ./uninstall.sh
+          test ! -e /etc/pam.d/kde-smartcard
 
       - name: Stage a fake release for the download-fallback branch
         run: |

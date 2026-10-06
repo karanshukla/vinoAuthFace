@@ -159,6 +159,7 @@ mod tests {
         assert_eq!(classify_pam_service(Some("gdm-password")), Surface::Login);
         assert_eq!(classify_pam_service(Some("swaylock")), Surface::ScreenLock);
         assert_eq!(classify_pam_service(Some("kde-fingerprint")), Surface::ScreenLock);
+        assert_eq!(classify_pam_service(Some("kde-smartcard")), Surface::ScreenLock);
         assert_eq!(classify_pam_service(None), Surface::ScreenLock);
     }
 

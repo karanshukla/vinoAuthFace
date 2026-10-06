@@ -958,6 +958,7 @@ name = "face-auth-tray"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dirs",
  "face-auth-core",
  "ksni",
  "libc",

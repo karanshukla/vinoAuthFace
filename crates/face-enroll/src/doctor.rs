@@ -11,13 +11,15 @@ use face_auth_core::{
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
-/// Kept in step with `PAM_SERVICES` in deploy.sh.
+/// Kept in step with `PAM_SERVICES` in deploy.sh. deploy.sh hooks only one
+/// of the two KDE slots, kde-smartcard when fprintd owns kde-fingerprint.
 const PAM_SERVICES: &[&str] = &[
     "sudo",
     "swaylock",
     "gdm-password",
     "polkit-1",
     "kde-fingerprint",
+    "kde-smartcard",
     "plasmalogin-fingerprint",
     "cosmic-greeter",
 ];
@@ -737,6 +739,13 @@ mod tests {
         assert_eq!(pam_verdict("sudo", &c).status, Status::Warn);
         let c = format!("auth required pam_faillock.so preauth\n{OURS}\n");
         assert_eq!(pam_verdict("sudo", &c).status, Status::Ok);
+    }
+
+    #[test]
+    fn kde_slot_line_is_hooked() {
+        let kde = "auth [success=done new_authtok_reqd=done default=die] pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth";
+        let c = format!("{kde}\nauth substack smartcard-auth\n");
+        assert_eq!(pam_verdict("kde-smartcard", &c).status, Status::Ok);
     }
 
     #[test]

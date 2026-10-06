@@ -17,6 +17,7 @@ path = "src/bin/vinoauthface-helper.rs"
 [dependencies]
 face-auth-core = { path = "../face-auth-core" }
 anyhow = { workspace = true }
+dirs = { workspace = true }
 libc = "0.2"
 # Pure Rust StatusNotifierItem over zbus; zbus again for notifications.
 ksni = { version = "0.3.6", default-features = false, features = ["blocking", "async-io"] }
