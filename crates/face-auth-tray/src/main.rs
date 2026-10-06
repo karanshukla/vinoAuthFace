@@ -101,6 +101,8 @@ enum Msg {
     Update(Option<String>),
     /// A menu entry was clicked: the icon stays in view.
     Touch,
+    /// A new idle delay from the Settings menu, in minutes.
+    IdleMinutes(u64),
     Quit,
 }
 
@@ -266,6 +268,8 @@ struct Tray {
     update: Option<String>,
     /// Idle long enough to tuck the icon away (see `idle.rs`).
     hidden: bool,
+    /// The idle delay in force, for the Settings menu.
+    idle_minutes: u64,
 }
 
 impl Tray {
@@ -462,17 +466,15 @@ impl ksni::Tray for Tray {
             );
         }
 
-        if !s.settings.is_empty() {
-            menu.push(
-                SubMenu {
-                    label: "Settings".into(),
-                    icon_name: "preferences-system".into(),
-                    submenu: settings_menu(s, idle),
-                    ..Default::default()
-                }
-                .into(),
-            );
-        }
+        menu.push(
+            SubMenu {
+                label: "Settings".into(),
+                icon_name: "preferences-system".into(),
+                submenu: settings_menu(s, idle, self.idle_minutes),
+                ..Default::default()
+            }
+            .into(),
+        );
 
         menu.push(MenuItem::Separator);
         if self.confirm == Some(Confirm::Uninstall) {
@@ -499,10 +501,12 @@ impl ksni::Tray for Tray {
 }
 
 /// The Settings submenu, one level deep: an on/off setting is a checkmark,
-/// any other a heading over its radio choices.
-fn settings_menu(status: &Status, idle: bool) -> Vec<MenuItem<Tray>> {
+/// any other a heading over its radio choices. The system settings come
+/// first, when `setting-mode.sh` is there to read them; the tray's own idle
+/// delay always shows.
+fn settings_menu(status: &Status, idle: bool, idle_minutes: u64) -> Vec<MenuItem<Tray>> {
     let mut menu = Vec::new();
-    for setting in SETTINGS {
+    for setting in SETTINGS.iter().filter(|_| !status.settings.is_empty()) {
         if let Some(item) = setting_toggle(setting, status, idle) {
             menu.push(item);
             continue;
@@ -512,7 +516,32 @@ fn settings_menu(status: &Status, idle: bool) -> Vec<MenuItem<Tray>> {
         }
         menu.extend(setting_radio(setting, status, idle));
     }
+    if !menu.is_empty() {
+        menu.push(MenuItem::Separator);
+    }
+    menu.extend(idle_radio(idle_minutes));
     menu
+}
+
+/// How long the icon waits before tucking itself away. Saved as the user, so
+/// it needs no password and works while an action runs.
+fn idle_radio(minutes: u64) -> [MenuItem<Tray>; 2] {
+    let selected = idle::CHOICES.iter().position(|(m, _)| *m == minutes);
+    let heading = match selected {
+        Some(_) => "Hide icon when idle".to_string(),
+        None => format!("Hide icon when idle: {minutes} min"),
+    };
+    [
+        info(heading),
+        RadioGroup {
+            selected: selected.unwrap_or(usize::MAX),
+            select: Box::new(move |t: &mut Tray, i| {
+                let _ = t.tx.send(Msg::IdleMinutes(idle::CHOICES[i].0));
+            }),
+            options: idle::CHOICES.iter().map(|(_, label)| RadioItem { label: (*label).into(), ..Default::default() }).collect(),
+        }
+        .into(),
+    ]
 }
 
 /// The index of a setting's current choice, and the word to show for it. A
@@ -769,7 +798,7 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
     let mut scanning = false;
     let mut next_update_check = Instant::now() + UPDATE_FIRST_CHECK;
     let mut notified_update: Option<String> = None;
-    let minutes = FaceAuthConfig::load().map_or(30, |c| c.tray_idle_minutes());
+    let minutes = handle.update(|t| t.idle_minutes).unwrap_or(30);
     let mut idle = Idle::new(minutes, idle::boottime());
     let mut hidden = false;
     let mut state = handle.update(|t| t.state());
@@ -782,6 +811,20 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
                 return;
             }
             Ok(Msg::Touch) => idle.touch(idle::boottime()),
+            Ok(Msg::IdleMinutes(minutes)) => {
+                let saved = idle::user_config()
+                    .ok_or_else(|| std::io::Error::other("no home directory"))
+                    .and_then(|path| idle::save(&path, minutes));
+                match saved {
+                    Ok(()) => {
+                        idle = Idle::new(minutes, idle::boottime());
+                        handle.update(|t| t.idle_minutes = minutes);
+                    }
+                    Err(e) => {
+                        Notifier::new().send(0, "Cannot save the idle delay", &format!("~/.config/face-auth.toml: {e}"));
+                    }
+                }
+            }
             Ok(Msg::Update(latest)) => {
                 if latest.is_some() && latest != notified_update {
                     idle.touch(idle::boottime());
@@ -904,6 +947,7 @@ fn main() -> anyhow::Result<()> {
         confirm: None,
         update: None,
         hidden: false,
+        idle_minutes: FaceAuthConfig::load().map_or(30, |c| c.tray_idle_minutes()),
     };
     // Assumed, not checked: at login this can start before Plasma's tray does.
     let handle = tray.assume_sni_available(true).spawn()?;
@@ -966,5 +1010,6 @@ mod tests {
             assert!(!setting.title.contains('_'));
             assert!(setting.choices.iter().all(|c| !c.label.contains('_')));
         }
+        assert!(idle::CHOICES.iter().all(|(_, label)| !label.contains('_')));
     }
 }
