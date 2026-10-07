@@ -552,6 +552,62 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Corrupt a valid template every way a bad disk or a planted file could:
+    /// the loader must return an error or a store that still honours the
+    /// format's limits, and never panic. Fixed seed, so a failure reproduces.
+    #[test]
+    fn corrupted_templates_never_panic_or_break_the_format_limits() {
+        let dir = tmpdir("mutated");
+        let mut store = EmbeddingStore::default();
+        store.add_embedding(sample(0.1));
+        store.add_embedding(sample(0.2));
+        store.save("alice", &dir, TAG).unwrap();
+        let path = dir.join("alice/embeddings.bin");
+        let seed = fs::read(&path).unwrap();
+
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = move |n: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % n.max(1) as u64) as usize
+        };
+        const EXTREME: [u32; 6] = [0, 1, 0x7fff_ffff, 0x8000_0000, 0xffff_ffff, 0x7fc0_0000];
+
+        for _ in 0..1500 {
+            let mut data = seed.clone();
+            for _ in 0..1 + next(3) {
+                match next(5) {
+                    0 => {
+                        let i = next(data.len());
+                        data[i] ^= 1 << next(8);
+                    }
+                    1 => data.truncate(next(data.len() + 1)),
+                    2 => data.extend((0..next(32)).map(|_| next(256) as u8)),
+                    // A length or count field in the header, or an f32 in the body.
+                    3 if data.len() >= 4 => {
+                        let i = next(data.len().min(48) - 3);
+                        data[i..i + 4].copy_from_slice(&EXTREME[next(EXTREME.len())].to_le_bytes());
+                    }
+                    _ if data.len() > 64 => {
+                        let i = 16 + next(data.len() - 20);
+                        data[i..i + 4].copy_from_slice(&EXTREME[next(EXTREME.len())].to_le_bytes());
+                    }
+                    _ => {}
+                }
+            }
+            plant(&path, &data);
+            if let Ok(loaded) = EmbeddingStore::load("alice", &dir) {
+                assert!(loaded.embeddings.len() <= MAX_EMBEDDINGS as usize);
+                for e in &loaded.embeddings {
+                    assert_eq!(e.len(), EMBEDDING_DIM as usize);
+                    assert!(e.iter().all(|x| x.is_finite()), "non-finite value accepted");
+                }
+            }
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn missing_store_reports_no_embeddings() {
         let dir = tmpdir("missing");

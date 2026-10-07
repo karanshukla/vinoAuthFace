@@ -153,3 +153,44 @@ parameter. A user's own `device` setting is held to the same rule. Only `device`
   against the release's `SHA256SUMS`. That catches a corrupted or truncated download, not a
   compromised release: `SHA256SUMS` is published alongside the files it covers, so the trust
   anchor is GitHub over TLS.
+
+## What has been tested, and what hasn't
+
+A review in October 2026 ran against a deployed install on an Ubuntu 24.04 VM, with a
+`v4l2loopback` device standing in for the IR camera. It found nothing exploitable. What it covered:
+
+- **Code read:** the set-group-ID entrypoint (environment scrub, `PATH`/`HOME` pinning, the
+  caller-may-only-test-themselves check), username validation and NSS lookup, the user-config
+  overlay (`O_NOFOLLOW`, owner and size checks, `fold_sections` before the whitelist) and the V4L2
+  capture path (`bytesused` and buffer index clamped to the mapping). `cargo deny` passes.
+- **Fail-closed behaviour through PAM (`pamtester`):** no camera feed, a stalled feed, a feed that
+  dies mid-scan, and a non-IR pixel format all fall through to the password within the scan window.
+  So do a truncated, empty, random, trailing-byte, NaN, symlinked or missing template. An active
+  lockout skips the camera after a bounded tarpit, even for a matching face.
+- **Parser mutation:** about 424,000 corrupted templates, lockout files, camera lists and config
+  files, with no panic, no slow load, and nothing accepted that breaks the format's limits. The
+  template case is now a unit test (`corrupted_templates_never_panic_or_break_the_format_limits`).
+  This is mutation without coverage feedback: it is not a substitute for `cargo-fuzz`, and it
+  doesn't reach the camera ioctls, the ONNX models or sealed (v3) templates.
+
+Worth knowing, none of it a vulnerability:
+
+- **A corrupt or missing `lockout/state.bin` resets the backoff** (documented in `lockout.rs`).
+  Corrupting it needs the `face-auth` group, which can already read every template.
+- **Lockout files are owned by the calling user** when a lock screen runs the helper as that user.
+  That is only safe while the parent directories stay `root:face-auth 2750`, which keeps the user
+  out of the path. Don't loosen them.
+- **Upgrading from the old world-writable store** (`deploy.sh`): the re-securing pass removes
+  strays, then runs `chmod` through `find -exec`, and `chmod` follows symlinks. A file swapped for a
+  link in that gap could be re-moded. It needs a local attacker, a one-time upgrade from a 1777
+  store, and a race; the script already tells those users to wipe the store and re-enrol.
+- **A commented-out `pam_exec ... face-auth` line counts as "already installed"** to `deploy.sh`.
+  It fails safe: face unlock is skipped, not granted.
+
+Not tested, because the VM can't:
+
+- Real IR liveness and spoof resistance. A recorded clip replayed into the loopback is a replay,
+  so passing proves nothing about presentation attacks.
+- `uvcvideo` specifics: camera pinning by USB port, the IR emitter.
+- NPU and OpenVINO behaviour, latency and power.
+- GNOME and KDE lock screens, and portal-based push-to-talk.
