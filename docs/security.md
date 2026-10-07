@@ -52,6 +52,18 @@ payload is encrypted by `systemd-creds` with a key sealed to this machine's TPM,
 laptop or a disk booted in another OS yields nothing usable. Nothing extra to install: it is part
 of systemd, and the blobs live in `/var/lib/face-auth`, which survives image updates.
 
+- **Templates can be inverted into a face.** An embedding is not an anonymous hash. Gradient
+  descent on an image, until the recognition model's embedding of it matches the stored
+  templates, produces a recognisable likeness of the enrolled user. We tried it against
+  `w600k_mbf` with 30 templates, no face prior and no GPU (a few minutes on 2 vCPUs): the
+  result was an unmistakably human face that its owner recognised as themselves, and the
+  model scored it about 0.8 cosine against the stored templates, above the default 0.6
+  threshold. It looks like a fever dream, with noisy skin texture and warped features,
+  because nothing in that setup knows what a natural photo looks like; a pretrained face
+  generator as the prior would give a much cleaner image. Treat a leaked template as a leaked
+  picture of your face, which you can't revoke. This is a privacy risk, and it is the main
+  reason to turn sealing on. It is not shown to be a way past the camera: we did not test a
+  reconstruction against the IR sensor, the detector or liveness.
 - **It defends the powered-off case only.** On the running machine root can unseal any user's
   templates, and each user their own (as `vinoauthface-auth` does). It is not protection against a
   local root attacker.
