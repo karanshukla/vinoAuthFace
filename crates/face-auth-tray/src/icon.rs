@@ -69,6 +69,11 @@ const GREY: Rgba = Rgba(160, 164, 172, 255);
 const GREEN: Rgba = Rgba(86, 204, 120, 255);
 const AMBER: Rgba = Rgba(245, 184, 66, 255);
 
+// The symbolic icon sits straight on the panel, light or dark, so its accents
+// are darker shades of the two above that keep 3:1 against both.
+const TRAY_GREEN: Rgba = Rgba(40, 150, 80, 255);
+const TRAY_AMBER: Rgba = Rgba(184, 115, 0, 255);
+
 fn paint(state: State, part: Part) -> Option<Rgba> {
     match (state, part) {
         (State::Ready, Part::Bracket) => Some(WHITE),
@@ -216,7 +221,7 @@ pub fn symbolic_svg(state: State) -> String {
         };
         bucket.push_str(&shape.svg_path());
     }
-    let accent_fill = hex(if state == State::Ready { GREEN } else { AMBER });
+    let accent_fill = hex(if state == State::Ready { TRAY_GREEN } else { TRAY_AMBER });
     let mut svg = String::from(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\">\n  \
          <style id=\"current-color-scheme\" type=\"text/css\">.ColorScheme-Text { color: #232629; }</style>\n",
@@ -337,6 +342,26 @@ mod tests {
         for s in shapes {
             for edge in [s.x, s.y, s.w, s.h, SMALL.edge] {
                 assert_eq!(edge.fract(), 0.0, "{s:?} is off the pixel grid");
+            }
+        }
+    }
+
+    fn luminance(Rgba(r, g, b, _): Rgba) -> f32 {
+        let channel = |c: u8| {
+            let c = f32::from(c) / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+
+    #[test]
+    fn the_symbolic_accents_show_on_light_and_dark_panels() {
+        // Breeze Light and Breeze Dark panel backgrounds.
+        for panel in [Rgba(239, 240, 241, 255), Rgba(32, 35, 38, 255)] {
+            for accent in [TRAY_GREEN, TRAY_AMBER] {
+                let (a, b) = (luminance(accent) + 0.05, luminance(panel) + 0.05);
+                let contrast = a.max(b) / a.min(b);
+                assert!(contrast >= 3.0, "{accent:?} on {panel:?} is only {contrast:.2}:1");
             }
         }
     }
