@@ -100,13 +100,20 @@ cargo_build() {
 # --login=off|both|face sets face unlock at the Plasma login screen
 # (login-mode.sh). Without it a re-deploy or upgrade keeps what's installed,
 # and a fresh install gets off.
+#
+# --build-runtime (or FACE_AUTH_BUILD_RUNTIME=1) lets ovfetch compile ONNX
+# Runtime against a newer OpenVINO than any prebuilt bundles, so face-auth runs
+# the same OpenVINO as the machine's other NPU programs. About 17 minutes and
+# several GB under ~/.cache/ovfetch/build.
 WITH_TRAY="${FACE_AUTH_TRAY:-1}"
 LOGIN_MODE="${FACE_AUTH_LOGIN:-}"
-USAGE="Usage: sudo ./deploy.sh [--no-tray] [--login=off|both|face]"
+BUILD_RUNTIME="${FACE_AUTH_BUILD_RUNTIME:-0}"
+USAGE="Usage: sudo ./deploy.sh [--no-tray] [--login=off|both|face] [--build-runtime]"
 for arg in "$@"; do
     case "$arg" in
         --with-tray) WITH_TRAY=1 ;;
         --no-tray) WITH_TRAY=0 ;;
+        --build-runtime) BUILD_RUNTIME=1 ;;
         --login=off|--login=both|--login=face) LOGIN_MODE="${arg#--login=}" ;;
         *) fail "Unknown option '$arg'" "$USAGE"; exit 1 ;;
     esac
@@ -278,6 +285,11 @@ OPENVINO_MODE=""
 # 0.2.2 installs every SONAME link. Before it, TBB loaded libtbbmalloc.so.2
 # from wherever else the system had one.
 OVFETCH_MIN="0.2.2"
+OVFETCH_ARGS=()
+if [ "$BUILD_RUNTIME" = 1 ]; then
+    OVFETCH_MIN="0.4.1"
+    OVFETCH_ARGS=(--build)
+fi
 
 # secure_path drops ~/.cargo/bin under sudo, the same as for cargo.
 find_ovfetch() {
@@ -302,7 +314,7 @@ if OVFETCH_BIN="$(find_ovfetch)"; then
     # Run as the user: resolving and downloading need no privileges. The plan
     # is reused below to install exactly what was checked here.
     step "asking ovfetch which OpenVINO this machine needs (takes a few seconds)"
-    if OVFETCH_PLAN="$(as_user "$OVFETCH_BIN" resolve --json)"; then
+    if OVFETCH_PLAN="$(as_user "$OVFETCH_BIN" resolve --json "${OVFETCH_ARGS[@]}")"; then
         # compiler_present is false on a machine with no NPU at all too, where
         # GPU or CPU can still use the OpenVINO build.
         if [ "${CONF_NPU_DEVICE:-NPU}" = "NPU" ] \
@@ -375,10 +387,11 @@ ov_untracked() {
 # The full version (2025.4.1); the plan's floor only has two parts.
 ov_version() { grep -oE '"openvino": "[0-9]+\.[0-9]+\.[0-9]+"' <<<"$1" | head -1 | cut -d'"' -f4 || true; }
 stage_ovfetch() {
-    local want have
+    local want
+    # The plan lists the artifact's own hash first. The lock sorts its keys, so
+    # a build's lock lists its OpenVINO wheel's hash before the artifact's.
     want="$(grep -o '"sha256": "[0-9a-f]*"' <<<"$OVFETCH_PLAN" | head -1 || true)"
-    have="$(grep -o '"sha256": "[0-9a-f]*"' "$OPENVINO_INSTALL_DIR/ovfetch.lock.json" 2>/dev/null | head -1 || true)"
-    if [ -n "$want" ] && [ "$want" = "$have" ] \
+    if [ -n "$want" ] && grep -qF "$want" "$OPENVINO_INSTALL_DIR/ovfetch.lock.json" 2>/dev/null \
        && (cd "$OPENVINO_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS) 2>/dev/null \
        && [ -z "$(ov_untracked "$OPENVINO_INSTALL_DIR")" ]; then
         ok OpenVINO "$(ov_version "$OVFETCH_PLAN") via ovfetch (installed, hashes verified)"
@@ -386,7 +399,7 @@ stage_ovfetch() {
         return 0
     fi
     OV_STAGE="$(as_user mktemp -d)"
-    as_user "$OVFETCH_BIN" install --prefix "$OV_STAGE/ov" || return 1
+    as_user "$OVFETCH_BIN" install --prefix "$OV_STAGE/ov" "${OVFETCH_ARGS[@]}" || return 1
     OV_LIB_DIR="$OV_STAGE/ov"
     ok OpenVINO "$(ov_version "$OVFETCH_PLAN") via ovfetch (downloaded, hashes verified)"
 }
