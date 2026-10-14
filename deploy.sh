@@ -287,7 +287,7 @@ OPENVINO_MODE=""
 OVFETCH_MIN="0.2.2"
 OVFETCH_ARGS=()
 if [ "$BUILD_RUNTIME" = 1 ]; then
-    OVFETCH_MIN="0.4.0"
+    OVFETCH_MIN="0.4.1"
     OVFETCH_ARGS=(--build)
 fi
 

@@ -69,7 +69,7 @@ need, and refuses anything whose hash independent sources don't agree on. It ins
 `/usr/local/lib/face-auth/openvino`, and later deploys only download again when a different build
 resolves. ovfetch runs as you, into a staging directory; once root has copied that into place,
 `deploy.sh` checks every file against ovfetch's `SHA256SUMS` and removes the directory if anything
-doesn't match or isn't listed (face unlock then falls back to the password). `--build-runtime` lets ovfetch (0.4.0+) compile a build with a newer OpenVINO than any prebuilt has, so face unlock runs the same OpenVINO as the machine's other NPU programs; it takes about 17 minutes. Install it with `cargo install ovfetch --locked`, or grab the attested binary from its
+doesn't match or isn't listed (face unlock then falls back to the password). `--build-runtime` lets ovfetch (0.4.1+) compile a build with a newer OpenVINO than any prebuilt has, so face unlock runs the same OpenVINO as the machine's other NPU programs; it takes about 17 minutes. Install it with `cargo install ovfetch --locked`, or grab the attested binary from its
 releases.
 
 If the NPU driver has no compiler library (Fedora's 1.32.0 rpm ships none), OpenVINO can't compile
