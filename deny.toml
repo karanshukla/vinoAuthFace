@@ -9,6 +9,13 @@ ignore = [
     # paste: unmaintained proc-macro, no successor release. Pulled in by tract
     # and image's codec stack at compile time only.
     { id = "RUSTSEC-2024-0436", reason = "compile-time proc-macro, no safe upgrade" },
+    # zbus_names, zvariant, zvariant_derive: merged into zbus 6.0.0, so the
+    # standalone crates are flagged unmaintained. Only reached through
+    # ksni 0.3 -> zbus 5 in the tray, never linked into face-auth (the PAM
+    # binary). No safe upgrade until ksni moves to zbus 6.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: tray-only via ksni/zbus 5, no safe upgrade" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: tray-only via ksni/zbus 5, no safe upgrade" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: tray-only via ksni/zbus 5, no safe upgrade" },
 ]
 
 [licenses]
