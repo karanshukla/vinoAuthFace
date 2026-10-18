@@ -283,8 +283,8 @@ section "Build"
 ACTUAL_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
 OPENVINO_MODE=""
 # 0.2.2 installs every SONAME link. Before it, TBB loaded libtbbmalloc.so.2
-# from wherever else the system had one.
-OVFETCH_MIN="0.2.2"
+# from wherever else the system had one. The vino apps now share 0.5.0.
+OVFETCH_MIN="0.5.0"
 OVFETCH_ARGS=()
 if [ "$BUILD_RUNTIME" = 1 ]; then
     OVFETCH_MIN="0.4.1"

@@ -60,7 +60,7 @@ npu` and sets `backend = "openvino"` in `/etc/face-auth.toml`. Pick the device w
 
 | Source | How it's found | Runtime lookup |
 |--------|----------------|----------------|
-| [ovfetch](https://github.com/karanshukla/ovfetch) 0.2.2+ | On `PATH` or in `~/.cargo/bin` | rpath baked into `vinoauthface-auth` |
+| [ovfetch](https://github.com/karanshukla/ovfetch) 0.5.0+ | On `PATH` or in `~/.cargo/bin` | rpath baked into `vinoauthface-auth` |
 | System package | `libopenvino_c.so*` in a standard lib dir | The package's own `ldconfig` entry |
 | Extracted archive | `~/.local/opt` or `/opt/intel`, with `setupvars.sh` | Copied, then registered with `ldconfig` |
 
