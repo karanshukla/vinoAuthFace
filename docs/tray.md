@@ -1,3 +1,8 @@
+---
+title: Tray icon
+nav_order: 7
+---
+
 # Tray icon
 
 An optional tray icon for the session: an icon that shows scan state, and enrol, retrain, test and uninstall

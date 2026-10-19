@@ -1,3 +1,8 @@
+---
+title: Releasing
+nav_order: 10
+---
+
 # Releasing
 
 Versions are consecutive numbers (`v2`, `v3`, ...), not semver: a release is main at that point,

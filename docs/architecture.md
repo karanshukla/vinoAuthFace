@@ -1,3 +1,8 @@
+---
+title: Architecture
+nav_order: 9
+---
+
 # Architecture
 
 ## How it works
@@ -72,7 +77,7 @@ with upstream. On top of upstream it adds:
 
 Upstream's GTK settings GUI and GNOME scan-indicator extension aren't included. The optional
 tray icon ([tray.md](tray.md)) replaces both, without a root-to-user status channel. The full history, including the upstream security pass, is in
-[CHANGELOG.md](../CHANGELOG.md).
+[CHANGELOG.md](https://github.com/karanshukla/vinoAuthFace/blob/main/CHANGELOG.md).
 
 ## Project structure
 

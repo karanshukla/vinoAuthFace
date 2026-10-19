@@ -1,7 +1,12 @@
+---
+title: Security model
+nav_order: 8
+---
+
 # Security model and limitations
 
 Face unlock here is a convenience over a password you still have, not a stronger factor. To
-report a vulnerability, see [SECURITY.md](../SECURITY.md).
+report a vulnerability, see [SECURITY.md](https://github.com/karanshukla/vinoAuthFace/blob/main/SECURITY.md).
 
 ## Trust model
 

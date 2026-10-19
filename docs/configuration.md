@@ -1,6 +1,11 @@
+---
+title: Configuration and enrolment
+nav_order: 3
+---
+
 # Configuration and enrolment
 
-Every key is documented in [`config/face-auth.toml.example`](../config/face-auth.toml.example),
+Every key is documented in [`config/face-auth.toml.example`](https://github.com/karanshukla/vinoAuthFace/blob/main/config/face-auth.toml.example),
 which is grouped: everyday settings, liveness, lockout, guards, install/hardware, advanced. This
 page covers which config sources are trusted where, enrolment, and choosing a recognition model.
 

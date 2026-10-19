@@ -1,3 +1,8 @@
+---
+title: Installing
+nav_order: 2
+---
+
 # Installing
 
 `sudo ./deploy.sh` (or `sudo ./install.sh`, which just runs it) is the only supported install path. This page covers what it does, how to

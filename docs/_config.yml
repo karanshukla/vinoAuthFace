@@ -1,0 +1,19 @@
+title: vinoAuthFace
+description: Windows Hello-style IR face unlock for Linux, through PAM
+url: https://vinoauthface.vinopilot.ca
+theme: just-the-docs
+search_enabled: true
+heading_anchors: true
+color_scheme: dark
+plugins:
+  - jekyll-relative-links
+relative_links:
+  enabled: true
+  collections: false
+aux_links:
+  GitHub: https://github.com/karanshukla/vinoAuthFace
+footer_content: 'Released under the <a href="https://github.com/karanshukla/vinoAuthFace/blob/main/LICENSE">project licence</a>.'
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor

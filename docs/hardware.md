@@ -1,3 +1,8 @@
+---
+title: Hardware and diagnostics
+nav_order: 5
+---
+
 # Hardware and diagnostics
 
 ## Compatibility
