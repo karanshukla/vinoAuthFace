@@ -7,6 +7,21 @@ use openvino::{Core as OvCore, DeviceType, ElementType, InferRequest, PartialSha
 #[cfg(feature = "npu")]
 const ENCODER_SIZE: i64 = 112;
 
+/// Run `f` on the process's one OpenVINO Core, shared by the encoder and the
+/// detector. With a Core each, compiling the second model on the NPU can tear
+/// down the Level Zero context the first one's request runs in (seen once the
+/// NPU has been busy with other programs, until a reboot), and that model's
+/// next inference segfaults inside libze_loader.
+#[cfg(feature = "npu")]
+pub(crate) fn with_ov_core<T>(f: impl FnOnce(&mut OvCore) -> anyhow::Result<T>) -> anyhow::Result<T> {
+    static CORE: std::sync::Mutex<Option<OvCore>> = std::sync::Mutex::new(None);
+    let mut core = CORE.lock().unwrap_or_else(|e| e.into_inner());
+    if core.is_none() {
+        *core = Some(OvCore::new()?);
+    }
+    f(core.as_mut().expect("set above"))
+}
+
 // One encoder per process, so the size gap between variants costs nothing.
 #[cfg_attr(feature = "npu", allow(clippy::large_enum_variant))]
 pub enum FaceEncoder {
@@ -52,13 +67,14 @@ impl FaceEncoder {
     #[cfg(feature = "npu")]
     fn new_openvino(model_path: &str, device: &str) -> anyhow::Result<Self> {
         let t0 = std::time::Instant::now();
-        let mut core = OvCore::new()?;
-        let mut model = core.read_model_from_file(model_path, "")?;
-        let input_name = model.get_input_by_index(0)?.get_name()?;
-        let output_name = model.get_output_by_index(0)?.get_name()?;
-        model.reshape_single_input(&PartialShape::new_static(4, &[1, 3, ENCODER_SIZE, ENCODER_SIZE])?)?;
-        let mut compiled = core.compile_model(&model, DeviceType::from(device))?;
-        let request = compiled.create_infer_request()?;
+        let (request, input_name, output_name) = with_ov_core(|core| {
+            let mut model = core.read_model_from_file(model_path, "")?;
+            let input_name = model.get_input_by_index(0)?.get_name()?;
+            let output_name = model.get_output_by_index(0)?.get_name()?;
+            model.reshape_single_input(&PartialShape::new_static(4, &[1, 3, ENCODER_SIZE, ENCODER_SIZE])?)?;
+            let mut compiled = core.compile_model(&model, DeviceType::from(device))?;
+            Ok((compiled.create_infer_request()?, input_name, output_name))
+        })?;
         tracing::debug!(device, compile_ms = t0.elapsed().as_millis() as u64, "encoder compiled (openvino)");
         Ok(Self::OpenVino { request, input_name, output_name })
     }

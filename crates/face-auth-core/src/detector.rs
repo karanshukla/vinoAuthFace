@@ -206,7 +206,7 @@ fn fix_empty_resize_scales(model: &mut InferenceModel) -> anyhow::Result<usize> 
 }
 
 #[cfg(feature = "npu")]
-use openvino::{Core as OvCore, DeviceType, ElementType, InferRequest, PartialShape, Shape, Tensor as OvTensor};
+use openvino::{DeviceType, ElementType, InferRequest, PartialShape, Shape, Tensor as OvTensor};
 
 /// Which detector a model file is, told apart by its outputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,17 +286,18 @@ impl FaceDetector {
     #[cfg(feature = "npu")]
     fn new_openvino(model_path: &str, threshold: f32, device: &str) -> anyhow::Result<Self> {
         let t0 = std::time::Instant::now();
-        let mut core = OvCore::new()?;
-        let mut model = core.read_model_from_file(model_path, "")?;
-        let input_name = model.get_input_by_index(0)?.get_name()?;
-        let kind = DetectorKind::from_outputs(model.get_outputs_len()?)?;
-        let output_names = (0..model.get_outputs_len()?)
-            .map(|i| Ok(model.get_output_by_index(i)?.get_name()?))
-            .collect::<anyhow::Result<Vec<String>>>()?;
-        let [h, w] = kind.input_hw();
-        model.reshape_single_input(&PartialShape::new_static(4, &[1, 3, h as i64, w as i64])?)?;
-        let mut compiled = core.compile_model(&model, DeviceType::from(device))?;
-        let request = compiled.create_infer_request()?;
+        let (request, input_name, output_names, kind) = crate::inference::with_ov_core(|core| {
+            let mut model = core.read_model_from_file(model_path, "")?;
+            let input_name = model.get_input_by_index(0)?.get_name()?;
+            let kind = DetectorKind::from_outputs(model.get_outputs_len()?)?;
+            let output_names = (0..model.get_outputs_len()?)
+                .map(|i| Ok(model.get_output_by_index(i)?.get_name()?))
+                .collect::<anyhow::Result<Vec<String>>>()?;
+            let [h, w] = kind.input_hw();
+            model.reshape_single_input(&PartialShape::new_static(4, &[1, 3, h as i64, w as i64])?)?;
+            let mut compiled = core.compile_model(&model, DeviceType::from(device))?;
+            Ok((compiled.create_infer_request()?, input_name, output_names, kind))
+        })?;
         tracing::debug!(device, ?kind, compile_ms = t0.elapsed().as_millis() as u64, "detector compiled (openvino)");
         Ok(Self::OpenVino { request, input_name, output_names, kind, threshold })
     }
