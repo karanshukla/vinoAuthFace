@@ -1,3 +1,8 @@
+---
+title: PAM integration
+nav_order: 4
+---
+
 # PAM integration
 
 `deploy.sh` adds `auth sufficient pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth` to:

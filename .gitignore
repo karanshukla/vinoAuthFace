@@ -24,3 +24,9 @@ models/
 *.swo
 *~
 .bash_history
+
+# Jekyll (docs site)
+_site/
+docs/.bundle/
+docs/vendor/
+docs/.jekyll-cache/
