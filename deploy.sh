@@ -101,19 +101,17 @@ cargo_build() {
 # (login-mode.sh). Without it a re-deploy or upgrade keeps what's installed,
 # and a fresh install gets off.
 #
-# --build-runtime (or FACE_AUTH_BUILD_RUNTIME=1) lets ovfetch compile ONNX
-# Runtime against a newer OpenVINO than any prebuilt bundles, so face-auth runs
-# the same OpenVINO as the machine's other NPU programs. About 17 minutes and
-# several GB under ~/.cache/ovfetch/build.
+# --build-runtime is accepted and ignored: it compiled ONNX Runtime to get a
+# newer OpenVINO, and face-auth never uses ONNX Runtime. OpenVINO alone now
+# comes prebuilt (see the ovfetch section below).
 WITH_TRAY="${FACE_AUTH_TRAY:-1}"
 LOGIN_MODE="${FACE_AUTH_LOGIN:-}"
-BUILD_RUNTIME="${FACE_AUTH_BUILD_RUNTIME:-0}"
-USAGE="Usage: sudo ./deploy.sh [--no-tray] [--login=off|both|face] [--build-runtime]"
+USAGE="Usage: sudo ./deploy.sh [--no-tray] [--login=off|both|face]"
 for arg in "$@"; do
     case "$arg" in
         --with-tray) WITH_TRAY=1 ;;
         --no-tray) WITH_TRAY=0 ;;
-        --build-runtime) BUILD_RUNTIME=1 ;;
+        --build-runtime) warn Runtime "--build-runtime is no longer needed: OpenVINO now installs prebuilt, with no compile." ;;
         --login=off|--login=both|--login=face) LOGIN_MODE="${arg#--login=}" ;;
         *) fail "Unknown option '$arg'" "$USAGE"; exit 1 ;;
     esac
@@ -282,14 +280,15 @@ section "Build"
 #           profile, so the runtime libraries are copied system-wide below.
 ACTUAL_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
 OPENVINO_MODE=""
-# 0.2.2 installs every SONAME link. Before it, TBB loaded libtbbmalloc.so.2
-# from wherever else the system had one. The vino apps now share 0.5.0.
+# --openvino-only (ovfetch 0.5.0) installs Intel's openvino wheel without ONNX
+# Runtime, which face-auth never loads. That is the newest OpenVINO the NPU
+# driver supports, the release the machine's other NPU programs run (an NPU
+# fault resets the device for every process on it), and nothing compiles.
+# Before it, the newest OpenVINO came only inside an onnxruntime-openvino
+# wheel, which lags (2025.4.1 against 2026.4.1), or by compiling ONNX Runtime.
 OVFETCH_MIN="0.5.0"
-OVFETCH_ARGS=()
-if [ "$BUILD_RUNTIME" = 1 ]; then
-    OVFETCH_MIN="0.4.1"
-    OVFETCH_ARGS=(--build)
-fi
+OVFETCH_ARGS=(--openvino-only)
+OV_LOCK="$OPENVINO_INSTALL_DIR/ovfetch.lock.json"
 
 # secure_path drops ~/.cargo/bin under sudo, the same as for cargo.
 find_ovfetch() {
@@ -331,6 +330,13 @@ if OVFETCH_BIN="$(find_ovfetch)"; then
     else
         warn OpenVINO "ovfetch found no build for this machine (see above)."
     fi
+elif [ -f "$OV_LOCK" ]; then
+    # The installed runtime came from ovfetch. Falling through to the CPU
+    # (tract) backend because ovfetch is missing or too old would swap a
+    # working NPU install for a slower one, with only a warning to show for it.
+    fail "No ovfetch $OVFETCH_MIN or newer, but the installed OpenVINO came from ovfetch." \
+        "Upgrade it, then re-run: cargo install ovfetch --locked"
+    exit 1
 fi
 if [ -z "$OPENVINO_MODE" ]; then
     for dir in /usr/lib64 /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /lib; do
