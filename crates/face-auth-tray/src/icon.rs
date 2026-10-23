@@ -209,7 +209,9 @@ impl State {
 
 /// A monochrome tray icon for one state, in the KDE symbolic format: the
 /// `ColorScheme-Text` class is what Plasma recolours. The viewfinder follows
-/// the theme; the accent (green face, amber scan) stays fixed.
+/// the theme; the accent (green face, amber scan) stays fixed. The attention
+/// state's dimmed viewfinder is at 0.6, not 0.5: half of Breeze Light's text
+/// colour falls just short of 3:1 on its panel.
 pub fn symbolic_svg(state: State) -> String {
     let (mut text, mut accent, mut dim) = (String::new(), String::new(), String::new());
     for &(shape, part) in SYMBOLIC.marks {
@@ -228,7 +230,7 @@ pub fn symbolic_svg(state: State) -> String {
     );
     for (path, style) in [
         (text, "fill:currentColor".to_string()),
-        (dim, "fill:currentColor;fill-opacity:0.5".to_string()),
+        (dim, "fill:currentColor;fill-opacity:0.6".to_string()),
         (accent, format!("fill:{accent_fill}")),
     ] {
         if !path.is_empty() {
@@ -354,14 +356,90 @@ mod tests {
         0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
     }
 
+    fn contrast(a: Rgba, b: Rgba) -> f32 {
+        let (a, b) = (luminance(a) + 0.05, luminance(b) + 0.05);
+        a.max(b) / a.min(b)
+    }
+
+    /// `top` at `alpha` over `under`, blended in sRGB as SVG renderers do.
+    fn over(top: Rgba, alpha: f32, under: Rgba) -> Rgba {
+        let mix = |t: u8, u: u8| (f32::from(t) * alpha + f32::from(u) * (1.0 - alpha)).round() as u8;
+        Rgba(mix(top.0, under.0), mix(top.1, under.1), mix(top.2, under.2), 255)
+    }
+
+    /// Panel backgrounds, each with the text colour the theme recolours a
+    /// symbolic icon to: Breeze Light, plain white, Breeze Dark (Plasma 6
+    /// and 5), GNOME's black top bar, and waybar's default.
+    const PANELS: [(Rgba, Rgba); 6] = [
+        (Rgba(239, 240, 241, 255), Rgba(35, 38, 41, 255)),
+        (Rgba(255, 255, 255, 255), Rgba(0, 0, 0, 255)),
+        (Rgba(32, 35, 38, 255), Rgba(252, 252, 252, 255)),
+        (Rgba(49, 54, 59, 255), Rgba(252, 252, 252, 255)),
+        (Rgba(0, 0, 0, 255), Rgba(255, 255, 255, 255)),
+        (Rgba(43, 48, 59, 255), Rgba(255, 255, 255, 255)),
+    ];
+
+    /// Each mark of each pixmap, at every size, reaches 3:1 against the tile
+    /// it sits on (WCAG 1.4.11). The tile is opaque and surrounds every mark,
+    /// so the panel never touches them and this holds on any panel.
     #[test]
-    fn the_symbolic_accents_show_on_light_and_dark_panels() {
-        // Breeze Light and Breeze Dark panel backgrounds.
-        for panel in [Rgba(239, 240, 241, 255), Rgba(32, 35, 38, 255)] {
-            for accent in [TRAY_GREEN, TRAY_AMBER] {
-                let (a, b) = (luminance(accent) + 0.05, luminance(panel) + 0.05);
-                let contrast = a.max(b) / a.min(b);
-                assert!(contrast >= 3.0, "{accent:?} on {panel:?} is only {contrast:.2}:1");
+    fn the_pixmap_marks_stand_out_on_any_panel() {
+        for state in STATES {
+            for icon in tray_icons(state) {
+                let size = icon.width as u32;
+                let grid = if size < 32 { &SMALL } else { &LARGE };
+                let unit = size as f32 / grid.size;
+                let pixel = |x: u32, y: u32| {
+                    let i = ((y * size + x) * 4) as usize;
+                    let [a, r, g, b] = icon.data[i..i + 4] else { unreachable!() };
+                    Rgba(r, g, b, a)
+                };
+                for &(shape, part) in grid.marks {
+                    if paint(state, part).is_none() {
+                        continue;
+                    }
+                    // The mark's best pixel: at sizes off its grid, a thin
+                    // mark is only part-covered everywhere.
+                    let r = shape.rect(unit);
+                    let best = (r.y0 as u32..r.y1.ceil() as u32)
+                        .flat_map(|y| (r.x0 as u32..r.x1.ceil() as u32).map(move |x| (x, y)))
+                        .map(|(x, y)| pixel(x, y))
+                        .max_by(|a, b| contrast(*a, TILE).total_cmp(&contrast(*b, TILE)))
+                        .unwrap();
+                    assert_eq!(best.3, 255, "{state:?} {size}px {part:?} is see-through");
+                    let on_tile = contrast(best, TILE);
+                    assert!(on_tile >= 3.0, "{state:?} {size}px {part:?} {best:?} is {on_tile:.2}:1 on the tile");
+                }
+            }
+        }
+        // And the tile itself stands out from every light panel.
+        for (panel, _) in PANELS.iter().filter(|(p, _)| luminance(*p) > 0.5) {
+            assert!(contrast(TILE, *panel) >= 3.0, "the tile vanishes on {panel:?}");
+        }
+    }
+
+    /// The symbolic icons have no tile: every path, as the theme recolours it,
+    /// must clear 3:1 against the panel. That includes the attention state's
+    /// half-opacity viewfinder, not just the fixed accents.
+    #[test]
+    fn the_symbolic_icons_show_on_light_and_dark_panels() {
+        for state in STATES {
+            let svg = symbolic_svg(state);
+            let styles: Vec<&str> = svg.split("style=\"").skip(1).map(|s| s.split('"').next().unwrap()).collect();
+            assert!(!styles.is_empty(), "{state:?} draws nothing");
+            for (panel, text) in PANELS {
+                for style in &styles {
+                    let fill = if style.contains("currentColor") {
+                        let alpha = style.split("fill-opacity:").nth(1).map_or(1.0, |a| a.parse().unwrap());
+                        over(text, alpha, panel)
+                    } else {
+                        let hex = style.strip_prefix("fill:#").unwrap();
+                        let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap();
+                        Rgba(byte(0), byte(2), byte(4), 255)
+                    };
+                    let c = contrast(fill, panel);
+                    assert!(c >= 3.0, "{state:?} {style} is {c:.2}:1 on {panel:?}");
+                }
             }
         }
     }
