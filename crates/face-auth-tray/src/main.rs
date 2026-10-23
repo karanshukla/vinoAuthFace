@@ -390,7 +390,6 @@ impl ksni::Tray for Tray {
         let s = &self.status;
         let idle = self.busy.is_none();
         let enrolled = s.enrolled == Some(true);
-        // "ksni" treats "_" as an access-key marker, so labels avoid it.
         let mut menu = Vec::new();
         if let Some(tag) = &self.update {
             let url = format!("{}/tag/{tag}", update::RELEASES_URL);
@@ -409,10 +408,14 @@ impl ksni::Tray for Tray {
         }
 
         // Collapsed so the menu stays short; the warning icon says when to
-        // open it, as the tray icon's colour does.
+        // open it, as the tray icon's colour does. Its label carries the
+        // summary whenever there is more to say than "ready", so a running
+        // action explains the greyed entries below it without the tooltip,
+        // which some hosts never show.
+        let plain = s.ready() && self.busy.is_none() && !self.scanning;
         menu.push(
             SubMenu {
-                label: if s.ready() { "Status".into() } else { format!("Status: {}", self.summary()) },
+                label: if plain { "Status".into() } else { format!("Status: {}", self.summary()) },
                 icon_name: if s.ready() { "dialog-information" } else { "dialog-warning" }.into(),
                 submenu: s.lines().into_iter().map(info).collect(),
                 ..Default::default()
@@ -496,7 +499,28 @@ impl ksni::Tray for Tray {
         menu.push(item("Quit", "application-exit", true, |t| {
             let _ = t.tx.send(Msg::Quit);
         }));
+        escape_underscores(&mut menu);
         menu
+    }
+}
+
+/// ksni hands labels to dbusmenu as they are, where "_" marks an access key
+/// and is hidden; "__" shows one. The fixed labels avoid it, but the camera
+/// path (a /dev/v4l/by-id name is full of them), a release tag or a value set
+/// by hand in /etc/face-auth.toml can carry one.
+fn escape_underscores(items: &mut [MenuItem<Tray>]) {
+    let escape = |label: &mut String| *label = label.replace('_', "__");
+    for item in items {
+        match item {
+            MenuItem::Standard(i) => escape(&mut i.label),
+            MenuItem::Checkmark(i) => escape(&mut i.label),
+            MenuItem::SubMenu(m) => {
+                escape(&mut m.label);
+                escape_underscores(&mut m.submenu);
+            }
+            MenuItem::RadioGroup(g) => g.options.iter_mut().for_each(|o| escape(&mut o.label)),
+            MenuItem::Separator => {}
+        }
     }
 }
 
@@ -959,6 +983,7 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ksni::Tray as _;
 
     #[test]
     fn status_lines_name_what_is_missing() {
@@ -1011,5 +1036,222 @@ mod tests {
             assert!(setting.choices.iter().all(|c| !c.label.contains('_')));
         }
         assert!(idle::CHOICES.iter().all(|(_, label)| !label.contains('_')));
+    }
+
+    fn status(camera: Option<&str>, enrolled: Option<bool>) -> Status {
+        Status {
+            camera: camera.map(Into::into),
+            enrolled,
+            backend: "tract (CPU)".into(),
+            login: None,
+            settings: HashMap::new(),
+        }
+    }
+
+    fn tray(status: Status) -> Tray {
+        Tray {
+            tx: mpsc::channel().0,
+            status,
+            scanning: false,
+            busy: None,
+            confirm: None,
+            update: None,
+            hidden: false,
+            idle_minutes: 30,
+        }
+    }
+
+    /// Every situation the tray can be in that changes its text or menu.
+    fn situations() -> Vec<(&'static str, Tray)> {
+        let ready = || status(Some("/dev/video2"), Some(true));
+        let mut all = vec![
+            ("ready", tray(ready())),
+            ("no camera", tray(status(None, Some(true)))),
+            ("not enrolled", tray(status(Some("/dev/video2"), Some(false)))),
+            ("enrolment unknown", tray(status(Some("/dev/video2"), None))),
+        ];
+        let mut t = tray(ready());
+        t.scanning = true;
+        all.push(("scanning", t));
+        let mut t = tray(ready());
+        t.busy = Some("Enrolling your face: Captured 3/30".into());
+        all.push(("busy", t));
+        let mut t = tray(ready());
+        t.confirm = Some(Confirm::Uninstall);
+        all.push(("confirming", t));
+        // Every setting on each of its choices, plus a hand-set value.
+        let mut s = ready();
+        s.login = Some(LoginMode::Both);
+        s.settings = SETTINGS.iter().map(|x| (x.key.to_string(), x.choices[0].id.to_string())).collect();
+        let mut t = tray(s.clone());
+        t.update = Some("v99".into());
+        t.confirm = Some(Confirm::Enrol);
+        all.push(("settings, update", t));
+        s.settings = SETTINGS.iter().map(|x| (x.key.to_string(), x.choices[x.choices.len() - 1].id.to_string())).collect();
+        s.backend = "OpenVINO (NPU)".into();
+        let mut t = tray(s.clone());
+        t.update = Some("v99".into());
+        t.idle_minutes = 7;
+        all.push(("other choices, OpenVINO update", t));
+        s.settings = SETTINGS.iter().map(|x| (x.key.to_string(), "custom".to_string())).collect();
+        all.push(("hand-set values", tray(s)));
+        all
+    }
+
+    /// What a screen reader would read for one item: its label with
+    /// dbusmenu's access-key markers taken out.
+    fn spoken(label: &str) -> String {
+        label.replace("__", "\u{0}").replace('_', "").replace('\u{0}', "_")
+    }
+
+    /// One item: labelled, shown, and with any underscore kept.
+    fn check(label: &str, visible: bool, out: &mut Vec<String>) {
+        assert!(!spoken(label).trim().is_empty(), "an item has no label: {label:?}");
+        assert!(visible, "{label:?} is hidden instead of disabled");
+        // A lone "_" would be eaten as an access key.
+        assert!(!label.replace("__", "").contains('_'), "{label:?} loses an underscore");
+        out.push(spoken(label));
+    }
+
+    /// Every label in a menu, depth first, checking each item on the way.
+    fn walk(items: &[MenuItem<Tray>], out: &mut Vec<String>) {
+        for item in items {
+            match item {
+                MenuItem::Standard(i) => check(&i.label, i.visible, out),
+                MenuItem::Checkmark(i) => check(&i.label, i.visible, out),
+                MenuItem::SubMenu(m) => {
+                    check(&m.label, m.visible, out);
+                    assert!(!m.submenu.is_empty(), "{:?} opens onto nothing", m.label);
+                    walk(&m.submenu, out);
+                }
+                MenuItem::RadioGroup(g) => {
+                    assert!(g.selected < g.options.len() || g.selected == usize::MAX, "radio selection out of range");
+                    g.options.iter().for_each(|o| check(&o.label, o.visible, out));
+                }
+                MenuItem::Separator => {}
+            }
+        }
+    }
+
+    fn labels(t: &Tray) -> Vec<String> {
+        let mut out = Vec::new();
+        walk(&t.menu(), &mut out);
+        out
+    }
+
+    #[test]
+    fn every_menu_item_has_a_label() {
+        for (name, t) in situations() {
+            let labels = labels(&t);
+            assert!(labels.contains(&"Quit".to_string()), "{name}: {labels:?}");
+        }
+    }
+
+    #[test]
+    fn the_item_names_itself() {
+        let t = tray(status(Some("/dev/video2"), Some(true)));
+        assert_eq!(t.id(), "vinoauthface");
+        assert_eq!(t.title(), "vinoAuthFace");
+        assert_eq!(t.category(), Category::ApplicationStatus);
+        assert_eq!(t.tool_tip().title, "vinoAuthFace");
+    }
+
+    /// The icon has three looks; the text tells every situation apart, so
+    /// nothing depends on seeing its colour.
+    #[test]
+    fn each_state_has_its_own_tooltip_text() {
+        let mut seen: Vec<(String, String)> = Vec::new();
+        for (name, t) in situations().into_iter().take(6) {
+            let tip = t.tool_tip();
+            assert!(!tip.description.trim().is_empty(), "{name} has no tooltip text");
+            assert_eq!(tip.description, t.summary());
+            if let Some((other, _)) = seen.iter().find(|(_, d)| *d == tip.description) {
+                panic!("{name} and {other} both read {:?}", tip.description);
+            }
+            seen.push((name.to_string(), tip.description));
+        }
+        let names = State::ALL.map(State::icon_name);
+        assert!(names[0] != names[1] && names[1] != names[2] && names[0] != names[2]);
+    }
+
+    /// The menu says the same, for hosts that show no tooltip.
+    #[test]
+    fn the_status_entry_says_what_the_tooltip_says() {
+        for (name, t) in situations().into_iter().take(6) {
+            let status = labels(&t).into_iter().find(|l| l.starts_with("Status")).unwrap();
+            if name == "ready" {
+                assert_eq!(status, "Status");
+            } else {
+                assert_eq!(status, format!("Status: {}", t.summary()), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_running_action_greys_the_actions_and_says_why() {
+        let (_, t) = situations().into_iter().find(|(n, _)| *n == "busy").unwrap();
+        for item in t.menu() {
+            match item {
+                MenuItem::Standard(i) if i.label.ends_with('…') || i.label == "Test scan" => {
+                    assert!(!i.enabled, "{} is live while busy", i.label)
+                }
+                MenuItem::SubMenu(m) if m.label.starts_with("Status") => {
+                    assert!(m.label.contains("Captured 3/30"), "{}", m.label)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn literal_underscores_are_kept() {
+        let mut s = status(Some("/dev/v4l/by-id/usb-SunplusIT_Inc_Integrated_IR_Camera-video-index0"), Some(true));
+        s.settings = [("confirm".to_string(), "my_value".to_string())].into();
+        let mut t = tray(s);
+        t.update = Some("v9_rc".into());
+        let labels = labels(&t);
+        for wanted in [
+            "Camera: /dev/v4l/by-id/usb-SunplusIT_Inc_Integrated_IR_Camera-video-index0",
+            "Update to v9_rc…",
+            "Confirm sudo with Enter (my_value)",
+        ] {
+            assert!(labels.iter().any(|l| l == wanted), "{wanted:?} not in {labels:?}");
+        }
+    }
+
+    #[test]
+    fn on_off_settings_are_checkmarks_and_the_rest_radio_groups() {
+        let mut s = status(Some("/dev/video2"), Some(true));
+        for setting in SETTINGS {
+            for (i, choice) in setting.choices.iter().enumerate() {
+                s.settings = [(setting.key.to_string(), choice.id.to_string())].into();
+                match setting_toggle(setting, &s, true) {
+                    Some(MenuItem::Checkmark(c)) => {
+                        assert_eq!(c.checked, choice.id == "on", "{} {}", setting.key, choice.id);
+                        assert_eq!(c.label, setting.title);
+                    }
+                    Some(_) => panic!("{} is not a checkmark", setting.key),
+                    None => {
+                        let [heading, group] = setting_radio(setting, &s, true);
+                        let MenuItem::Standard(heading) = heading else { panic!("{} has no heading", setting.key) };
+                        assert_eq!(heading.label, setting.title);
+                        let MenuItem::RadioGroup(group) = group else { panic!("{} is not a radio group", setting.key) };
+                        assert_eq!(group.selected, i);
+                        assert_eq!(group.options.len(), setting.choices.len());
+                    }
+                }
+            }
+        }
+        // A value the menu doesn't offer selects nothing and says so.
+        let security = SETTINGS.iter().find(|x| x.key == "security").unwrap();
+        s.settings = [("security".to_string(), "custom".to_string())].into();
+        let [MenuItem::Standard(heading), MenuItem::RadioGroup(group)] = setting_radio(security, &s, true) else {
+            panic!()
+        };
+        assert_eq!(heading.label, "Security: custom");
+        assert_eq!(group.selected, usize::MAX);
+        // The idle delay is a radio group on the current choice.
+        let [_, MenuItem::RadioGroup(group)] = idle_radio(60) else { panic!() };
+        assert_eq!(group.selected, idle::CHOICES.iter().position(|(m, _)| *m == 60).unwrap());
     }
 }
