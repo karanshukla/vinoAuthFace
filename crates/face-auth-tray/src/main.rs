@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 const TRAY: &str = "/usr/local/bin/vinoauthface-tray";
-const DOCS: &str = "https://github.com/karanshukla/vinoAuthFace/tree/main/docs";
+const DOCS: &str = "https://vinoauthface.vinopilot.ca/";
 /// How often `/proc` is checked for a running scan.
 const SCAN_POLL: Duration = Duration::from_millis(200);
 /// How often enrolment is re-read, to catch a `sudo vinoauthface enroll` run by hand.
@@ -113,6 +113,9 @@ struct Status {
     /// `None` when vinoauthface-auth is missing or could not answer.
     enrolled: Option<bool>,
     backend: String,
+    /// The recognition and detector models, as `model_path` and
+    /// `detector_model_path` name them.
+    model: String,
     /// `None` without Plasma Login, which hides the menu entry.
     login: Option<LoginMode>,
     /// Each setting's current choice id, from `setting-mode.sh status`; empty
@@ -135,7 +138,8 @@ impl Status {
             Some(_) => "tract (CPU)".into(),
             None => "unknown (cannot read /etc/face-auth.toml)".into(),
         };
-        Status { camera, enrolled: enrolled(), backend, login: login_mode(), settings: settings() }
+        let model = config.as_ref().map_or("unknown".into(), |c| model_names(&c.model_path(), &c.detector_model_path()));
+        Status { camera, enrolled: enrolled(), backend, model, login: login_mode(), settings: settings() }
     }
 
     fn ready(&self) -> bool {
@@ -164,10 +168,20 @@ impl Status {
                 }
             ),
             format!("Backend: {}", self.backend),
+            format!("Model: {}", self.model),
             format!("Version: {}", update::CURRENT),
             "Full check: sudo vinoauthface doctor".into(),
         ]
     }
+}
+
+/// "w600k_r50 (detector det_500m)": the file stems, which are what the model
+/// table in docs/configuration.md lists.
+fn model_names(model: &str, detector: &str) -> String {
+    let stem = |path: &str| {
+        std::path::Path::new(path).file_stem().map_or(path.to_string(), |n| n.to_string_lossy().into_owned())
+    };
+    format!("{} (detector {})", stem(model), stem(detector))
 }
 
 /// Asks the set-group-ID vinoauthface-auth, which can open the store the user cannot.
@@ -987,11 +1001,12 @@ mod tests {
 
     #[test]
     fn status_lines_name_what_is_missing() {
-        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into(), login: None, settings: HashMap::new() };
+        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into(), model: "unknown".into(), login: None, settings: HashMap::new() };
         let lines = s.lines();
         assert_eq!(lines[0], "Camera: no IR camera found");
         assert_eq!(lines[1], "Face: unknown (is vinoauthface installed?)");
         assert_eq!(lines[2], "Backend: tract (CPU)");
+        assert_eq!(lines[3], "Model: unknown");
         // ksni reads "_" as an access-key marker.
         assert!(lines.iter().all(|l| !l.contains('_')), "{lines:?}");
 
@@ -999,6 +1014,7 @@ mod tests {
             camera: Some("/dev/video2".into()),
             enrolled: Some(true),
             backend: "OpenVINO (NPU)".into(),
+            model: "w600k_r50 (detector det_500m)".into(),
             login: Some(LoginMode::Face),
             settings: HashMap::new(),
         };
@@ -1043,9 +1059,18 @@ mod tests {
             camera: camera.map(Into::into),
             enrolled,
             backend: "tract (CPU)".into(),
+            model: "w600k_mbf (detector det_500m)".into(),
             login: None,
             settings: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn model_names_are_the_file_stems() {
+        assert_eq!(
+            model_names("/usr/local/share/face-auth/w600k_mbf.onnx", "/usr/local/share/face-auth/det_500m.onnx"),
+            "w600k_mbf (detector det_500m)"
+        );
     }
 
     fn tray(status: Status) -> Tray {
