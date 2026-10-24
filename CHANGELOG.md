@@ -6,6 +6,15 @@ This fork (karanshukla/vinoAuthFace) was rebuilt on top of upstream's security
 pass below instead of merging, so upstream's fixes all apply. Fork features
 replayed on top:
 
+- **NPU compiler from ovfetch 0.6.0.** When the NPU driver has no compiler
+  (Fedora's 1.32.0 rpm), `deploy.sh` used to fall back to the CPU backend. It
+  now runs `ovfetch npu install` as you, mirrors the resulting
+  `~/.local/lib/ovfetch-npu` to `/usr/local/lib/face-auth/npu` (root-owned,
+  checked against its `SHA256SUMS`, removed again when there is no prefix), and
+  `vinoauthface-auth` loads those libraries before opening the NPU, with the
+  preload list's paths re-rooted to the copy so nothing outside it can be
+  loaded. `vinoauthface doctor` looks there for the compiler too, under either
+  driver generation's name. Needs ovfetch 0.6.0.
 - **Commands renamed** (#76). `face-enroll` is now `vinoauthface enroll` and
   `vinoauthface improve` (was `--improve`); `face-auth` is `vinoauthface-auth`;
   the tray, its helper and the two debug tools are `vinoauthface-tray`,

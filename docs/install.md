@@ -91,7 +91,7 @@ npu` and sets `backend = "openvino"` in `/etc/face-auth.toml`. Pick the device w
 
 | Source | How it's found | Runtime lookup |
 |--------|----------------|----------------|
-| [ovfetch](https://github.com/karanshukla/ovfetch) 0.5.0+ | On `PATH` or in `~/.cargo/bin` | rpath baked into `vinoauthface-auth` |
+| [ovfetch](https://github.com/karanshukla/ovfetch) 0.6.0+ | On `PATH` or in `~/.cargo/bin` | rpath baked into `vinoauthface-auth` |
 | System package | `libopenvino_c.so*` in a standard lib dir | The package's own `ldconfig` entry |
 | Extracted archive | `~/.local/opt` or `/opt/intel`, with `setupvars.sh` | Copied, then registered with `ldconfig` |
 
@@ -100,12 +100,21 @@ need, and refuses anything whose hash independent sources don't agree on. It ins
 `/usr/local/lib/face-auth/openvino`, and later deploys only download again when a different build
 resolves. ovfetch runs as you, into a staging directory; once root has copied that into place,
 `deploy.sh` checks every file against ovfetch's `SHA256SUMS` and removes the directory if anything
-doesn't match or isn't listed (face unlock then falls back to the password). It installs OpenVINO alone (`ovfetch install --openvino-only`), without ONNX Runtime, which face-auth doesn't use: that is the newest OpenVINO the NPU driver supports, the same release the machine's other NPU programs run, with nothing to compile. (`--build-runtime`, which compiled ONNX Runtime to get there, is no longer needed and is ignored.) If ovfetch installed the current runtime and is now missing or older than 0.5.0, deploy stops and asks you to upgrade it rather than switch to the CPU backend. Install it with `cargo install ovfetch --locked`, or grab the attested binary from its
+doesn't match or isn't listed (face unlock then falls back to the password). It installs OpenVINO alone (`ovfetch install --openvino-only`), without ONNX Runtime, which face-auth doesn't use: that is the newest OpenVINO the NPU driver supports, the same release the machine's other NPU programs run, with nothing to compile. (`--build-runtime`, which compiled ONNX Runtime to get there, is no longer needed and is ignored.) If ovfetch installed the current runtime and is now missing or older than 0.6.0, deploy stops and asks you to upgrade it rather than switch to the CPU backend. Install it with `cargo install ovfetch --locked`, or grab the attested binary from its
 releases.
 
 If the NPU driver has no compiler library (Fedora's 1.32.0 rpm ships none), OpenVINO can't compile
-anything for the NPU. `deploy.sh` then builds the `tract` backend instead of shipping a build that
-would silently fall through to the password on every unlock. Run `ovfetch detect` to check.
+anything for the NPU. `deploy.sh` then runs `ovfetch npu install` as you (ovfetch 0.6.0): Intel's
+compiler for that driver, from the linux-npu-driver release, checked against ovfetch's ledger, into
+`~/.local/lib/ovfetch-npu`, where `ovfetch detect` and the other vino apps also find it. PAM callers
+can't read your home, so deploy copies that prefix to `/usr/local/lib/face-auth/npu`, root-owned and
+checked against its `SHA256SUMS` like the OpenVINO runtime, and `vinoauthface-auth` loads its
+libraries (the prefix's `ovfetch-preload.txt`, in order, with the paths re-rooted to the copy)
+before it first opens the NPU. The same happens if you ran `ovfetch npu install` yourself, including
+`--full` for a whole driver: whatever prefix `detect` reports is mirrored, and the copy is removed
+again when there is none. Only if that fails does `deploy.sh` build the `tract` backend instead of
+shipping a build that would silently fall through to the password on every unlock. Run
+`ovfetch detect` to check.
 
 ### Container build (no toolchain installed)
 

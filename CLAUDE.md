@@ -117,6 +117,14 @@ Six crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/d
   policy, desktop files and the generated icon (`FACE_AUTH_BLESS_ICONS=1 cargo test -p
   face-auth-tray` after changing `icon.rs`).
 
+`with_ov_core` (inference.rs) preloads `/usr/local/lib/face-auth/npu` before the first Core:
+deploy.sh's root copy of the user's `ovfetch npu install` prefix (ovfetch 0.6.0), the compiler
+Fedora's 1.32.0 driver rpm lacks. Absolute entries in its `ovfetch-preload.txt` are re-rooted to
+that dir by file name (`npu_preload_entries`), so the list can't load anything outside it. The
+dir exists only when `ovfetch detect` reported an `npu_prefix` on the last deploy and the device
+is the NPU; deploy removes it otherwise. The linuxlab VM has no NPU, so this path only runs on the
+laptop.
+
 The `npu` Cargo feature (on `face-auth-core`, propagated through the other five crates) swaps
 the inference backend from pure-Rust `tract-onnx` (CPU) to `openvino` (NPU/GPU/CPU via OpenVINO
 runtime); see `#[cfg(feature = "npu")]` in `inference.rs` and `detector.rs`. Backend selection

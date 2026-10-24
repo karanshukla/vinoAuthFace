@@ -7,6 +7,77 @@ use openvino::{Core as OvCore, DeviceType, ElementType, InferRequest, PartialSha
 #[cfg(feature = "npu")]
 const ENCODER_SIZE: i64 = 112;
 
+/// Where `deploy.sh` copies the user's `ovfetch npu install` prefix: the NPU
+/// compiler a distro's driver package lacks (Fedora's 1.32.0 rpm ships none,
+/// and every `compile_model` fails with `ZE_RESULT_ERROR_UNSUPPORTED_FEATURE`),
+/// or a whole user-mode driver. Root-owned and hash-checked like the OpenVINO
+/// prefix on the rpath; a PAM caller cannot read the user's own prefix.
+pub const NPU_PREFIX_DIR: &str = "/usr/local/lib/face-auth/npu";
+/// What ovfetch writes there: the libraries to load, one per line, in order.
+pub const NPU_PRELOAD_LIST: &str = "ovfetch-preload.txt";
+
+/// The libraries to `dlopen` for the prefix at `dir`, in the list's order.
+/// ovfetch writes an absolute path for each of the prefix's own files and a
+/// bare soname for the host's Level Zero loader. `deploy.sh` copies the
+/// prefix out of the user's home without rewriting the list, so an absolute
+/// entry is re-rooted to `dir` by file name: nothing in the list can make the
+/// auth process load from outside the root-owned prefix, and a soname goes
+/// through the loader's normal search, as the driver's own `dlopen` would.
+pub fn npu_preload_entries(list: &str, dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    list.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .filter_map(|l| {
+            if l.starts_with('/') {
+                std::path::Path::new(l).file_name().map(|name| dir.join(name))
+            } else {
+                Some(std::path::PathBuf::from(l))
+            }
+        })
+        .collect()
+}
+
+/// Load the NPU prefix, if `deploy.sh` installed one, before OpenVINO first
+/// opens the NPU. `RTLD_GLOBAL`, so that when the driver later asks for a
+/// library by soname the dynamic linker returns the copy already loaded.
+/// OpenVINO itself is linked, so its TBB (which the compiler needs) is already
+/// in. The order is the file's: a driver loaded before the Level Zero loader
+/// crashed on its first call into it (ovfetch's README, measured 2026-10-24).
+/// A library that will not load is an error, and the backend fails closed to
+/// the password, which is also what the NPU would do without its compiler.
+#[cfg(feature = "npu")]
+fn preload_npu_prefix() -> anyhow::Result<()> {
+    use std::io::ErrorKind;
+    let dir = std::path::Path::new(NPU_PREFIX_DIR);
+    let list = dir.join(NPU_PRELOAD_LIST);
+    let text = match std::fs::read_to_string(&list) {
+        Ok(text) => text,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(anyhow::Error::new(e).context(format!("reading {}", list.display()))),
+    };
+    for entry in npu_preload_entries(&text, dir) {
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::CString::new(entry.as_os_str().as_bytes())?;
+        // SAFETY: a valid NUL-terminated path; the handle is never closed, the
+        // library stays loaded for the life of the process like OpenVINO.
+        let handle = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) };
+        if handle.is_null() {
+            // SAFETY: dlerror returns NULL or a valid C string owned by libc.
+            let reason = unsafe {
+                let msg = libc::dlerror();
+                if msg.is_null() {
+                    "unknown error".to_owned()
+                } else {
+                    std::ffi::CStr::from_ptr(msg).to_string_lossy().into_owned()
+                }
+            };
+            anyhow::bail!("loading {} (listed in {}): {reason}", entry.display(), list.display());
+        }
+        tracing::debug!(library = %entry.display(), "NPU prefix library loaded");
+    }
+    Ok(())
+}
+
 /// Run `f` on the process's one OpenVINO Core, shared by the encoder and the
 /// detector. With a Core each, compiling the second model on the NPU can tear
 /// down the Level Zero context the first one's request runs in (seen once the
@@ -17,6 +88,7 @@ pub(crate) fn with_ov_core<T>(f: impl FnOnce(&mut OvCore) -> anyhow::Result<T>) 
     static CORE: std::sync::Mutex<Option<OvCore>> = std::sync::Mutex::new(None);
     let mut core = CORE.lock().unwrap_or_else(|e| e.into_inner());
     if core.is_none() {
+        preload_npu_prefix()?;
         *core = Some(OvCore::new()?);
     }
     f(core.as_mut().expect("set above"))
@@ -119,5 +191,38 @@ impl FaceEncoder {
         );
 
         Ok(embedding.into_iter().map(|x| x / norm).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::npu_preload_entries;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn preload_entries_are_rerooted_to_the_installed_prefix_in_order() {
+        // A full install's list, as ovfetch writes it into the user's prefix.
+        let list = "libze_loader.so.1\n\
+                    /home/k/.local/lib/ovfetch-npu/libopenvino_intel_npu_compiler.so\n\
+                    /home/k/.local/lib/ovfetch-npu/libopenvino_intel_npu_compiler_loader.so\n\
+                    \n\
+                    /home/k/.local/lib/ovfetch-npu/libze_intel_npu.so.1\n";
+        let dir = Path::new("/usr/local/lib/face-auth/npu");
+        assert_eq!(
+            npu_preload_entries(list, dir),
+            vec![
+                PathBuf::from("libze_loader.so.1"),
+                dir.join("libopenvino_intel_npu_compiler.so"),
+                dir.join("libopenvino_intel_npu_compiler_loader.so"),
+                dir.join("libze_intel_npu.so.1"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_list_cannot_point_outside_the_prefix() {
+        let dir = Path::new("/usr/local/lib/face-auth/npu");
+        let entries = npu_preload_entries("/tmp/evil/libnpu_driver_compiler.so\n/\n", dir);
+        assert_eq!(entries, vec![dir.join("libnpu_driver_compiler.so")]);
     }
 }
