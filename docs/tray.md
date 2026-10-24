@@ -53,7 +53,7 @@ It starts at the next login, or run `vinoauthface-tray` now (it detaches from th
 | Enrol face | `vinoauthface enroll --user <you>`. Once you're enrolled it becomes "Enrol again from scratch" and takes a second click, since it replaces your templates | root, via pkexec |
 | Retrain face | `vinoauthface improve --user <you>`: captures more frames (new lighting, glasses) and keeps the old ones | root, via pkexec |
 | Test scan | One live scan, the same way the lock screen runs it. The result is a notification | you |
-| Login screen | Only with Plasma Login. Password only, password then face, or face: see [pam.md](pam.md#login-screen). Runs `login-mode.sh` | root, via pkexec |
+| Login screen | Only with Plasma Login or SDDM. Password only, password then face, or face: see [pam.md](pam.md#login-screen). Runs `login-mode.sh` | root, via pkexec |
 | Settings | One submenu: a Security preset and the scan time as radio lists, and the two on/off settings as checkmarks. Changes `/etc/face-auth.toml` through `setting-mode.sh` (see the table below). A value you set by hand that the menu doesn't offer shows as "custom" with nothing selected. Hide icon when idle is the exception: it writes your own `~/.config/face-auth.toml` | root, via pkexec; you, for Hide icon when idle |
 | Uninstall | Runs `uninstall.sh` after a second click. Your templates are kept, as with `sudo ./uninstall.sh`. The tray exits when it finishes | root, via pkexec |
 

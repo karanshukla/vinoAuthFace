@@ -1,21 +1,25 @@
 #!/bin/bash
 set -euo pipefail
 
-# Face unlock at the Plasma login screen. See docs/pam.md's "Login screen".
+# Face unlock at the KDE login screen: Plasma Login, or SDDM where there's no
+# Plasma Login (KDE on Arch, openSUSE, Debian and Kubuntu, Fedora before 45).
+# See docs/pam.md's "Login screen".
 #
 #   off    password only (a fresh install's default)
 #   both   password, then face: both must pass
 #   face   face instead of the password
-#   status print the current mode, or "none" without Plasma Login
+#   status print the current mode, or "none" without Plasma Login or SDDM
 #
 # deploy.sh and the tray's root helper both run this, so the login screen's
-# PAM edits live in one place. Scoped to Plasma Login on purpose: GDM and
-# COSMIC share one service between their login and lock screens.
+# PAM edits live in one place. Scoped to Plasma Login and SDDM on purpose: GDM
+# and COSMIC share one service between their login and lock screens.
 
 PAM_DIR="/etc/pam.d"
 VENDOR_DIR="/usr/lib/pam.d"
 FACE_AUTH="/usr/local/bin/vinoauthface-auth"
-SERVICES="plasmalogin-fingerprint plasmalogin"
+# Every service a mode can wire, so switching (or a changed display manager)
+# never leaves a line behind.
+SERVICES="plasmalogin-fingerprint plasmalogin sddm"
 # The same as deploy.sh's: the first auth line that actually authenticates.
 AUTHENTICATOR='^[[:space:]]*-?auth[[:space:]]+(include|substack)[[:space:]]|^[[:space:]]*-?auth[[:space:]].*pam_(unix|sss|fprintd|u2f)|^[[:space:]]*@include[[:space:]]'
 
@@ -28,12 +32,30 @@ has_service() {
     [ -f "$PAM_DIR/$1" ] || [ -f "$VENDOR_DIR/$1" ]
 }
 
+# The login screen's service: the active display manager's when it's one of
+# the two, else Plasma Login, else SDDM, else none.
+greeter() {
+    local dm service
+    dm="$(readlink /etc/systemd/system/display-manager.service 2>/dev/null || true)"
+    dm="${dm##*/}"
+    dm="${dm%.service}"
+    case "$dm" in
+        plasmalogin|sddm) has_service "$dm" && { echo "$dm"; return; } ;;
+    esac
+    for service in plasmalogin sddm; do
+        has_service "$service" && { echo "$service"; return; }
+    done
+    echo none
+}
+
 status() {
-    if ! has_service plasmalogin; then
+    local files=()
+    for service in $SERVICES; do files+=("$PAM_DIR/$service"); done
+    if [ "$(greeter)" = none ]; then
         echo none
-    elif grep -qsE '^[[:space:]]*auth[[:space:]]+required[[:space:]]+pam_exec\.so.*face-auth' "$PAM_DIR/plasmalogin"; then
+    elif grep -qsE '^[[:space:]]*auth[[:space:]]+required[[:space:]]+pam_exec\.so.*face-auth' "${files[@]}"; then
         echo both
-    elif grep -qs 'pam_exec\.so.*face-auth' "$PAM_DIR/plasmalogin-fingerprint" "$PAM_DIR/plasmalogin"; then
+    elif grep -qs 'pam_exec\.so.*face-auth' "${files[@]}"; then
         echo face
     else
         echo off
@@ -90,9 +112,10 @@ if [ "$EUID" -ne 0 ]; then
     echo "Must run as root: sudo $0 $MODE" >&2
     exit 1
 fi
-if [ "$(status)" = none ]; then
+GREETER="$(greeter)"
+if [ "$GREETER" = none ]; then
     [ "$MODE" = off ] && exit 0
-    echo "Plasma Login isn't installed (no plasmalogin PAM service)." >&2
+    echo "Neither Plasma Login nor SDDM is installed (no plasmalogin or sddm PAM service)." >&2
     exit 1
 fi
 
@@ -118,19 +141,19 @@ done
 case "$MODE" in
     # sufficient, above the password: a match logs in; anything else falls
     # through to the password. -fingerprint where there is one, which the
-    # greeter runs hands-free beside the password field.
+    # greeter runs hands-free beside the password field. SDDM has none.
     face)
-        if has_service plasmalogin-fingerprint; then
+        if [ "$GREETER" = plasmalogin ] && has_service plasmalogin-fingerprint; then
             wire plasmalogin-fingerprint sufficient before
         else
-            wire plasmalogin sufficient before
+            wire "$GREETER" sufficient before
         fi
         ;;
     # required, below the password: both must pass, and the password still
     # reaches pam_kwallet5 to unlock the wallet.
     both)
-        wire plasmalogin required after
+        wire "$GREETER" required after
         ;;
 esac
 
-echo "Login screen: $MODE"
+echo "Login screen ($GREETER): $MODE"

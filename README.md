@@ -64,7 +64,7 @@ your normal password prompt, so a broken camera can't lock you out.
 | `sudo` | `sudo` |
 | GNOME lock screen | `gdm-password` |
 | KDE lock screen (hands-free, next to the password field) | `kde-fingerprint` |
-| Plasma login screen (opt-in: [off, password + face, or face](docs/pam.md#login-screen)) | `plasmalogin-fingerprint`, or `plasmalogin` without it |
+| KDE login screen (opt-in: [off, password + face, or face](docs/pam.md#login-screen)) | `plasmalogin-fingerprint`, or `plasmalogin` without it, or `sddm` |
 | COSMIC lock screen and greeter | `cosmic-greeter` |
 | swaylock | `swaylock` |
 | hyprlock (Hyprland) | `hyprlock` |

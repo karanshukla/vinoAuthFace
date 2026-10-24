@@ -47,7 +47,7 @@ the release's `SHA256SUMS`. Build from source for an unreleased change or the NP
 | Bitwarden | Only if installed | Adds Bitwarden's polkit unlock action |
 | SELinux | Compiles and loads policy | Lets the greeters (`xdm_t`) use the camera, NPU, template store and lockout state. See [SELinux](#selinux) |
 | NPU cache | Empties and refills it | `/var/cache/face-auth`, root-owned. Emptied because a new model or driver leaves stale entries, then refilled with `vinoauthface-auth --warm-cache` (NPU builds only) |
-| Login screen | `--login=off\|both\|face` | The Plasma login screen's mode, off on a fresh install and kept on re-deploy. See [pam.md](pam.md#login-screen) |
+| Login screen | `--login=off\|both\|face` | The KDE login screen's mode (Plasma Login or SDDM), off on a fresh install and kept on re-deploy. See [pam.md](pam.md#login-screen) |
 | Tray | Unless `--no-tray` | Tray binary, root helper, polkit actions, autostart and launchers. See [tray.md](tray.md). Every deploy also installs `uninstall.sh` to `/usr/local/share/face-auth/` |
 | Storage | Secures the template store | `/var/lib/face-auth`, `root:face-auth` `2750`, templates `0640`, per-user `lockout/` `2770`. An existing store is re-secured in place |
 
