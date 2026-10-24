@@ -67,6 +67,7 @@ your normal password prompt, so a broken camera can't lock you out.
 | Plasma login screen (opt-in: [off, password + face, or face](docs/pam.md#login-screen)) | `plasmalogin-fingerprint`, or `plasmalogin` without it |
 | COSMIC lock screen and greeter | `cosmic-greeter` |
 | swaylock | `swaylock` |
+| hyprlock (Hyprland) | `hyprlock` |
 | polkit prompts (`pkexec`, settings, Bitwarden unlock) | `polkit-1` |
 
 Details and insertion points: [docs/pam.md](docs/pam.md).

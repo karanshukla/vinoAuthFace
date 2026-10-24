@@ -8,7 +8,7 @@ nav_order: 9
 ## How it works
 
 ```
-PAM (sudo / gdm-password / swaylock / polkit-1 / kde-fingerprint or kde-smartcard / cosmic-greeter)
+PAM (sudo / gdm-password / swaylock / hyprlock / polkit-1 / kde-fingerprint or kde-smartcard / cosmic-greeter)
   │
   ▼
 vinoauthface-auth (static binary, set-group-ID face-auth)

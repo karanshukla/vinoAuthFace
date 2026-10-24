@@ -9,7 +9,19 @@ An optional tray icon for the session: an icon that shows scan state, and enrol,
 without remembering CLI flags. It replaces upstream's GTK settings GUI. It is a separate
 per-user app and is never part of authentication: `vinoauthface-auth` doesn't know it exists.
 
-Plasma shows it natively (StatusNotifierItem). GNOME needs the AppIndicator extension.
+It's a StatusNotifierItem, and the menu entries that change anything run through pkexec, which
+needs a polkit agent in the session:
+
+| Desktop | Tray | polkit agent |
+|---|---|---|
+| KDE Plasma | Native | Built in |
+| GNOME | Needs the AppIndicator extension (Ubuntu ships it on; on Fedora install `gnome-shell-extension-appindicator`) | Built in |
+| COSMIC | The panel's status area applet | Built in |
+| sway, Hyprland and other wlroots compositors | A bar with a tray, such as waybar's `tray` module | Not built in: start one, such as `hyprpolkitagent`, `polkit-gnome` or `lxqt-policykit` |
+
+Without a tray the icon doesn't show, but the "Enrol face" launcher still works. Without a polkit
+agent pkexec fails with "No authentication agent found"; run the same thing from a terminal
+instead (`sudo vinoauthface enroll --user $USER`).
 
 ## Install
 

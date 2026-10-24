@@ -40,7 +40,7 @@ FISH_COMPLETION_DIR="/usr/local/share/fish/vendor_completions.d"
 NPU_CACHE_DIR="/var/cache/face-auth"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
-PAM_SERVICES="sudo swaylock gdm-password polkit-1 kde-fingerprint kde-smartcard plasmalogin-fingerprint plasmalogin cosmic-greeter"
+PAM_SERVICES="sudo swaylock hyprlock gdm-password polkit-1 kde-fingerprint kde-smartcard plasmalogin-fingerprint plasmalogin cosmic-greeter"
 
 if [ "$USR_WRITABLE" = true ]; then
     ICON_DIR="/usr/share/icons/hicolor/scalable/apps"
@@ -123,7 +123,8 @@ rm -rf "$NPU_CACHE_DIR"
 # or the admin installed. The marker lives in $SHARE_DIR, so check first.
 if [ -f "$SHARE_DIR/.bitwarden-policy-installed" ]; then
     echo "Removing Bitwarden polkit action installed by vinoAuthFace..."
-    rm -f /usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy
+    rm -f /usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy \
+        /usr/local/share/polkit-1/actions/com.bitwarden.Bitwarden.policy
 fi
 
 # ovfetch installs leave no ld.so.conf entry (face-auth carries an rpath),

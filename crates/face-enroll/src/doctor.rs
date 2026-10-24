@@ -16,6 +16,7 @@ use std::path::Path;
 const PAM_SERVICES: &[&str] = &[
     "sudo",
     "swaylock",
+    "hyprlock",
     "gdm-password",
     "polkit-1",
     "kde-fingerprint",

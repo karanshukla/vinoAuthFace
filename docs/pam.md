@@ -12,6 +12,7 @@ nav_order: 4
 | `sudo` | `/etc/pam.d/sudo` | sudo |
 | `gdm-password` | `/etc/pam.d/gdm-password` | GNOME lock screen |
 | `swaylock` | `/etc/pam.d/swaylock` | swaylock |
+| `hyprlock` | `/etc/pam.d/hyprlock` | hyprlock (Hyprland's locker) |
 | `polkit-1` | `/etc/pam.d/polkit-1` | polkit prompts |
 | `kde-fingerprint` or `kde-smartcard` | `/etc/pam.d/kde-fingerprint` or `kde-smartcard` | KDE lock screen (one of the two, see [KDE](#kde)) |
 | `cosmic-greeter` | `/etc/pam.d/cosmic-greeter` | COSMIC lock screen and greeter |
@@ -113,6 +114,13 @@ Plasma before 6.7 has a bug where a biometric unlock counts against `pam_failloc
 (kscreenlocker 29d01bf7), so repeated face unlocks can lock the password out until it expires.
 Update Plasma or drop `pam_faillock` from the stack if you hit it.
 
+## hyprlock
+
+hyprlock starts PAM as soon as it locks, so the scan runs straight away and the password field
+waits behind it. Like swaylock it runs as you, so it relies on `vinoauthface-auth` being
+set-group-ID (see [security.md](security.md#trust-model)). If you've pointed hyprlock at another
+service with `auth:pam:module`, add the line to that file by hand.
+
 ## COSMIC
 
 `cosmic-greeter` is one service for both the lock screen and the greeter. It shows a single PAM
@@ -121,10 +129,12 @@ to say so. At login it runs as the `greeter` user rather than the person unlocki
 
 ## Vendor-only services
 
-On image-based distros these services often exist only as a vendor default in `/usr/lib/pam.d`.
-`deploy.sh` copies that file to `/etc/pam.d` first to have something to patch (as it does for
-`polkit-1`), and `uninstall.sh` deletes the copy rather than "restoring" a file that never
-existed.
+On image-based distros the KDE and COSMIC services often exist only as a vendor default in
+`/usr/lib/pam.d`, and openSUSE (Tumbleweed, Leap 16, Aeon, MicroOS) ships every service that way,
+`sudo` included. For any service in the table above, `deploy.sh` copies that file to `/etc/pam.d`
+first to have something to patch (as it does for `polkit-1`), and `uninstall.sh` deletes the copy
+rather than "restoring" a file that never existed. While the copy exists it shadows the vendor
+file, so a distro update to that service's PAM file doesn't apply until you uninstall.
 
 ## polkit
 
@@ -140,7 +150,9 @@ behalf of* another logged-in user, it falls through to the password.
 ## Bitwarden biometric unlock
 
 If a Bitwarden desktop client is installed (native, Flatpak or Snap), `deploy.sh` also installs
-Bitwarden's polkit action (`/usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy`). Flatpak
+Bitwarden's polkit action (`/usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy`, or
+`/usr/local/share/polkit-1/actions/` on a read-only `/usr` such as Fedora Atomic, which needs
+polkit 124 or later). Flatpak
 and Snap builds are sandboxed and can't write it themselves. The content is transcribed from
 Bitwarden's own source (`os-biometrics-linux.service.ts` in
 [`bitwarden/clients`](https://github.com/bitwarden/clients)), not downloaded. Then enable
