@@ -171,6 +171,10 @@ VAR_DIR="/var/lib/face-auth"
 NPU_CACHE_DIR="/var/cache/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
 OPENVINO_INSTALL_DIR="/usr/local/lib/face-auth/openvino"
+# The NPU compiler (or driver) from the user's `ovfetch npu install` prefix,
+# copied here for PAM callers, which cannot read a home directory. Loaded by
+# vinoauthface-auth before it opens the NPU (face_auth_core::inference).
+NPU_INSTALL_DIR="/usr/local/lib/face-auth/npu"
 
 PAM_LINE="auth       sufficient  pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth"
 # For a KDE lock screen slot with nothing after us that can authenticate. A
@@ -358,13 +362,16 @@ section "Build"
 #           profile, so the runtime libraries are copied system-wide below.
 ACTUAL_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
 OPENVINO_MODE=""
+NPU_PREFIX_SRC=""
 # --openvino-only (ovfetch 0.5.0) installs Intel's openvino wheel without ONNX
 # Runtime, which face-auth never loads. That is the newest OpenVINO the NPU
 # driver supports, the release the machine's other NPU programs run (an NPU
 # fault resets the device for every process on it), and nothing compiles.
 # Before it, the newest OpenVINO came only inside an onnxruntime-openvino
 # wheel, which lags (2025.4.1 against 2026.4.1), or by compiling ONNX Runtime.
-OVFETCH_MIN="0.5.0"
+# `npu install` (ovfetch 0.6.0) fetches the NPU compiler a distro's driver
+# package lacks, and `detect` reports the prefix it went into.
+OVFETCH_MIN="0.6.0"
 OVFETCH_ARGS=(--openvino-only)
 OV_LOCK="$OPENVINO_INSTALL_DIR/ovfetch.lock.json"
 
@@ -392,11 +399,30 @@ if OVFETCH_BIN="$(find_ovfetch)"; then
     # is reused below to install exactly what was checked here.
     step "asking ovfetch which OpenVINO this machine needs (takes a few seconds)"
     if OVFETCH_PLAN="$(as_user "$OVFETCH_BIN" resolve --json "${OVFETCH_ARGS[@]}")"; then
+        OVFETCH_DETECT="$(as_user "$OVFETCH_BIN" detect)"
         # compiler_present is false on a machine with no NPU at all too, where
         # GPU or CPU can still use the OpenVINO build.
-        if [ "${CONF_NPU_DEVICE:-NPU}" = "NPU" ] \
-           && as_user "$OVFETCH_BIN" detect | grep -q '"kind": "npu"' \
-           && grep -q '"compiler_present": false' <<<"$OVFETCH_PLAN"; then
+        npu_without_compiler() {
+            [ "${CONF_NPU_DEVICE:-NPU}" = "NPU" ] \
+                && grep -q '"kind": "npu"' <<<"$OVFETCH_DETECT" \
+                && grep -q '"compiler_present": false' <<<"$OVFETCH_PLAN"
+        }
+        # A driver that cannot compile (Fedora's 1.32.0 rpm ships no compiler):
+        # ovfetch fetches Intel's into the user's ~/.local/lib/ovfetch-npu,
+        # ledger-checked, no root, and detect then counts it. As the user, so
+        # the same prefix serves their other NPU programs and `ovfetch detect`.
+        if npu_without_compiler && ! grep -q '"npu_driver": null' <<<"$OVFETCH_DETECT"; then
+            step "the NPU driver has no compiler library; fetching Intel's (ovfetch npu install, as $ACTUAL_USER)"
+            if as_user "$OVFETCH_BIN" npu install; then
+                OVFETCH_DETECT="$(as_user "$OVFETCH_BIN" detect)"
+                OVFETCH_PLAN="$(as_user "$OVFETCH_BIN" resolve --json "${OVFETCH_ARGS[@]}")" || OVFETCH_PLAN=""
+            else
+                warn OpenVINO "ovfetch npu install failed (see above)."
+            fi
+        fi
+        if [ -z "$OVFETCH_PLAN" ]; then
+            warn OpenVINO "ovfetch found no build for this machine (see above)."
+        elif npu_without_compiler; then
             # Every compile_model would fail with ZE_RESULT_ERROR_UNSUPPORTED_FEATURE,
             # and every unlock would silently fall through to the password.
             warn OpenVINO "The NPU driver has no compiler library, so nothing can run on the NPU." \
@@ -404,6 +430,12 @@ if OVFETCH_BIN="$(find_ovfetch)"; then
             OPENVINO_MODE="none"
         else
             OPENVINO_MODE="ovfetch"
+            # The prefix detect counted, if any: its compiler (or driver) is what
+            # the user's NPU programs load, so face-auth loads the same. Copied
+            # for root below; vinoauthface-auth re-roots the list's paths to it.
+            if [ "${CONF_NPU_DEVICE:-NPU}" = "NPU" ]; then
+                NPU_PREFIX_SRC="$(sed -n 's/^ *"npu_prefix": "\(.*\)",\{0,1\}$/\1/p' <<<"$OVFETCH_DETECT" | head -1)"
+            fi
         fi
     else
         warn OpenVINO "ovfetch found no build for this machine (see above)."
@@ -840,6 +872,48 @@ if [ -n "$OV_STAGE" ]; then
         exit 1
     fi
     ok OpenVINO "runtime in $OPENVINO_INSTALL_DIR"
+fi
+
+# ---- NPU compiler or driver (the user's `ovfetch npu install` prefix) ----
+# Copied like the OpenVINO prefix above, and checked the same way: ovfetch's
+# SHA256SUMS lists every file including ovfetch-preload.txt, and the auth
+# binary re-roots that list's paths to $NPU_INSTALL_DIR, so the copy is used
+# unchanged. Reinstalled only when the user's prefix differs from the copy.
+if [ -n "$NPU_PREFIX_SRC" ] && [ "$OPENVINO_MODE" = "ovfetch" ]; then
+    if cmp -s "$NPU_PREFIX_SRC/SHA256SUMS" "$NPU_INSTALL_DIR/SHA256SUMS" 2>/dev/null \
+       && (cd "$NPU_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS) 2>/dev/null \
+       && [ -z "$(ov_untracked "$NPU_INSTALL_DIR")" ]; then
+        ok NPU "compiler in $NPU_INSTALL_DIR (installed, hashes verified)"
+    else
+        step "installing the NPU compiler from $NPU_PREFIX_SRC"
+        rm -rf "$NPU_INSTALL_DIR"
+        install -d -o root -g root -m 0755 "$NPU_INSTALL_DIR"
+        cp -a "$NPU_PREFIX_SRC/." "$NPU_INSTALL_DIR/"
+        chown -hR root:root "$NPU_INSTALL_DIR"
+        chmod -R go-w "$NPU_INSTALL_DIR"
+        command -v restorecon &>/dev/null && restorecon -R "$NPU_INSTALL_DIR" 2>/dev/null || true
+        # Without the compiler every unlock would silently fall through to the
+        # password, so a bad copy stops the deploy rather than shipping that.
+        if ! (cd "$NPU_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS); then
+            rm -rf "$NPU_INSTALL_DIR"
+            fail "$NPU_INSTALL_DIR does not match its SHA256SUMS after copying, so it was removed" \
+                "Run as yourself: ovfetch verify --prefix $NPU_PREFIX_SRC; then re-run sudo ./deploy.sh."
+            exit 1
+        fi
+        mapfile -t NPU_EXTRA < <(ov_untracked "$NPU_INSTALL_DIR")
+        if [ "${#NPU_EXTRA[@]}" -gt 0 ]; then
+            rm -rf "$NPU_INSTALL_DIR"
+            fail "$NPU_INSTALL_DIR has files its SHA256SUMS doesn't list, so it was removed:" \
+                "${NPU_EXTRA[@]}" "Remove them from $NPU_PREFIX_SRC (or ovfetch npu install --force), then re-run sudo ./deploy.sh."
+            exit 1
+        fi
+        ok NPU "compiler from ovfetch in $NPU_INSTALL_DIR (hashes verified)"
+    fi
+elif [ -d "$NPU_INSTALL_DIR" ]; then
+    # No prefix to mirror any more (removed, another device, or OpenVINO from
+    # elsewhere): the auth binary would still preload a stale copy.
+    rm -rf "$NPU_INSTALL_DIR"
+    ok NPU "removed $NPU_INSTALL_DIR (no ovfetch NPU prefix to mirror)"
 fi
 # The archive install's library path entry would shadow the rpath, and
 # expose its TBB to everything else on the system.

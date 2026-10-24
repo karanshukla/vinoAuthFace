@@ -280,8 +280,18 @@ fn read_sudoers(etc: &Path) -> std::io::Result<Vec<String>> {
     Ok(files)
 }
 
-/// Where the Intel NPU driver installs its compiler library.
-const NPU_LIB_DIRS: &[&str] = &["/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/usr/lib", "/usr/local/lib"];
+/// Where the Intel NPU driver installs its compiler library, and where
+/// `deploy.sh` puts the one `ovfetch npu install` fetched when the driver
+/// package shipped none (`face_auth_core::inference::NPU_PREFIX_DIR`).
+const NPU_LIB_DIRS: &[&str] = &[
+    "/usr/lib64",
+    "/usr/lib/x86_64-linux-gnu",
+    "/usr/lib",
+    "/usr/local/lib",
+    "/usr/local/lib/face-auth/npu",
+];
+/// The compiler's name by driver: 1.32 loads the first, 1.35 the second.
+const NPU_COMPILER_LIBS: &[&str] = &["libnpu_driver_compiler.so", "libopenvino_intel_npu_compiler.so"];
 
 /// With `npu_device = "NPU"`, OpenVINO needs the kernel driver's
 /// `/dev/accel` node and the user-space driver's compiler library; without
@@ -296,7 +306,8 @@ pub fn npu_verdict(accel_nodes: usize, compiler: bool) -> Check {
         (_, false) => check(
             Status::Warn,
             "NPU",
-            "no libnpu_driver_compiler.so found; if the driver ships no compiler, nothing compiles for the NPU (`ovfetch detect`)",
+            "no NPU compiler library found; if the driver ships none, nothing compiles for the NPU \
+             (`ovfetch detect`; `ovfetch npu install` fetches it, then `sudo ./deploy.sh` installs it for PAM)",
         ),
         _ => check(Status::Ok, "NPU", "/dev/accel present, driver compiler found"),
     }
@@ -308,7 +319,12 @@ fn npu_check() -> Check {
         .unwrap_or(0);
     let compiler = NPU_LIB_DIRS.iter().any(|d| {
         std::fs::read_dir(d).is_ok_and(|mut e| {
-            e.any(|f| f.is_ok_and(|f| f.file_name().to_string_lossy().starts_with("libnpu_driver_compiler.so")))
+            e.any(|f| {
+                f.is_ok_and(|f| {
+                    let name = f.file_name().to_string_lossy().into_owned();
+                    NPU_COMPILER_LIBS.iter().any(|lib| name.starts_with(lib))
+                })
+            })
         })
     });
     npu_verdict(accel, compiler)

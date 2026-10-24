@@ -411,6 +411,8 @@ jobs:
           # ovfetch#15: TBB dlopens its allocator by SONAME.
           test -e /usr/local/lib/face-auth/openvino/libtbbmalloc.so.2
           test ! -e /etc/ld.so.conf.d/face-auth-openvino.conf
+          # No NPU, so no `ovfetch npu install` prefix to mirror for PAM.
+          test ! -e /usr/local/lib/face-auth/npu
           readelf -d /usr/local/bin/vinoauthface-auth | grep -q 'RPATH.*/usr/local/lib/face-auth/openvino'
           ldd /usr/local/bin/vinoauthface-auth | grep -q 'libopenvino_c.*/usr/local/lib/face-auth/openvino/'
           # Its SELinux domain can't read OpenVINO, so it must not link it.
