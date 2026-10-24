@@ -40,7 +40,7 @@ FISH_COMPLETION_DIR="/usr/local/share/fish/vendor_completions.d"
 NPU_CACHE_DIR="/var/cache/face-auth"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
-PAM_SERVICES="sudo swaylock hyprlock gdm-password polkit-1 kde-fingerprint kde-smartcard plasmalogin-fingerprint plasmalogin cosmic-greeter"
+PAM_SERVICES="sudo swaylock hyprlock gdm-password polkit-1 kde-fingerprint kde-smartcard plasmalogin-fingerprint plasmalogin sddm cosmic-greeter"
 
 if [ "$USR_WRITABLE" = true ]; then
     ICON_DIR="/usr/share/icons/hicolor/scalable/apps"

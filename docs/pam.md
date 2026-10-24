@@ -17,7 +17,7 @@ nav_order: 4
 | `kde-fingerprint` or `kde-smartcard` | `/etc/pam.d/kde-fingerprint` or `kde-smartcard` | KDE lock screen (one of the two, see [KDE](#kde)) |
 | `cosmic-greeter` | `/etc/pam.d/cosmic-greeter` | COSMIC lock screen and greeter |
 
-The Plasma login screen is opt-in and set separately: see [Login screen](#login-screen).
+The KDE login screen (Plasma Login or SDDM) is opt-in and set separately: see [Login screen](#login-screen).
 
 The line goes just above the first `auth` line that actually authenticates: `pam_unix`,
 `pam_sss`, `pam_fprintd`, `pam_u2f`, or an `include`/`substack`/`@include` of another stack.
@@ -78,13 +78,15 @@ field (or type a wrong one). The failed password restarts every service 3 second
 
 ## Login screen
 
-Face unlock at the Plasma login screen has three modes, off by default:
+Face unlock at the KDE login screen has three modes, off by default. It covers Plasma Login
+(Fedora 45 and later) and SDDM (KDE on Arch, openSUSE, Debian and Kubuntu, and older Fedora). When
+both are installed, the one `display-manager.service` points at wins, else Plasma Login.
 
 | Mode | PAM | At the login screen |
 |---|---|---|
 | `off` | Nothing | Password only |
-| `both` | `required` line below `plasmalogin`'s password stack | Type your password, then look at the camera. Both must pass. The password still unlocks KWallet |
-| `face` | `sufficient` line above the password, in `plasmalogin-fingerprint` if the system has it, `plasmalogin` if not | A match logs you in; anything else falls back to the password. KWallet stays locked (see [Keyrings](#keyrings)) |
+| `both` | `required` line below the greeter's password stack (`plasmalogin` or `sddm`) | Type your password, then look at the camera. Both must pass. The password still unlocks KWallet |
+| `face` | `sufficient` line above the password, in `plasmalogin-fingerprint` if the system has it, else `plasmalogin` or `sddm` | A match logs you in; anything else falls back to the password. KWallet stays locked (see [Keyrings](#keyrings)) |
 
 Set it with `sudo ./deploy.sh --login=off|both|face` (or `FACE_AUTH_LOGIN`), the tray's "Login
 screen" submenu, or `sudo /usr/local/share/face-auth/login-mode.sh off|both|face` directly.
@@ -93,7 +95,8 @@ whatever is set.
 
 `plasmalogin-fingerprint` runs hands-free beside the password field. Fedora 45 ships only
 `plasmalogin`, so there `face` needs you to select your account and press Enter with the password
-field empty. Only one of the two is ever wired, or the greeter would scan twice.
+field empty. SDDM has no hands-free service either, so it works the same way there. Only one
+service is ever wired, or the greeter would scan twice.
 
 In `both`, the camera is a hard requirement. A covered camera, a closed lid, an active face
 lockout or a broken NPU driver means no graphical login until it's fixed; log in on a text console

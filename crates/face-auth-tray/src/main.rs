@@ -47,7 +47,7 @@ enum Action {
     Set(&'static Setting, &'static Choice),
 }
 
-/// Face unlock at the Plasma login screen, as `login-mode.sh` names it.
+/// Face unlock at the KDE login screen (Plasma Login or SDDM), as `login-mode.sh` names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoginMode {
     Off,
@@ -116,7 +116,7 @@ struct Status {
     /// The recognition and detector models, as `model_path` and
     /// `detector_model_path` name them.
     model: String,
-    /// `None` without Plasma Login, which hides the menu entry.
+    /// `None` without Plasma Login or SDDM, which hides the menu entry.
     login: Option<LoginMode>,
     /// Each setting's current choice id, from `setting-mode.sh status`; empty
     /// when it is missing (an install from before it), which hides the menu.
@@ -1024,7 +1024,7 @@ mod tests {
 
     #[test]
     fn login_modes_round_trip_through_the_script() {
-        // login-mode.sh's status words, and its "none" without Plasma Login.
+        // login-mode.sh's status words, and its "none" without Plasma Login or SDDM.
         assert_eq!(LoginMode::parse("off\n"), Some(LoginMode::Off));
         assert_eq!(LoginMode::parse("both"), Some(LoginMode::Both));
         assert_eq!(LoginMode::parse("face"), Some(LoginMode::Face));

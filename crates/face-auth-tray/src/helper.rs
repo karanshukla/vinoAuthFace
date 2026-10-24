@@ -102,7 +102,7 @@ pub enum Verb {
     Uninstall,
     /// `vinoauthface-upgrade` to the newest release.
     Upgrade,
-    /// `login-mode.sh`: face unlock at the Plasma login screen. One verb per
+    /// `login-mode.sh`: face unlock at the KDE login screen. One verb per
     /// mode, since polkit pins the argument per action.
     LoginOff,
     LoginBoth,

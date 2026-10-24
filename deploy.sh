@@ -97,7 +97,7 @@ cargo_build() {
 # default. --no-tray (or FACE_AUTH_TRAY=0) skips them; --with-tray is kept as a
 # no-op so existing invocations keep working.
 #
-# --login=off|both|face sets face unlock at the Plasma login screen
+# --login=off|both|face sets face unlock at the KDE login screen (Plasma Login or SDDM)
 # (login-mode.sh). Without it a re-deploy or upgrade keeps what's installed,
 # and a fresh install gets off.
 #
@@ -165,7 +165,7 @@ ZSH_COMPLETION_DIR="/usr/local/share/zsh/site-functions"
 FISH_COMPLETION_DIR="/usr/local/share/fish/vendor_completions.d"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
-# The Plasma login screen's services are login-mode.sh's, not this list's.
+# The KDE login screen's services are login-mode.sh's, not this list's.
 PAM_SERVICES="sudo swaylock hyprlock gdm-password polkit-1 kde-fingerprint kde-smartcard cosmic-greeter"
 VAR_DIR="/var/lib/face-auth"
 NPU_CACHE_DIR="/var/cache/face-auth"
@@ -1157,22 +1157,22 @@ join() { local IFS=,; echo "$*" | sed 's/,/, /g'; }
 [ "${#PAM_COVERED[@]}" -gt 0 ] && ok PAM "$(join "${PAM_COVERED[@]}")"
 [ "${#PAM_ABSENT[@]}" -gt 0 ] && skip PAM "not on this system: $(join "${PAM_ABSENT[@]}")"
 
-# The Plasma login screen: off unless asked for, kept across re-deploys.
+# The KDE login screen: off unless asked for, kept across re-deploys.
 LOGIN_NOW="$(bash login-mode.sh status)"
 if [ "$LOGIN_NOW" = none ]; then
     if [ "${LOGIN_MODE:-off}" != off ]; then
-        warn PAM "--login=$LOGIN_MODE does nothing here: Plasma Login isn't installed."
+        warn PAM "--login=$LOGIN_MODE does nothing here: neither Plasma Login nor SDDM is installed."
     fi
 else
     LOGIN_MODE="${LOGIN_MODE:-$LOGIN_NOW}"
     if LOGIN_OUT="$(bash login-mode.sh "$LOGIN_MODE" 2>&1)"; then
         case "$LOGIN_MODE" in
-            off) ok PAM "Plasma login screen: password only (--login=both or --login=face to change)" ;;
-            both) ok PAM "Plasma login screen: password, then face" ;;
-            face) ok PAM "Plasma login screen: face, or the password" ;;
+            off) ok PAM "KDE login screen: password only (--login=both or --login=face to change)" ;;
+            both) ok PAM "KDE login screen: password, then face" ;;
+            face) ok PAM "KDE login screen: face, or the password" ;;
         esac
     else
-        warn PAM "Could not set the Plasma login screen to $LOGIN_MODE." "$LOGIN_OUT"
+        warn PAM "Could not set the KDE login screen to $LOGIN_MODE." "$LOGIN_OUT"
     fi
 fi
 
