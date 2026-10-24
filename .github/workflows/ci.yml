@@ -110,6 +110,9 @@ jobs:
           sudo cp /etc/pam.d/gdm-password /tmp/gdm-password.orig
           # A vendor-only service: deploy.sh must copy it to /etc/pam.d to patch it.
           printf '%s\n' '#%PAM-1.0' 'auth       include      login' | sudo tee /usr/lib/pam.d/cosmic-greeter
+          # Vendor-only like every service on openSUSE, and one deploy.sh
+          # didn't copy before: hyprlock.
+          printf '%s\n' '#%PAM-1.0' 'auth       include      login' | sudo tee /usr/lib/pam.d/hyprlock
           # A second one that stays untouched: uninstall must delete it outright.
           printf '%s\n' '#%PAM-1.0' 'auth       include      login' | sudo tee /usr/lib/pam.d/kde-fingerprint
           # Plasma Login without the -fingerprint service, as on Fedora 45.
@@ -126,6 +129,8 @@ jobs:
           grep -A1 'pam_exec\.so.*face-auth' /etc/pam.d/sudo | grep -q '@include common-auth'
           cmp /etc/pam.d/gdm-password /tmp/gdm-password.orig
           grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/cosmic-greeter
+          grep -A1 'pam_exec\.so.*face-auth' /etc/pam.d/hyprlock | grep -q 'include      login'
+          test -s /etc/pam.d/.face-auth-hyprlock-created
           # No fprintd: the fingerprint slot, failing rather than falling through.
           grep -qE '^auth +\[success=done new_authtok_reqd=done default=die\] +pam_exec\.so.*vinoauthface-auth' /etc/pam.d/kde-fingerprint
           test -x /usr/local/bin/vinoauthface-auth
@@ -253,6 +258,8 @@ jobs:
           test ! -e /etc/pam.d/.face-auth-cosmic-greeter-created
           sudo rm /etc/pam.d/cosmic-greeter
           test ! -e /etc/pam.d/kde-fingerprint
+          test ! -e /etc/pam.d/hyprlock
+          test ! -e /etc/pam.d/.face-auth-hyprlock-created
           test ! -e /etc/pam.d/plasmalogin
           test ! -e /var/cache/face-auth
           test ! -e /usr/local/share/bash-completion/completions/vinoauthface
@@ -333,7 +340,7 @@ jobs:
         run: |
           [ -d "$HOME/.cargo/bin.hidden" ] && mv "$HOME/.cargo/bin.hidden" "$HOME/.cargo/bin" || true
           sudo ./uninstall.sh || true
-          sudo rm -f /etc/pam.d/swaylock /etc/pam.d/gdm-password /etc/pam.d/face-auth-ci-stack
+          sudo rm -f /etc/pam.d/swaylock /etc/pam.d/gdm-password /etc/pam.d/face-auth-ci-stack /usr/lib/pam.d/hyprlock
 
   # The OpenVINO backend, provisioned the way deploy.sh does it on a real
   # machine: ovfetch on PATH, sudo ./deploy.sh. The runner has no NPU, so

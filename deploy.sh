@@ -166,7 +166,7 @@ FISH_COMPLETION_DIR="/usr/local/share/fish/vendor_completions.d"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
 # The Plasma login screen's services are login-mode.sh's, not this list's.
-PAM_SERVICES="sudo swaylock gdm-password polkit-1 kde-fingerprint kde-smartcard cosmic-greeter"
+PAM_SERVICES="sudo swaylock hyprlock gdm-password polkit-1 kde-fingerprint kde-smartcard cosmic-greeter"
 VAR_DIR="/var/lib/face-auth"
 NPU_CACHE_DIR="/var/cache/face-auth"
 SELINUX_DIR="/usr/local/share/face-auth/selinux"
@@ -657,7 +657,7 @@ fi
 
 # ---- Install binaries ----
 section "Install"
-# Set-group-ID face-auth (mode 2755): KScreenLocker and swaylock run PAM as
+# Set-group-ID face-auth (mode 2755): KScreenLocker, swaylock and hyprlock run PAM as
 # the logged-in user, so face-auth borrows the face-auth group to read the
 # store, which nothing else can open. face-auth scrubs its environment and only
 # lets a non-root caller authenticate its own account (see
@@ -666,7 +666,7 @@ getent group face-auth >/dev/null || groupadd --system face-auth
 install -D -o root -g face-auth -m 2755 "$BIN_SRC/vinoauthface-auth" "$BIN_DIR/vinoauthface-auth"
 if findmnt -no OPTIONS --target "$BIN_DIR" 2>/dev/null | tr ',' '\n' | grep -qx nosuid; then
     warn Binaries "$BIN_DIR is mounted nosuid, which ignores the set-group-ID bit." \
-        "sudo, polkit and GDM still work; KDE's lock screen and swaylock fall back to the password."
+        "sudo, polkit and GDM still work; KDE's lock screen, swaylock and hyprlock fall back to the password."
 fi
 install -Dm755 "$BIN_SRC/vinoauthface" "$BIN_DIR/vinoauthface"
 ok Binaries "vinoauthface-auth, vinoauthface in $BIN_DIR"
@@ -1000,13 +1000,17 @@ for service in kde-fingerprint kde-smartcard; do
     fi
 done
 
-# These services usually have no /etc/pam.d override and fall back to the
-# vendor file in /usr/lib/pam.d (polkit-1: pkexec, GUI admin prompts,
-# Bitwarden's system unlock; the KDE and COSMIC lock screens and greeters, on
-# image-based distros). Materialise the vendor file as an override so there is
-# something to patch, and mark it so uninstall.sh deletes it rather than
-# "restoring" a file that never was.
-for service in polkit-1 "$KDE_SLOT" cosmic-greeter; do
+# A service with no /etc/pam.d override falls back to the vendor file in
+# /usr/lib/pam.d. That's usual for polkit-1 (pkexec, GUI admin prompts,
+# Bitwarden's system unlock) and, on image-based distros, the KDE and COSMIC
+# lock screens and greeters. openSUSE ships every service that way, sudo
+# included. Materialise the vendor file as an override so there is something
+# to patch, and mark it so uninstall.sh deletes it rather than "restoring" a
+# file that never was.
+for service in $PAM_SERVICES; do
+    case "$service" in
+        kde-fingerprint | kde-smartcard) [ "$service" = "$KDE_SLOT" ] || continue ;;
+    esac
     if [ ! -f "$PAM_DIR/$service" ] && [ -f "/usr/lib/pam.d/$service" ]; then
         cp "/usr/lib/pam.d/$service" "$PAM_DIR/$service"
         touch "$PAM_DIR/.face-auth-$service-created"
@@ -1098,12 +1102,13 @@ fi
 if command -v bitwarden &>/dev/null || command -v bitwarden-desktop &>/dev/null \
    || flatpak info com.bitwarden.desktop &>/dev/null \
    || snap list bitwarden-desktop &>/dev/null; then
-    BW_POLICY="/usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy"
-    if [ -f "$BW_POLICY" ]; then
+    # Where the tray's policy went: /usr/share, or /usr/local/share on a
+    # read-only /usr (Fedora Atomic, Aeon), which polkit 124 and later read.
+    BW_POLICY="$POLKIT_ACTIONS_DIR/com.bitwarden.Bitwarden.policy"
+    if [ -f /usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy ] || [ -f "$BW_POLICY" ]; then
         ok Bitwarden "polkit unlock action already present"
-    elif ! touch "$BW_POLICY" 2>/dev/null; then
-        # Read-only /usr on image-based distros.
-        warn Bitwarden "Cannot write $BW_POLICY (read-only /usr?), so system unlock isn't wired."
+    elif ! { mkdir -p "$POLKIT_ACTIONS_DIR" && touch "$BW_POLICY"; } 2>/dev/null; then
+        warn Bitwarden "Cannot write $BW_POLICY, so system unlock isn't wired."
     else
         cat > "$BW_POLICY" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
