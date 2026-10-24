@@ -12,8 +12,23 @@ build from source instead of using the release binaries, camera pinning, and rem
 
 - An IR camera on `uvcvideo` (Windows Hello style). See [hardware.md](hardware.md).
 - PAM with `pam_exec.so`, standard everywhere.
-- On SELinux systems, `policycoreutils` to compile the lock-screen policy. Installed by default on
-  Fedora.
+- `curl`, and `unzip` for the model download. `deploy.sh` checks for both before it changes
+  anything, and prints the install command for your distro if one is missing.
+- On SELinux systems, `policycoreutils` and `checkpolicy` to compile the login-screen policy.
+  Installed by default on Fedora.
+
+## Distros
+
+| Family | Tested | PAM | MAC | Notes |
+|---|---|---|---|---|
+| Fedora, Fedora Atomic (Silverblue, Kinoite, Bazzite) | Fedora KDE, Kinoite | `/etc/pam.d`, authselect | SELinux, policy loaded | The primary target. `/usr/local` is `/var/usrlocal` on Atomic, so the install survives updates |
+| Debian, Ubuntu, Mint | Ubuntu 24.04 (VM, no IR camera) | `/etc/pam.d`, `@include common-auth` | AppArmor, nothing needed | |
+| Arch, CachyOS, EndeavourOS | No | `/etc/pam.d`, `include system-auth` | None | |
+| openSUSE Tumbleweed, Leap 16, Aeon, MicroOS | No | Vendor files in `/usr/lib/pam.d`, `include common-auth` | SELinux on new installs | `deploy.sh` loads the Fedora-derived policy; if a type is missing it warns and carries on, and only the login screens lose the camera |
+
+"Tested" means someone has run `deploy.sh` there and unlocked with it. The rest should work, since
+`deploy.sh` decides on what's on disk (PAM files, SELinux state, a writable `/usr`) rather than on
+the distro name; reports either way are welcome.
 
 No build toolchain is required. If `deploy.sh` finds no Rust toolchain and no local build, it
 downloads the static musl binaries from
@@ -39,6 +54,17 @@ the release's `SHA256SUMS`. Build from source for an unreleased change or the NP
 ## Building from source
 
 ### Core (static musl, no runtime deps)
+
+`tract-linalg`'s build script assembles its kernels with `musl-gcc`, so install that first:
+
+| Distro | Command |
+|---|---|
+| Fedora | `sudo dnf install gcc musl-gcc` |
+| Debian, Ubuntu | `sudo apt install musl-tools` |
+| Arch | `sudo pacman -S --needed musl` |
+| Fedora Atomic, openSUSE | Build in a [distrobox](#immutable-distros-via-distrobox) or [container](#container-build-no-toolchain-installed) |
+
+Use rustup rather than the distro's `rust` package, which may not ship the musl standard library:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

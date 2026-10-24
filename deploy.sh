@@ -186,6 +186,52 @@ fi
 
 ACTUAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 
+# ---- Distro ----
+# Only for the install hints printed when something is missing; nothing that
+# gets installed depends on it. ID first, then ID_LIKE, so derivatives
+# (Bazzite, CachyOS, Linux Mint, Aeon) land in their parent's family.
+os_release_field() { sed -n "s/^$1=//p" /etc/os-release 2>/dev/null | tr -d '"' | head -1; }
+DISTRO_FAMILY=""
+for id in $(os_release_field ID) $(os_release_field ID_LIKE); do
+    case "$id" in
+        fedora|rhel|centos) DISTRO_FAMILY=fedora ;;
+        debian|ubuntu) DISTRO_FAMILY=debian ;;
+        arch) DISTRO_FAMILY=arch ;;
+        opensuse*|suse|sles) DISTRO_FAMILY=suse ;;
+        *) continue ;;
+    esac
+    break
+done
+# Image-based: Fedora Atomic (Silverblue, Kinoite, Bazzite) layers packages
+# with rpm-ostree; openSUSE Aeon/MicroOS with transactional-update. Both need a
+# reboot before the package is there.
+TRANSACTIONAL=0
+if [ "$DISTRO_FAMILY" = suse ] && command -v transactional-update &>/dev/null \
+   && findmnt -no OPTIONS / 2>/dev/null | tr ',' '\n' | grep -qx ro; then
+    TRANSACTIONAL=1
+fi
+
+# install_hint <fedora> <debian> <arch> <suse>: the command that installs
+# those packages here. Fails (prints nothing) for an unknown distro, or an
+# empty package list for this one.
+install_hint() {
+    local pkgs
+    case "$DISTRO_FAMILY" in
+        fedora) pkgs="$1" ;; debian) pkgs="$2" ;; arch) pkgs="$3" ;; suse) pkgs="$4" ;; *) return 1 ;;
+    esac
+    [ -n "$pkgs" ] || return 1
+    case "$DISTRO_FAMILY" in
+        fedora)
+            if [ -e /run/ostree-booted ]; then echo "sudo rpm-ostree install $pkgs, then reboot"
+            else echo "sudo dnf install $pkgs"; fi ;;
+        debian) echo "sudo apt install $pkgs" ;;
+        arch) echo "sudo pacman -S --needed $pkgs" ;;
+        suse)
+            if [ "$TRANSACTIONAL" = 1 ]; then echo "sudo transactional-update pkg install $pkgs, then reboot"
+            else echo "sudo zypper install $pkgs"; fi ;;
+    esac
+}
+
 # The release this is: a tagged checkout, or the VERSION file in a release's
 # source bundle (vinoauthface-upgrade). Builds are stamped with it, so doctor
 # and the tray know what's installed; anything else builds as "dev". Keep in
@@ -199,6 +245,31 @@ TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 [ -n "${CARGO_TARGET_DIR:-}" ] && STAMP+=(CARGO_TARGET_DIR="$CARGO_TARGET_DIR")
 
 printf '%svinoAuthFace installer%s\n' "$BOLD" "$RESET"
+
+# ---- Tools ----
+# Checked before anything changes, so a missing one can't stop the install
+# halfway. curl fetches the models and release binaries (and later
+# vinoauthface-upgrade and the tray's update check need it too); unzip opens
+# the model zips, so it only matters when a model isn't already here.
+MISSING_TOOLS=()
+command -v curl &>/dev/null || MISSING_TOOLS+=(curl)
+if ! command -v unzip &>/dev/null; then
+    have_model() { [ -f "$SHARE_DIR/$1" ] || [ -f "models/$1" ]; }
+    case "${FACE_AUTH_RECOGNITION_MODEL:-}" in
+        mbf) have_recognition() { have_model w600k_mbf.onnx; } ;;
+        r50) have_recognition() { have_model w600k_r50.onnx; } ;;
+        *) have_recognition() { have_model w600k_mbf.onnx || have_model w600k_r50.onnx; } ;;
+    esac
+    { have_model "$DETECTOR_NAME" && have_recognition; } || MISSING_TOOLS+=(unzip)
+fi
+if [ "${#MISSING_TOOLS[@]}" -gt 0 ]; then
+    if HINT="$(install_hint "${MISSING_TOOLS[*]}" "${MISSING_TOOLS[*]}" "${MISSING_TOOLS[*]}" "${MISSING_TOOLS[*]}")"; then
+        fail "Missing ${MISSING_TOOLS[*]}" "Install with: $HINT" "Then re-run sudo ./deploy.sh."
+    else
+        fail "Missing ${MISSING_TOOLS[*]}" "Install it with your package manager, then re-run sudo ./deploy.sh."
+    fi
+    exit 1
+fi
 
 # ---- Undo any previous partial setup ----
 
@@ -259,6 +330,13 @@ build_with_cargo() {
     if ! cargo_build "Compiling" "$total" as_user "$cargo" build --release --locked --target "$MUSL_TARGET" \
             -p face-auth -p face-enroll "${tray[@]}"; then
         fail "Build failed" "If the error mentions a missing target, add it with:" "  rustup target add $MUSL_TARGET"
+        # tract-linalg's build script compiles assembly with musl-gcc.
+        if ! command -v musl-gcc &>/dev/null && ! command -v x86_64-linux-musl-gcc &>/dev/null; then
+            local hint
+            hint="$(install_hint "musl-gcc gcc" "musl-tools" "musl" "")" \
+                || hint="your distro's musl C compiler (musl-gcc), or the container build in docs/install.md"
+            printf '  %s\n' "musl-gcc isn't installed, and the build needs it. Install: $hint" >&2
+        fi
         return 1
     fi
 }
@@ -572,10 +650,17 @@ else
             echo "Install a Rust toolchain:"
         fi
 
-        echo "  Arch/CachyOS:  sudo pacman -S --needed rust"
-        echo "  Fedora:        sudo dnf install rust cargo"
-        echo "  Or rustup:     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-        echo "  Then:          rustup target add $MUSL_TARGET"
+        # rustup rather than the distro's rust: the build is static musl, and
+        # not every distro packages Rust's musl std. musl-gcc assembles
+        # tract-linalg's kernels.
+        if [ -e /run/ostree-booted ] || [ "$TRANSACTIONAL" = 1 ]; then
+            echo "  Image-based system: build in a toolbox or distrobox instead of layering"
+            echo "  packages (docs/install.md, \"Immutable distros\"), or use the container above."
+        elif TOOLS_HINT="$(install_hint "rustup gcc musl-gcc" "rustup musl-tools" "rustup musl" "")"; then
+            echo "  Packages:      $TOOLS_HINT"
+        fi
+        echo "  rustup:        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+        echo "  Then:          rustup default stable && rustup target add $MUSL_TARGET"
         echo ""
         echo "Either way, re-run sudo ./deploy.sh afterwards."
         exit 1
@@ -1149,16 +1234,26 @@ elif command -v checkmodule &>/dev/null && command -v semodule_package &>/dev/nu
     mkdir -p "$SELINUX_DIR"
     cp selinux/face-auth.te "$SELINUX_DIR/face_auth.te"
     cp selinux/face-auth.fc "$SELINUX_DIR/face_auth.fc"
-    checkmodule -M -m -o "$SELINUX_DIR/face_auth.mod" "$SELINUX_DIR/face_auth.te"
-    semodule_package -o "$SELINUX_DIR/face_auth.pp" -m "$SELINUX_DIR/face_auth.mod" -f "$SELINUX_DIR/face_auth.fc"
-    semodule -i "$SELINUX_DIR/face_auth.pp"
-    # udev labels the NPU node from here on; this covers the one already there.
-    [ -d /dev/accel ] && restorecon -R /dev/accel 2>/dev/null || true
-    [ -f /usr/local/libexec/vinoauthface-unseal ] && restorecon /usr/local/libexec/vinoauthface-unseal
-    ok SELinux "greeter policy loaded"
+    # The policy is written against Fedora's types. Another distro's policy
+    # (openSUSE's, say) may lack one, and a failed load must not stop the
+    # deploy here, with PAM patched and the template store not yet set up:
+    # only the greeters need it.
+    if checkmodule -M -m -o "$SELINUX_DIR/face_auth.mod" "$SELINUX_DIR/face_auth.te" \
+       && semodule_package -o "$SELINUX_DIR/face_auth.pp" -m "$SELINUX_DIR/face_auth.mod" -f "$SELINUX_DIR/face_auth.fc" \
+       && semodule -i "$SELINUX_DIR/face_auth.pp"; then
+        # udev labels the NPU node from here on; this covers the one already there.
+        [ -d /dev/accel ] && restorecon -R /dev/accel 2>/dev/null || true
+        [ -f /usr/local/libexec/vinoauthface-unseal ] && restorecon /usr/local/libexec/vinoauthface-unseal
+        ok SELinux "greeter policy loaded"
+    else
+        warn SELinux "Could not load the greeter policy (errors above), so login screens can't reach the camera." \
+            "sudo, polkit and the lock screens are unaffected. Please open an issue with the error and your distro."
+    fi
 else
-    warn SELinux "Tools not found, so the lock screen can't reach the camera." \
-        "Install policycoreutils and checkpolicy (dnf install, or rpm-ostree install on Silverblue/Bazzite), then re-run this script."
+    SELINUX_HINT="$(install_hint "policycoreutils checkpolicy" "policycoreutils checkpolicy" "" "policycoreutils checkpolicy")" \
+        || SELINUX_HINT="install policycoreutils and checkpolicy"
+    warn SELinux "Tools not found, so the login screens can't reach the camera." \
+        "$SELINUX_HINT, then re-run this script."
 fi
 
 # ---- Embeddings directory ----
