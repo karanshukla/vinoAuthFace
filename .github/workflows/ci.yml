@@ -67,6 +67,14 @@ jobs:
             bash -n "$script"
           done
 
+      # -S warning: info/style notes don't fail the build. All scripts are
+      # clean at this level today; this keeps them that way.
+      - name: shellcheck
+        run: |
+          shellcheck --version
+          shellcheck -S warning deploy.sh uninstall.sh pin-camera.sh update.sh upgrade.sh login-mode.sh \
+            setting-mode.sh install.sh scripts/*.sh
+
       - name: Run unit tests
         run: cargo test --workspace --locked
 
@@ -74,6 +82,47 @@ jobs:
         run: |
           cargo build --release --locked --target x86_64-unknown-linux-musl \
             -p face-auth -p face-enroll -p face-camera-diag -p face-similarity-check -p face-auth-tray
+
+  # Line coverage of the unit tests (the default tract build; the npu feature
+  # isn't measured). The lcov file is an artifact for local tools, the summary
+  # goes on the run page. The floor sits a few points under what CI measured
+  # when it was set (68.3% on #180; in-crate test modules count too, since
+  # excluding them needs nightly): raise it as coverage grows, never lower
+  # it to merge.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-llvm-cov
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake
+      - name: Measure
+        run: cargo llvm-cov --workspace --locked --no-report
+      - name: Report
+        run: |
+          cargo llvm-cov report --lcov --output-path lcov.info
+          {
+            echo '## Line coverage'
+            echo '```'
+            cargo llvm-cov report --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov report --summary-only
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lcov
+          path: lcov.info
+          if-no-files-found: error
+      - name: Enforce the floor
+        run: cargo llvm-cov report --fail-under-lines 65
 
   # deploy.sh's real integration test: everything it does system-wide (PAM patching, SELinux
   # detection, embeddings dir) on a throwaway VM instead of a contributor's or a reviewer's own

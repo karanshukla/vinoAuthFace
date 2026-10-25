@@ -44,7 +44,11 @@ cargo deny check
   `./uninstall.sh` cycle through every build path, including the checksum-verified download via
   a `file://` override (`FACE_AUTH_DEPLOY_RELEASE_BASE`, deploy.sh and upgrade.sh only, not a
   config option). The same job runs `vinoauthface-upgrade` against a fake source bundle.
-- `release.yml` publishes static musl binaries and `vinoauthface-source.tar.gz` (the tag's tree
+- `ci.yml` also runs `shellcheck -S warning` on every script (in `test`) and a `coverage` job:
+  `cargo llvm-cov` over the workspace tests, lcov uploaded as an artifact, summary on the run
+  page, failing under a line-coverage floor. Raise the floor as coverage grows.
+- `release.yml` smoke-tests what it built (static, `--version` carries the tag, the PAM
+  entry point's exit codes) before staging it, then publishes static musl binaries and `vinoauthface-source.tar.gz` (the tag's tree
   plus `VERSION`, what `upgrade.sh` installs from) on `v*` tags. Versions
   are consecutive (`v2`, `v3`), cut with `scripts/release.sh`; see `docs/releasing.md`.
 - `ci.yml`'s `npu` job builds, lints and tests the `npu` feature against an OpenVINO that
