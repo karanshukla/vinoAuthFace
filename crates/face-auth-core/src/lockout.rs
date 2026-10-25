@@ -376,6 +376,89 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    fn write_state(dir: &Path, bytes: &[u8]) {
+        let lockout = dir.join("alice/lockout");
+        fs::create_dir_all(&lockout).unwrap();
+        fs::write(lockout.join(STATE_FILE), bytes).unwrap();
+    }
+
+    fn state_bytes(version: u32, failures: u32, last_ms: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&version.to_le_bytes());
+        out.extend_from_slice(&failures.to_le_bytes());
+        out.extend_from_slice(&last_ms.to_le_bytes());
+        out
+    }
+
+    // The backoff fails open on bookkeeping by design (see `load`): an
+    // unreadable state file is zero failures, never an error that would stop
+    // the scan or the password prompt. These pin that, so making it fail
+    // closed is a visible decision rather than a side effect.
+    #[test]
+    fn unreadable_state_resets_the_counter_by_design() {
+        let dir = tmpdir("corrupt");
+        let now = now_unix_ms();
+        let cases: [(&str, Vec<u8>); 5] = [
+            ("empty", Vec::new()),
+            ("truncated", state_bytes(LOCKOUT_VERSION, 9, now)[..10].to_vec()),
+            ("wrong version", state_bytes(LOCKOUT_VERSION + 1, 9, now)),
+            ("oversized", [state_bytes(LOCKOUT_VERSION, 9, now), vec![0; MAX_STATE_FILE_LEN as usize]].concat()),
+            ("garbage", vec![0xff; 16]),
+        ];
+        for (what, bytes) in cases {
+            write_state(&dir, &bytes);
+            assert_eq!(LockoutState::load("alice", &dir).failures, 0, "{what}");
+            assert_eq!(peek("alice", &dir, &LockoutPolicy::default()), (0, None), "{what}");
+        }
+        // A well-formed file still reads back, so the cases above are what reset it.
+        write_state(&dir, &state_bytes(LOCKOUT_VERSION, 9, now));
+        assert_eq!(LockoutState::load("alice", &dir).failures, 9);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_reset_state_counts_up_from_zero_again() {
+        let dir = tmpdir("recount");
+        write_state(&dir, &state_bytes(LOCKOUT_VERSION + 1, 9, now_unix_ms()));
+        record_failure("alice", &dir).unwrap();
+        assert_eq!(LockoutState::load("alice", &dir).failures, 1);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_state_file_that_is_a_link_or_a_directory_is_not_read() {
+        let dir = tmpdir("statelink");
+        let lockout = dir.join("alice/lockout");
+        fs::create_dir_all(&lockout).unwrap();
+        let target = dir.join("elsewhere");
+        fs::write(&target, state_bytes(LOCKOUT_VERSION, 9, now_unix_ms())).unwrap();
+        std::os::unix::fs::symlink(&target, lockout.join(STATE_FILE)).unwrap();
+        assert_eq!(LockoutState::load("alice", &dir).failures, 0);
+        fs::remove_file(lockout.join(STATE_FILE)).unwrap();
+        fs::create_dir(lockout.join(STATE_FILE)).unwrap();
+        assert_eq!(LockoutState::load("alice", &dir).failures, 0);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn saturates_instead_of_wrapping() {
+        let dir = tmpdir("saturate");
+        write_state(&dir, &state_bytes(LOCKOUT_VERSION, u32::MAX, 0));
+        record_failure("alice", &dir).unwrap();
+        assert_eq!(LockoutState::load("alice", &dir).failures, u32::MAX);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn no_store_means_nothing_is_recorded() {
+        // Only enrolment creates the user directory.
+        let dir = tmpdir("nostore");
+        let err = record_failure("alice", &dir).unwrap_err();
+        assert!(!err.is::<LockBusy>(), "{err}");
+        assert!(!dir.join("alice").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn rejects_path_traversal_in_username() {
         let dir = tmpdir("traversal");
