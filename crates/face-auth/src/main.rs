@@ -22,8 +22,18 @@ use tracing_subscriber::{fmt, EnvFilter};
 /// SSH triggers the local IR sensor, and whoever happens to be sitting at the
 /// desk authenticates the remote attacker.
 fn reject_remote_session() -> Result<(), String> {
-    let Ok(rhost) = env::var("PAM_RHOST") else {
+    remote_session(env::var_os("PAM_RHOST").as_deref())
+}
+
+/// Unset is local. A value that isn't UTF-8 can't be a loopback address or
+/// `localhost`, so it is remote: reading it with `env::var` turned it into
+/// "unset" and let it through.
+fn remote_session(rhost: Option<&std::ffi::OsStr>) -> Result<(), String> {
+    let Some(rhost) = rhost else {
         return Ok(());
+    };
+    let Some(rhost) = rhost.to_str() else {
+        return Err(format!("remote session from {}", rhost.to_string_lossy()));
     };
     let rhost = rhost.trim();
     if rhost_is_local(rhost) {
@@ -464,5 +474,16 @@ mod tests {
         ] {
             assert!(!rhost_is_local(remote), "{remote:?} should be remote");
         }
+    }
+
+    #[test]
+    fn a_non_utf8_rhost_is_remote_not_unset() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        assert!(remote_session(None).is_ok());
+        assert!(remote_session(Some(OsStr::new(" 127.0.0.1 "))).is_ok());
+        assert!(remote_session(Some(OsStr::new("10.0.0.5"))).is_err());
+        assert!(remote_session(Some(OsStr::from_bytes(b"10.0.0.5\xff"))).is_err());
+        assert!(remote_session(Some(OsStr::from_bytes(b"\xfflocalhost"))).is_err());
     }
 }

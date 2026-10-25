@@ -6,6 +6,8 @@ This fork (karanshukla/vinoAuthFace) was rebuilt on top of upstream's security
 pass below instead of merging, so upstream's fixes all apply. Fork features
 replayed on top:
 
+- **A `PAM_RHOST` that isn't UTF-8 is a remote session.** It was read as
+  unset, so the remote-session check let it through to the camera.
 - **NPU compiler from ovfetch 0.6.0.** When the NPU driver has no compiler
   (Fedora's 1.32.0 rpm), `deploy.sh` used to fall back to the CPU backend. It
   now runs `ovfetch npu install` as you, mirrors the resulting
