@@ -63,6 +63,27 @@ pub fn process_age(stat: &str, uptime: &str, clock_ticks_per_sec: u64) -> Option
         .then(|| Duration::from_secs_f64(uptime_secs - start_secs))
 }
 
+/// Per-service PAM helpers a locker forks, by `comm` (truncated to 15 bytes).
+/// Plasma 6.8 runs PAM in `kscreenlocker_worker`, started after resume, not in
+/// the greeter that has been up since the screen locked.
+const LOCKER_PAM_HELPERS: &[&str] = &["kscreenlocker_w"];
+
+/// The process whose age the start delay is measured from: `pid` itself, or
+/// its parent when `pid` is a locker's PAM helper. Unreadable means `pid`.
+pub fn locker_pid(proc_root: &Path, pid: u32) -> u32 {
+    let dir = proc_root.join(pid.to_string());
+    let is_helper = std::fs::read_to_string(dir.join("comm"))
+        .is_ok_and(|comm| LOCKER_PAM_HELPERS.contains(&comm.trim_end()));
+    if !is_helper {
+        return pid;
+    }
+    std::fs::read_to_string(dir.join("stat"))
+        .ok()
+        .and_then(|stat| parent_pid(&stat))
+        .filter(|&ppid| ppid > 1)
+        .unwrap_or(pid)
+}
+
 /// Is any ancestor of `pid` an SSH server process?
 ///
 /// Checked by ancestry, not `SSH_CONNECTION`: `pam_exec` builds our
@@ -222,6 +243,19 @@ mod tests {
         let root = temp_dir("gone");
         fake_process(&root, 701, "sudo", 700);
         assert!(under_ssh(&root, 701));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn kscreenlocker_worker_defers_to_the_greeter() {
+        let root = temp_dir("locker");
+        fake_process(&root, 600, "kscreenlocker_g", 1);
+        fake_process(&root, 601, "kscreenlocker_w", 600);
+        fake_process(&root, 602, "swaylock", 1);
+        assert_eq!(locker_pid(&root, 601), 600);
+        assert_eq!(locker_pid(&root, 600), 600);
+        assert_eq!(locker_pid(&root, 602), 602);
+        assert_eq!(locker_pid(&root, 699), 699);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

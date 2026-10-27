@@ -81,8 +81,10 @@ fn skip_reason(config: &FaceAuthConfig) -> Option<SkipReason> {
 /// The locker runs PAM the moment it starts, so a user still at the camera
 /// would be unlocked at once. Sleeps out the rest of `start_delay_ms`,
 /// measured from the locker's own start time (our parent, since `pam_exec`
-/// execs us directly), so a retry on the same lock screen pays it once. Not
-/// recorded against the lockout. If the age can't be read, scan immediately.
+/// execs us directly, or its parent if that is a PAM helper, see
+/// `environment::locker_pid`), so a retry on the same lock screen pays it
+/// once. Not recorded against the lockout. If the age can't be read, scan
+/// immediately.
 fn wait_for_start_delay(config: &FaceAuthConfig) {
     let surface = environment::classify_pam_service(env::var("PAM_SERVICE").ok().as_deref());
     let delay = config.start_delay_for(surface);
@@ -90,8 +92,8 @@ fn wait_for_start_delay(config: &FaceAuthConfig) {
         return;
     }
     let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-    let ppid = std::os::unix::process::parent_id();
-    let age = std::fs::read_to_string(format!("/proc/{ppid}/stat"))
+    let locker = environment::locker_pid(Path::new("/proc"), std::os::unix::process::parent_id());
+    let age = std::fs::read_to_string(format!("/proc/{locker}/stat"))
         .ok()
         .zip(std::fs::read_to_string("/proc/uptime").ok())
         .and_then(|(stat, uptime)| environment::process_age(&stat, &uptime, ticks.max(0) as u64));
