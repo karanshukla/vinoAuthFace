@@ -44,6 +44,25 @@ jobs:
           cargo build --release --locked --target x86_64-unknown-linux-musl \
             -p face-auth -p face-enroll -p face-camera-diag -p face-similarity-check -p face-auth-tray
 
+      # Run what was just built before anything ships it: static, stamped with
+      # the tag, and the PAM entry point exits the way pam_exec expects (1 for
+      # no PAM_USER, 2 for a bad argument) rather than failing to start.
+      - name: Smoke-test the binaries
+        env:
+          TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'dev' }}
+        run: |
+          dir=target/x86_64-unknown-linux-musl/release
+          for bin in vinoauthface-auth vinoauthface vinoauthface-unseal vinoauthface-camera-diag vinoauthface-similarity-check vinoauthface-tray vinoauthface-helper; do
+            file "$dir/$bin" | grep -Eq 'statically linked|static-pie linked' || { file "$dir/$bin"; exit 1; }
+          done
+          "$dir/vinoauthface" --version | tee /dev/stderr | grep -qF " $TAG"
+          set +e
+          env -i "$dir/vinoauthface-auth"; rc_pam=$?
+          "$dir/vinoauthface-auth" --no-such-flag; rc_arg=$?
+          set -e
+          test "$rc_pam" = 1
+          test "$rc_arg" = 2
+
       # The source bundle is what vinoauthface-upgrade installs from: the tag's tree plus a
       # VERSION file, which deploy.sh reads in place of `git describe`. Not GitHub's own
       # tag tarballs: they aren't in SHA256SUMS, and their bytes have changed before.

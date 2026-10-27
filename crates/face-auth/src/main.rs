@@ -22,8 +22,18 @@ use tracing_subscriber::{fmt, EnvFilter};
 /// SSH triggers the local IR sensor, and whoever happens to be sitting at the
 /// desk authenticates the remote attacker.
 fn reject_remote_session() -> Result<(), String> {
-    let Ok(rhost) = env::var("PAM_RHOST") else {
+    remote_session(env::var_os("PAM_RHOST").as_deref())
+}
+
+/// Unset is local. A value that isn't UTF-8 can't be a loopback address or
+/// `localhost`, so it is remote: reading it with `env::var` turned it into
+/// "unset" and let it through.
+fn remote_session(rhost: Option<&std::ffi::OsStr>) -> Result<(), String> {
+    let Some(rhost) = rhost else {
         return Ok(());
+    };
+    let Some(rhost) = rhost.to_str() else {
+        return Err(format!("remote session from {}", rhost.to_string_lossy()));
     };
     let rhost = rhost.trim();
     if rhost_is_local(rhost) {
@@ -132,7 +142,6 @@ fn scrub_caller_environment() {
     if !borrowed {
         return;
     }
-    const KEEP: [&str; 4] = ["PAM_USER", "PAM_SERVICE", "PAM_RHOST", "PAM_TTY"];
     // Root running `--verify` by hand (`sudo env RUST_LOG=... vinoauthface-auth
     // --verify`) still counts as borrowed, since the set-group-ID bit leaves
     // the real and effective group apart. Its log filter is root's own
@@ -140,11 +149,7 @@ fn scrub_caller_environment() {
     // root-owned PAM line and are never `--verify`, and a lock screen's real
     // uid isn't root.
     let root_verify = unsafe { libc::getuid() } == 0 && env::args().nth(1).as_deref() == Some("--verify");
-    let kept: Vec<(&str, std::ffi::OsString)> = KEEP
-        .iter()
-        .chain(root_verify.then_some(&"RUST_LOG"))
-        .filter_map(|k| env::var_os(k).map(|v| (*k, v)))
-        .collect();
+    let kept = environment_to_keep(|k| env::var_os(k), root_verify);
     let all: Vec<std::ffi::OsString> = env::vars_os().map(|(k, _)| k).collect();
     for key in all {
         env::remove_var(key);
@@ -153,6 +158,18 @@ fn scrub_caller_environment() {
         env::set_var(key, value);
     }
     env::set_var("PATH", "/usr/sbin:/usr/bin:/sbin:/bin");
+}
+
+/// What survives [`scrub_caller_environment`], read through `get`.
+fn environment_to_keep(
+    get: impl Fn(&str) -> Option<std::ffi::OsString>,
+    root_verify: bool,
+) -> Vec<(&'static str, std::ffi::OsString)> {
+    const KEEP: [&str; 4] = ["PAM_USER", "PAM_SERVICE", "PAM_RHOST", "PAM_TTY"];
+    KEEP.iter()
+        .chain(root_verify.then_some(&"RUST_LOG"))
+        .filter_map(|k| get(k).map(|v| (*k, v)))
+        .collect()
 }
 
 /// Root-owned directory the Intel NPU driver may cache compiled models in.
@@ -177,9 +194,52 @@ fn pin_process_context() {
 /// A caller that is not root may only test its own face. Without this, the
 /// set-group-ID binary would let any user probe another account's templates and
 /// drive that account's lockout.
-fn caller_may_authenticate(target_uid: u32) -> bool {
-    let caller = unsafe { libc::getuid() };
+fn caller_may_authenticate(caller: u32, target_uid: u32) -> bool {
     caller == 0 || caller == target_uid
+}
+
+/// Why the PAM path stopped before loading any config or touching the camera.
+#[derive(Debug, PartialEq)]
+enum Refusal {
+    /// [`fail_setup`]: PAM or NSS is broken, an admin should see it.
+    Setup(String),
+    /// [`fail_auth`]: a routine refusal.
+    Auth(String),
+}
+
+/// The gates ahead of the config and the camera, in order: a `PAM_USER`
+/// (the only authoritative identity here), an NSS lookup of it, a caller
+/// allowed to test that account, and a local session. Every one fails
+/// closed. `remote` is [`reject_remote_session`]; passed in so tests can
+/// drive it.
+fn pre_scan(
+    pam_user: Option<String>,
+    caller_uid: u32,
+    lookup: impl FnOnce(&str) -> anyhow::Result<user::UserInfo>,
+    remote: impl FnOnce() -> Result<(), String>,
+) -> Result<user::UserInfo, Refusal> {
+    // USER, LOGNAME and `id -un` are environment strings or the *invoking*
+    // account, not the account being authenticated, and trusting them lets
+    // the wrong template decide the answer.
+    let username = match pam_user {
+        Some(u) if !u.is_empty() => u,
+        _ => {
+            return Err(Refusal::Setup(
+                "PAM_USER is not set; refusing to guess which account to authenticate".into(),
+            ))
+        }
+    };
+    // NSS also rejects anything that is not a real, well-formed account name
+    // before it becomes a path component.
+    let info = lookup(&username).map_err(|e| Refusal::Setup(format!("cannot authenticate '{username}': {e}")))?;
+    if !caller_may_authenticate(caller_uid, info.uid) {
+        return Err(Refusal::Auth(format!(
+            "caller user ID {caller_uid} may not authenticate '{}'",
+            info.name
+        )));
+    }
+    remote().map_err(|reason| Refusal::Auth(format!("refusing face authentication for {reason}")))?;
+    Ok(info)
 }
 
 /// Interactive verification against a stored template. Prints a human-readable
@@ -346,33 +406,12 @@ fn main() {
         silence_stderr();
     }
 
-    // PAM_USER is the only authoritative identity here. USER, LOGNAME and
-    // `id -un` are environment strings or the *invoking* account, not the
-    // account being authenticated, and trusting them lets the wrong template
-    // decide the answer.
-    let username = match env::var("PAM_USER") {
-        Ok(u) if !u.is_empty() => u,
-        _ => fail_setup("PAM_USER is not set; refusing to guess which account to authenticate"),
-    };
-
-    // Resolve through NSS, which also rejects anything that is not a real,
-    // well-formed account name before it becomes a path component.
-    let info = match user::lookup(&username) {
+    let caller = unsafe { libc::getuid() };
+    let info = match pre_scan(env::var("PAM_USER").ok(), caller, user::lookup, reject_remote_session) {
         Ok(info) => info,
-        Err(e) => fail_setup(&format!("cannot authenticate '{username}': {e}")),
+        Err(Refusal::Setup(msg)) => fail_setup(&msg),
+        Err(Refusal::Auth(msg)) => fail_auth(&msg),
     };
-
-    if !caller_may_authenticate(info.uid) {
-        fail_auth(&format!(
-            "caller user ID {} may not authenticate '{}'",
-            unsafe { libc::getuid() },
-            info.name
-        ));
-    }
-
-    if let Err(reason) = reject_remote_session() {
-        fail_auth(&format!("refusing face authentication for {reason}"));
-    }
 
     // System config only, plus a strictly-narrowing overlay from the user.
     let config = match FaceAuthConfig::load_for_auth(&info.name) {
@@ -449,6 +488,78 @@ fn main() {
 mod tests {
     use super::*;
 
+    fn alice() -> user::UserInfo {
+        user::UserInfo { name: "alice".into(), uid: 1000, home: "/home/alice".into() }
+    }
+
+    fn found(name: &str) -> anyhow::Result<user::UserInfo> {
+        assert_eq!(name, "alice", "looked up a name PAM_USER didn't give");
+        Ok(alice())
+    }
+
+    fn local() -> Result<(), String> {
+        Ok(())
+    }
+
+    fn unreached<T>() -> T {
+        panic!("a later gate ran after an earlier one refused")
+    }
+
+    #[test]
+    fn the_target_or_root_from_a_local_session_gets_through() {
+        assert_eq!(pre_scan(Some("alice".into()), 1000, found, local).unwrap().name, "alice");
+        assert_eq!(pre_scan(Some("alice".into()), 0, found, local).unwrap().uid, 1000);
+    }
+
+    #[test]
+    fn no_pam_user_is_a_setup_failure_before_any_lookup() {
+        for pam_user in [None, Some(String::new())] {
+            let got = pre_scan(pam_user, 0, |_| unreached(), unreached);
+            assert!(matches!(got, Err(Refusal::Setup(ref m)) if m.contains("PAM_USER")), "{got:?}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_account_is_a_setup_failure() {
+        let got = pre_scan(Some("ghost".into()), 0, |_| anyhow::bail!("no such user"), unreached);
+        assert!(matches!(got, Err(Refusal::Setup(ref m)) if m.contains("ghost")), "{got:?}");
+    }
+
+    #[test]
+    fn another_user_may_not_probe_an_account() {
+        // The set-group-ID binary run by bob against alice's templates and lockout.
+        let got = pre_scan(Some("alice".into()), 1001, found, unreached);
+        assert_eq!(got.unwrap_err(), Refusal::Auth("caller user ID 1001 may not authenticate 'alice'".into()));
+    }
+
+    #[test]
+    fn a_remote_session_is_refused_even_for_root() {
+        let remote = || Err("remote session from 10.0.0.5".to_string());
+        for caller in [0, 1000] {
+            let got = pre_scan(Some("alice".into()), caller, found, remote);
+            assert!(matches!(got, Err(Refusal::Auth(ref m)) if m.contains("10.0.0.5")), "{got:?}");
+        }
+    }
+
+    #[test]
+    fn only_what_pam_exec_sets_survives_the_scrub() {
+        let caller_env = |k: &str| -> Option<std::ffi::OsString> {
+            match k {
+                "PAM_USER" => Some("alice".into()),
+                "PAM_SERVICE" => Some("sudo".into()),
+                "PAM_TTY" => Some("/dev/pts/0".into()),
+                "RUST_LOG" | "LD_PRELOAD" | "HOME" | "FACE_AUTH_CONFIG" => Some("caller's".into()),
+                _ => None,
+            }
+        };
+        let keys = |root_verify| -> Vec<&str> {
+            environment_to_keep(caller_env, root_verify).into_iter().map(|(k, _)| k).collect()
+        };
+        assert_eq!(keys(false), ["PAM_USER", "PAM_SERVICE", "PAM_TTY"]);
+        // Root running --verify by hand keeps its own log filter, nothing more.
+        assert_eq!(keys(true), ["PAM_USER", "PAM_SERVICE", "PAM_TTY", "RUST_LOG"]);
+    }
+
     #[test]
     fn only_loopback_addresses_and_localhost_are_local() {
         for local in ["", "localhost", "127.0.0.1", "127.1.2.3", "::1", "::ffff:127.0.0.1"] {
@@ -466,5 +577,16 @@ mod tests {
         ] {
             assert!(!rhost_is_local(remote), "{remote:?} should be remote");
         }
+    }
+
+    #[test]
+    fn a_non_utf8_rhost_is_remote_not_unset() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        assert!(remote_session(None).is_ok());
+        assert!(remote_session(Some(OsStr::new(" 127.0.0.1 "))).is_ok());
+        assert!(remote_session(Some(OsStr::new("10.0.0.5"))).is_err());
+        assert!(remote_session(Some(OsStr::from_bytes(b"10.0.0.5\xff"))).is_err());
+        assert!(remote_session(Some(OsStr::from_bytes(b"\xfflocalhost"))).is_err());
     }
 }

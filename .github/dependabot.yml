@@ -24,8 +24,9 @@ updates:
       # routine bump.
       - dependency-name: "tract-*"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
-      # The npu backend is written against the openvino 0.11 API and CI
-      # cannot build it, so a bump here would land untested.
+      # The npu backend is written against the openvino 0.11 API. CI's npu
+      # job builds and tests it, but it isn't a required check, so a bump
+      # could still merge broken; moving the API is a deliberate port.
       - dependency-name: "openvino*"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
