@@ -366,8 +366,18 @@ pub fn model_verdict(name: &str, path: &str, pinned: Option<&str>, actual: std::
 
 fn sha256_file(path: &str) -> std::io::Result<String> {
     use sha2::{Digest, Sha256};
+    use std::io::Read;
+
     let mut hasher = Sha256::new();
-    std::io::copy(&mut std::fs::File::open(path)?, &mut hasher)?;
+    let mut file = std::fs::File::open(path)?;
+    let mut buffer = [0; 8192];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
     Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
