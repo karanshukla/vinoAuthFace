@@ -102,7 +102,9 @@ with the lid shut. If yours isn't (a hub can hide it), leave the lid check off.
 On purpose. A screen locker runs vinoAuthFace the moment it starts, so if you lock the screen while
 still looking at the camera it would unlock straight away. vinoAuthFace waits until the locker has
 been running `guards.start_delay_ms` (default 2000) before it scans, measured from when the locker
-started, so a retry on the same lock screen doesn't wait again. `sudo`, polkit and login prompts
+started, so a retry on the same lock screen doesn't wait again. On Plasma 6.8, where PAM runs in a
+`kscreenlocker_worker` started after resume, that is the greeter's start, so waking from sleep
+doesn't wait. `sudo`, polkit and login prompts
 aren't delayed. Set `guards.start_delay_ms = 0` in `/etc/face-auth.toml` to disable it, or
 `start_delay_scope = "all"` to delay every prompt.
 

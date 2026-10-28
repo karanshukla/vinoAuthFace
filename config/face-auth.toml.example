@@ -52,7 +52,8 @@ scan_duration_ms = 5000
 # Start delay (ms, 0 - 10000, default 2000, 0 disables). A screen locker runs
 # vinoAuthFace the instant it starts, so someone still at the camera after
 # locking would be unlocked at once. vinoAuthFace waits until the locker
-# (its parent process) has been running this long, then scans. A retry on the
+# (its parent process, or the greeter above Plasma 6.8's kscreenlocker_worker)
+# has been running this long, then scans. A retry on the
 # same lock screen does not wait again. System policy only.
 # guards.start_delay_ms = 2000
 
