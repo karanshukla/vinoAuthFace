@@ -6,6 +6,12 @@ This fork (karanshukla/vinoAuthFace) was rebuilt on top of upstream's security
 pass below instead of merging, so upstream's fixes all apply. Fork features
 replayed on top:
 
+- **KDE lock screen on Plasma 6.8.** Plasma 6.8 only runs `kde-fingerprint`
+  beside the password field; `kde-smartcard` runs only when picked instead of
+  it. With fprintd in the fingerprint stack (Fedora's default, reader or not),
+  `deploy.sh` put face in `kde-smartcard`, so the lock screen never scanned.
+  When `kscreenlocker_worker` is installed, face now goes in `kde-fingerprint`
+  ahead of fprintd. Re-run `deploy.sh` to move it. Older Plasma is unchanged.
 - **A `PAM_RHOST` that isn't UTF-8 is a remote session.** It was read as
   unset, so the remote-session check let it through to the camera.
 - **NPU compiler from ovfetch 0.6.0.** When the NPU driver has no compiler
