@@ -6,6 +6,9 @@ This fork (karanshukla/vinoAuthFace) was rebuilt on top of upstream's security
 pass below instead of merging, so upstream's fixes all apply. Fork features
 replayed on top:
 
+- **The camera fd no longer leaks into child processes.** It was opened without
+  `O_CLOEXEC`, so `vinoauthface-unseal` could inherit it. SELinux blocked that
+  on greeter logins and logged a `/dev/video*` denial; the login still worked.
 - **A `PAM_RHOST` that isn't UTF-8 is a remote session.** It was read as
   unset, so the remote-session check let it through to the camera.
 - **NPU compiler from ovfetch 0.6.0.** When the NPU driver has no compiler
