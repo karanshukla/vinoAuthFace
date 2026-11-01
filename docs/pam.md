@@ -51,18 +51,21 @@ until `deploy.sh` is re-run (`update.sh` doesn't touch PAM).
 
 ## KDE
 
-KScreenLocker runs two background PAM services next to the password field, `kde-fingerprint` and
-`kde-smartcard`. `deploy.sh` puts face in one of them, so the KDE lock screen unlocks hands-free:
-look at the camera and it opens, or type your password as usual.
+Before Plasma 6.8, KScreenLocker runs two background PAM services next to the password field,
+`kde-fingerprint` and `kde-smartcard`. From 6.8 only `kde-fingerprint` runs there; `kde-smartcard`
+(and Plasma's own `kde-face`) run only when picked on the lock screen in place of the password.
+`deploy.sh` puts face in a background service, so the KDE lock screen unlocks hands-free: look at
+the camera and it opens, or type your password as usual.
 
 | `kde-fingerprint` | `kde-smartcard` | Face goes in | Line |
 |---|---|---|---|
 | No `pam_fprintd` | any | `kde-fingerprint` | `[success=done new_authtok_reqd=done default=die]` |
-| Runs `pam_fprintd` | No smartcard module | `kde-smartcard` | `[success=done new_authtok_reqd=done default=die]` |
-| Runs `pam_fprintd` | Runs `pam_pkcs11`, `pam_p11` or `pam_sss`, or is missing | `kde-fingerprint` | `sufficient` |
+| Runs `pam_fprintd` | No smartcard module, Plasma before 6.8 | `kde-smartcard` | `[success=done new_authtok_reqd=done default=die]` |
+| Runs `pam_fprintd` | Runs `pam_pkcs11`, `pam_p11` or `pam_sss`, or is missing, or Plasma 6.8 and later | `kde-fingerprint` | `sufficient` |
 
 `pam_fprintd` and the smartcard modules count in the service's own file or in a stack it includes
-(Fedora's `fingerprint-auth` and `smartcard-auth`). In the smartcard slot, face and finger run at
+(Fedora's `fingerprint-auth` and `smartcard-auth`, which runs `pam_fprintd` even with no reader). `deploy.sh`
+takes Plasma 6.8 to be installed when `kscreenlocker_worker` is. In the smartcard slot, face and finger run at
 the same time and Plasma's hint reads "(or scan your smartcard)". Sharing the fingerprint slot
 with fprintd, face runs first and the reader waits until the scan ends. Re-running `deploy.sh`
 after enabling or disabling fingerprint login moves face to match.
