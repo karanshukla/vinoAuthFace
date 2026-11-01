@@ -64,7 +64,8 @@ the camera and it opens, or type your password as usual.
 | Runs `pam_fprintd` | Runs `pam_pkcs11`, `pam_p11` or `pam_sss`, or is missing, or Plasma 6.8 and later | `kde-fingerprint` | `sufficient` |
 
 `pam_fprintd` and the smartcard modules count in the service's own file or in a stack it includes
-(Fedora's `fingerprint-auth` and `smartcard-auth`, which runs `pam_fprintd` even with no reader). `deploy.sh`
+(Fedora's `fingerprint-auth` and `smartcard-auth`). `fingerprint-auth` runs `pam_fprintd` only with
+authselect's `with-fingerprint` feature on, reader or not; without it the file is a stub. `deploy.sh`
 takes Plasma 6.8 to be installed when `kscreenlocker_worker` is. In the smartcard slot, face and finger run at
 the same time and Plasma's hint reads "(or scan your smartcard)". Sharing the fingerprint slot
 with fprintd, face runs first and the reader waits until the scan ends. Re-running `deploy.sh`

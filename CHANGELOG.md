@@ -8,7 +8,7 @@ replayed on top:
 
 - **KDE lock screen on Plasma 6.8.** Plasma 6.8 only runs `kde-fingerprint`
   beside the password field; `kde-smartcard` runs only when picked instead of
-  it. With fprintd in the fingerprint stack (Fedora's default, reader or not),
+  it. With fprintd in the fingerprint stack (authselect's `with-fingerprint`, reader or not),
   `deploy.sh` put face in `kde-smartcard`, so the lock screen never scanned.
   When `kscreenlocker_worker` is installed, face now goes in `kde-fingerprint`
   ahead of fprintd. Re-run `deploy.sh` to move it. Older Plasma is unchanged.
