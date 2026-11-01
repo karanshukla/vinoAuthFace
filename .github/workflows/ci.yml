@@ -353,6 +353,19 @@ jobs:
           sudo ./uninstall.sh
           test ! -e /etc/pam.d/kde-smartcard
 
+      # Plasma 6.8 (kscreenlocker_worker present) never runs kde-smartcard beside
+      # the password, so face shares the fingerprint slot ahead of fprintd.
+      - name: "Plasma 6.8: fprintd owns kde-fingerprint, face still goes there"
+        run: |
+          printf '#!/bin/sh\n' | sudo tee /usr/libexec/kscreenlocker_worker
+          sudo chmod 755 /usr/libexec/kscreenlocker_worker
+          sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" ./deploy.sh
+          grep -A1 -E '^auth +sufficient +pam_exec\.so.*vinoauthface-auth' /etc/pam.d/kde-fingerprint | grep -q pam_fprintd
+          test ! -e /etc/pam.d/kde-smartcard
+          sudo ./uninstall.sh
+          test ! -e /etc/pam.d/kde-fingerprint
+          sudo rm /usr/libexec/kscreenlocker_worker
+
       - name: Stage a fake release for the download-fallback branch
         run: |
           mkdir -p /tmp/fake-release

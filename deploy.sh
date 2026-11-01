@@ -1138,13 +1138,26 @@ stack_uses() {
     return 1
 }
 
-# KScreenLocker runs kde-fingerprint and kde-smartcard side by side, next to
-# the password field. Face takes the fingerprint slot, unless fprintd owns it
-# and the smartcard slot is free: then face and finger run at once instead of
-# one after the other (#81). Both taken: face goes first, then the finger.
+# Plasma 6.8 moved KScreenLocker's PAM calls into kscreenlocker_worker, and
+# from then on only kde-fingerprint runs beside the password field: smartcard
+# (and its own kde-face) run only when picked instead of the password.
+kscreenlocker_has_worker() {
+    local dir
+    for dir in /usr/libexec /usr/lib /usr/lib64 /usr/lib/*/libexec /usr/lib64/libexec; do
+        [ -x "$dir/kscreenlocker_worker" ] && return 0
+    done
+    return 1
+}
+
+# Before 6.8, KScreenLocker runs kde-fingerprint and kde-smartcard side by
+# side, next to the password field. Face takes the fingerprint slot, unless
+# fprintd owns it and the smartcard slot is free: then face and finger run at
+# once instead of one after the other (#81). Both taken, or 6.8 and later:
+# face goes first, then the finger.
 KDE_SLOT=kde-fingerprint KDE_SLOT_LINE="$PAM_LINE_KDE_ONLY"
 if stack_uses kde-fingerprint pam_fprintd; then
-    if pam_file kde-smartcard >/dev/null && ! stack_uses kde-smartcard 'pam_(pkcs11|p11|sss)'; then
+    if ! kscreenlocker_has_worker && pam_file kde-smartcard >/dev/null \
+       && ! stack_uses kde-smartcard 'pam_(pkcs11|p11|sss)'; then
         KDE_SLOT=kde-smartcard
     else
         KDE_SLOT_LINE="$PAM_LINE"

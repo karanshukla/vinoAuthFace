@@ -6,6 +6,12 @@ This fork (karanshukla/vinoAuthFace) was rebuilt on top of upstream's security
 pass below instead of merging, so upstream's fixes all apply. Fork features
 replayed on top:
 
+- **KDE lock screen on Plasma 6.8.** Plasma 6.8 only runs `kde-fingerprint`
+  beside the password field; `kde-smartcard` runs only when picked instead of
+  it. With fprintd in the fingerprint stack (Fedora's default, reader or not),
+  `deploy.sh` put face in `kde-smartcard`, so the lock screen never scanned.
+  When `kscreenlocker_worker` is installed, face now goes in `kde-fingerprint`
+  ahead of fprintd. Re-run `deploy.sh` to move it. Older Plasma is unchanged.
 - **The camera fd no longer leaks into child processes.** It was opened without
   `O_CLOEXEC`, so `vinoauthface-unseal` could inherit it. SELinux blocked that
   on greeter logins and logged a `/dev/video*` denial; the login still worked.
