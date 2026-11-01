@@ -186,8 +186,7 @@ unsafe impl Send for Camera {}
 
 impl Camera {
     pub fn open(device_path: &str) -> Result<Self> {
-        let fd = open(device_path, OFlag::O_RDWR, Mode::empty())
-            .map_err(|e| anyhow::anyhow!("Failed to open {}: {}", device_path, e))?;
+        let fd = open_device(device_path)?;
 
         // G_FMT, not S_FMT: setting a format re-inits IR sensors (~2s delay).
         let mut fmt = make_v4l2_format(V4L2_BUF_TYPE_VIDEO_CAPTURE, 0, 0, 0);
@@ -447,6 +446,13 @@ pub fn capture_ir_frame(device_path: &str, timeout_ms: i32) -> Result<IrFrame> {
     Ok(frame)
 }
 
+/// Close-on-exec: the template unseal runs a helper while the camera is opening
+/// on another thread, and that helper must not inherit the device.
+fn open_device(device_path: &str) -> Result<OwnedFd> {
+    open(device_path, OFlag::O_RDWR | OFlag::O_CLOEXEC, Mode::empty())
+        .map_err(|e| anyhow::anyhow!("Failed to open {}: {}", device_path, e))
+}
+
 fn ioctl(fd: i32, request: u64, arg: *mut c_void) -> Result<i32> {
     let ret = unsafe { libc::ioctl(fd, request as libc::Ioctl, arg) };
     if ret < 0 {
@@ -482,8 +488,7 @@ fn cstr_to_string(bytes: &[u8]) -> String {
 /// Driver and card name via `VIDIOC_QUERYCAP`. Touches no buffers or stream
 /// state, so it is safe against a device already in use elsewhere.
 pub fn query_caps(device_path: &str) -> Result<CameraCaps> {
-    let fd = open(device_path, OFlag::O_RDWR, Mode::empty())
-        .map_err(|e| anyhow::anyhow!("Failed to open {}: {}", device_path, e))?;
+    let fd = open_device(device_path)?;
     let mut cap: v4l2_capability = unsafe { std::mem::zeroed() };
     ioctl(fd.as_raw_fd(), VIDIOC_QUERYCAP, &mut cap as *mut _ as *mut c_void)?;
     Ok(CameraCaps { driver: cstr_to_string(&cap.driver), card: cstr_to_string(&cap.card) })
@@ -492,8 +497,7 @@ pub fn query_caps(device_path: &str) -> Result<CameraCaps> {
 /// Current width, height and FourCC via `VIDIOC_G_FMT`, without the buffer
 /// setup `Camera::open` does.
 pub fn query_format(device_path: &str) -> Result<(u32, u32, u32)> {
-    let fd = open(device_path, OFlag::O_RDWR, Mode::empty())
-        .map_err(|e| anyhow::anyhow!("Failed to open {}: {}", device_path, e))?;
+    let fd = open_device(device_path)?;
     let mut fmt = make_v4l2_format(V4L2_BUF_TYPE_VIDEO_CAPTURE, 0, 0, 0);
     ioctl(fd.as_raw_fd(), VIDIOC_G_FMT, &mut fmt as *mut _ as *mut c_void)?;
     let pix: &v4l2_pix_format = unsafe { &*(fmt.raw.as_ptr() as *const v4l2_pix_format) };
@@ -689,6 +693,13 @@ pub fn is_ir_capture_device(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_fds_close_on_exec() {
+        let fd = open_device("/dev/null").unwrap();
+        let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) };
+        assert_eq!(flags & libc::FD_CLOEXEC, libc::FD_CLOEXEC);
+    }
 
     #[test]
     fn recognises_ir_camera_names() {
