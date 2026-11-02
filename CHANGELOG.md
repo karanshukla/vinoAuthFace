@@ -6,6 +6,11 @@ This fork (karanshukla/vinoAuthFace) was rebuilt on top of upstream's security
 pass below instead of merging, so upstream's fixes all apply. Fork features
 replayed on top:
 
+- **SCRFD matches the face nearest the camera.** It took the most confident
+  face in the frame, which can be someone standing behind you: on CBSR NIR it
+  picked a person in the background in 11 of 3,940 images. It now takes the
+  largest face over `detector_threshold`. Frames with one face are unchanged,
+  so no re-enrolment.
 - **KDE lock screen on Plasma 6.8.** Plasma 6.8 only runs `kde-fingerprint`
   beside the password field; `kde-smartcard` runs only when picked instead of
   it. With fprintd in the fingerprint stack (authselect's `with-fingerprint`, reader or not),
