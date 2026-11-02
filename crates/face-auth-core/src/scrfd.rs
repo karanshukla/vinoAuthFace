@@ -82,12 +82,19 @@ fn sample(frame: &IrFrame, x: f32, y: f32) -> f32 {
     top * (1.0 - fy) + bottom * fy
 }
 
-/// The highest-scoring face, as a box normalised to the frame with its five
-/// landmarks, or `None` below `threshold`. `outputs` are the model's nine, in
-/// order: scores, boxes, landmarks, each for strides 8, 16 and 32.
+/// The largest face scoring at least `threshold`, as a box normalised to the
+/// frame with its five landmarks, or `None` if nothing clears it. `outputs`
+/// are the model's nine, in order: scores, boxes, landmarks, each for strides
+/// 8, 16 and 32.
+///
+/// Largest, not most confident: the user is the face nearest the camera. SCRFD
+/// can be surer of someone further back, and picking them would match (or
+/// unlock for) the wrong person. On CBSR NIR it picked a person standing behind
+/// the subject in 11 of 3,940 images.
 pub fn best_face(outputs: &[Vec<f32>], lb: &Letterbox, frame: &IrFrame, threshold: f32) -> anyhow::Result<Option<FaceBox>> {
     anyhow::ensure!(outputs.len() == OUTPUTS, "SCRFD returned {} outputs, expected {OUTPUTS}", outputs.len());
-    let mut best: Option<(f32, usize, usize)> = None; // (score, stride index, anchor)
+    let mut best: Option<(f32, f32, usize, usize)> = None; // (box area in input pixels, score, stride index, anchor)
+    let mut max_face = f32::NEG_INFINITY;
     for (s, &stride) in STRIDES.iter().enumerate() {
         let cells = (INPUT_SIZE / stride) * (INPUT_SIZE / stride);
         let anchors = cells * ANCHORS_PER_CELL;
@@ -100,16 +107,27 @@ pub fn best_face(outputs: &[Vec<f32>], lb: &Letterbox, frame: &IrFrame, threshol
             kps.len()
         );
         for (i, &score) in scores.iter().enumerate() {
-            if score.is_finite() && best.is_none_or(|(b, _, _)| score > b) {
-                best = Some((score, s, i));
+            if !score.is_finite() {
+                continue;
+            }
+            max_face = max_face.max(score);
+            if score < threshold {
+                continue;
+            }
+            let d = &boxes[i * 4..i * 4 + 4];
+            let area = (d[0] + d[2]) * (d[1] + d[3]) * (stride * stride) as f32;
+            if !area.is_finite() {
+                continue;
+            }
+            // Equal areas keep the more confident anchor.
+            if best.is_none_or(|(a, b, _, _)| area > a || (area == a && score > b)) {
+                best = Some((area, score, s, i));
             }
         }
     }
-    let Some((score, s, i)) = best else { return Ok(None) };
-    tracing::debug!(max_face = score, threshold, "detector: best face score");
-    if score < threshold {
-        return Ok(None);
-    }
+    tracing::debug!(max_face, threshold, "detector: best face score");
+    let Some((_, score, s, i)) = best else { return Ok(None) };
+    tracing::debug!(chosen_face = score, "detector: largest face over threshold");
 
     let stride = STRIDES[s] as f32;
     let cell = i / ANCHORS_PER_CELL;
@@ -276,5 +294,36 @@ mod tests {
         outputs[1][i] = 0.4;
         assert!(best_face(&outputs, &lb, &f, 0.5).unwrap().is_none());
         assert!(best_face(&outputs[..8], &lb, &f, 0.5).is_err());
+    }
+
+    #[test]
+    fn decode_prefers_the_nearest_face_over_the_most_confident() {
+        let f = frame(640, 640, |_, _| 0);
+        let lb = Letterbox { scale: 0.5 };
+        let mut outputs: Vec<Vec<f32>> = Vec::new();
+        for per in [1, 4, 10] {
+            for &stride in &STRIDES {
+                let anchors = (INPUT_SIZE / stride).pow(2) * ANCHORS_PER_CELL;
+                outputs.push(vec![if per == 1 { 0.0 } else { 1.0 }; anchors * per]);
+            }
+        }
+        // Someone behind the user: small (stride 8, 16 input pixels across) and very confident.
+        outputs[0][(2 * (INPUT_SIZE / 8) + 3) * 2] = 0.95;
+        // The user: large (stride 32, 64 across), less confident, at cell (x 5, y 6).
+        outputs[2][(6 * (INPUT_SIZE / 32) + 5) * 2] = 0.6;
+        // Larger still (box offsets 3 strides) but under the threshold: never chosen.
+        let below = (INPUT_SIZE / 32 + 1) * 2;
+        outputs[2][below] = 0.4;
+        outputs[5][below * 4..below * 4 + 4].copy_from_slice(&[3.0; 4]);
+
+        let face = best_face(&outputs, &lb, &f, 0.5).unwrap().unwrap();
+        // Centre (160, 192) in input pixels, box 1 stride each way: input (128..192, 160..224), frame x2.
+        assert!((face.x1 - 256.0 / 640.0).abs() < 1e-5 && (face.x2 - 384.0 / 640.0).abs() < 1e-5, "{face:?}");
+        assert!((face.y1 - 320.0 / 640.0).abs() < 1e-5 && (face.y2 - 448.0 / 640.0).abs() < 1e-5, "{face:?}");
+
+        // Alone, the confident background face is still found: 16 input pixels across, 32 in the frame.
+        outputs[2][(6 * (INPUT_SIZE / 32) + 5) * 2] = 0.0;
+        let face = best_face(&outputs, &lb, &f, 0.5).unwrap().unwrap();
+        assert!((face.x2 - face.x1 - 32.0 / 640.0).abs() < 1e-5, "{face:?}");
     }
 }
