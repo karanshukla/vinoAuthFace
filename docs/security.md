@@ -171,6 +171,43 @@ parameter. A user's own `device` setting is held to the same rule. Only `device`
   compromised release: `SHA256SUMS` is published alongside the files it covers, so the trust
   anchor is GitHub over TLS.
 
+## Match accuracy against strangers
+
+How often each stock model accepts someone else's face, measured in November 2026 on
+[CBSR NIR Face](https://huggingface.co/datasets/EricJaebeom/CBSR-NIR-Face) (197 people, 3,940
+near-IR images, MIT). Each image went through the same steps as a live scan (CLAHE 3.0 with 8x8
+tiles, SCRFD `det_500m`, five-point alignment, encode) and was compared with every other image:
+37,430 same-person pairs and 7,722,000 different-person pairs.
+
+At the default `threshold = 0.6`:
+
+| | `mbf` | `r50` | Windows Hello requirement |
+|---|---|---|---|
+| Strangers accepted | 39 pairs, 1 in 198,000 | 124 pairs, 1 in 62,000 | under 1 in 100,000 |
+| Same person accepted | 95.6% | 98.7% | over 95% |
+
+The two models score on different scales, so 0.6 is a stricter setting for `mbf` than for `r50`.
+Held to exactly 1 in 100,000 strangers, `r50` is the stronger model:
+
+| | `mbf` | `r50` |
+|---|---|---|
+| Threshold needed | 0.58 | 0.63 |
+| Same person accepted | 96.6% | 97.9% |
+
+To hold `r50` to Hello's bar on this data, raise `threshold` to about 0.64.
+
+What the numbers don't say:
+
+- **It isn't your camera's false-accept rate.** CBSR was captured on a different sensor, and the
+  1 in 100,000 figures rest on the top ~77 stranger pairs. It's a fair comparison between models.
+- **It's one image against one image.** A live scan tries several frames per attempt, and the
+  lockout allows 5 attempts, so a stranger's odds per unlock are several times the per-pair rate.
+- **CBSR IDs 19 and 101 look like one person** photographed in two sessions, so pairs between them
+  are left out. Counted as strangers, they alone push the `r50` threshold for 1 in 100,000 to 0.86.
+- **The Hello column is Microsoft's minimum**, from its
+  [biometric requirements](https://learn.microsoft.com/en-us/windows-hardware/design/device-experiences/windows-hello-biometric-requirements),
+  not a measured Hello result.
+
 ## What has been tested, and what hasn't
 
 A review in October 2026 ran against a deployed install on an Ubuntu 24.04 VM, with a
