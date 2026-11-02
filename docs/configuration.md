@@ -124,7 +124,9 @@ unlocks that account. If your own login could rewrite it, so could anything runn
 | Genuine-match similarity (same benchmark) | mean 0.815, min 0.759 | mean 0.875, min 0.830 |
 
 `r50` gives a wider match margin for a few milliseconds per frame, which the camera-paced scan
-loop hides. `deploy.sh` picks `r50` for an NPU (OpenVINO) build and `mbf` for a CPU (tract) build.
+loop hides. At the default `threshold = 0.6`, `r50` accepted 1 in 62,000 stranger pairs and `mbf`
+1 in 198,000 on a near-IR dataset; see
+[Match accuracy against strangers](security.md#match-accuracy-against-strangers). `deploy.sh` picks `r50` for an NPU (OpenVINO) build and `mbf` for a CPU (tract) build.
 An existing install keeps its model: the NPU default isn't applied when the config already sets
 `model_path` or someone is enrolled. Choose explicitly with:
 
