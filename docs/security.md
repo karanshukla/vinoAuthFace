@@ -183,18 +183,21 @@ At the default `threshold = 0.6`:
 
 | | `mbf` | `r50` | Windows Hello requirement |
 |---|---|---|---|
-| Strangers accepted | 39 pairs, 1 in 198,000 | 124 pairs, 1 in 62,000 | under 1 in 100,000 |
-| Same person accepted | 95.6% | 98.7% | over 95% |
+| Strangers accepted | 4 pairs, 1 in 1.9 million | none of 7.7 million | under 1 in 100,000 |
+| Same person accepted | 95.8% | 99.1% | over 95% |
 
-The two models score on different scales, so 0.6 is a stricter setting for `mbf` than for `r50`.
-Held to exactly 1 in 100,000 strangers, `r50` is the stronger model:
+Both stock models meet Hello's false-accept bar at the default threshold on this data. Held to
+exactly 1 in 100,000 strangers, `r50` is the stronger model:
 
 | | `mbf` | `r50` |
 |---|---|---|
-| Threshold needed | 0.58 | 0.63 |
-| Same person accepted | 96.6% | 97.9% |
+| Threshold needed | 0.56 | 0.51 |
+| Same person accepted | 97.5% | 99.8% |
 
-To hold `r50` to Hello's bar on this data, raise `threshold` to about 0.64.
+These numbers need the detector to pick the face nearest the camera
+([#193](https://github.com/karanshukla/vinoAuthFace/pull/193)). Before that, it took the most
+confident face, which on 11 CBSR images was a person standing behind the subject. Those misaligned
+crops let `r50` accept 124 stranger pairs at 0.6 and `mbf` 39.
 
 What the numbers don't say:
 
