@@ -2,6 +2,7 @@
 //! `~/.config/face-auth.toml`, in one window.
 
 mod apply;
+mod enrol;
 mod files;
 mod keys;
 mod models;
@@ -12,7 +13,7 @@ use std::process::ExitCode;
 const USAGE: &str = "\
 vinoauthface-settings: the vinoAuthFace settings window
 
-Usage: vinoauthface-settings [--page matching|liveness|camera|models|security|you]
+Usage: vinoauthface-settings [--page face|matching|liveness|camera|models|security|you]
 ";
 
 fn main() -> ExitCode {

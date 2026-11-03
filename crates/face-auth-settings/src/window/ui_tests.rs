@@ -27,6 +27,9 @@ fn window(page: Page, name: &str, user: Option<&str>, runner: apply::Runner) -> 
         std::fs::write(&mine, text).unwrap();
     }
     let mut w = SettingsWindow::with(Some(page), system.clone(), mine.clone(), runner, true);
+    w.spawner = fake_enrolment;
+    w.check_enrolled = || Some(true);
+    w.enrolled = Some(true);
     w.cameras = vec![("/dev/video2".into(), "Integrated IR Camera".into())];
     w.ir_cameras = vec!["/dev/video2".into()];
     (w, system, mine)
@@ -284,4 +287,68 @@ fn a_model_path_users_can_write_is_flagged_before_apply() {
     let flagged = h.query_all_by_label_contains("Apply will refuse this:");
     assert_eq!(flagged.count(), 1);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Stands in for `pkexec vinoauthface-helper enrol-guided`: one step, then
+/// waits for a line on stdin. Enter saves; "cancel" stops as the CLI does.
+fn fake_enrolment(append: bool) -> std::io::Result<std::process::Child> {
+    let saved = if append { "Added 1 embeddings for 'dev' (11 total)" } else { "Saved 1 embeddings for 'dev'" };
+    let script = format!(
+        "echo 'step 1/6 straight: Look straight at the camera. (Enter skips)'; echo '  hint too-far: Move closer.'; \
+         read l; if [ \"$l\" = cancel ]; then echo 'Error: enrolment cancelled; nothing was saved' >&2; exit 1; fi; \
+         echo '  kept 1/2'; echo \"{saved}\""
+    );
+    std::process::Command::new("sh")
+        .args(["-c", &script])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+}
+
+/// Frames until the fake enrolment shows `label`.
+fn until_shown(h: &mut Harness<'_, SettingsWindow>, label: &str) {
+    // By the clock, not a count of frames: under a full parallel test run the
+    // shell that stands in for the CLI can take seconds to start.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
+        settle(h);
+        if h.query_by_label(label).is_some() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("{label:?} never showed");
+}
+
+#[test]
+fn guided_enrolment_shows_each_step_and_its_hint() {
+    let (mut w, _, _) = window(Page::Face, "guided", None, refuse);
+    w.enrolled = Some(false);
+    let mut h = harness(w, WIDE, Theme::Light);
+    h.get_by_label("Not enrolled");
+    h.get_by_role_and_label(Role::Button, "Start").click();
+    until_shown(&mut h, "Look straight at the camera.");
+    until_shown(&mut h, "Move closer.");
+    h.get_by_label("Step 1 of 6, 0 of 2 kept.");
+    assert!(unnamed_controls(&h).is_empty());
+    h.get_by_role_and_label(Role::Button, "Skip this step").click();
+    until_shown(&mut h, "Saved 1 embeddings for 'dev'");
+    h.get_by_label("Enrolled");
+}
+
+#[test]
+fn stopping_guided_enrolment_saves_nothing() {
+    let (w, _, _) = window(Page::Face, "stop", None, refuse);
+    let mut h = harness(w, WIDE, Theme::Light);
+    // Enrolled already: adding poses is one click, replacing them two.
+    h.get_by_role_and_label(Role::Button, "Enrol again…").click();
+    settle(&mut h);
+    h.get_by_label("Your current templates are replaced by the new ones.");
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    settle(&mut h);
+    h.get_by_role_and_label(Role::Button, "Add").click();
+    until_shown(&mut h, "Look straight at the camera.");
+    h.get_by_role_and_label(Role::Button, "Stop").click();
+    until_shown(&mut h, "Stopped. Nothing was saved.");
 }

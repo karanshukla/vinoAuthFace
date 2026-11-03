@@ -35,6 +35,7 @@ It needs the tray's root helper and polkit action (`--no-tray` skips both, and t
 
 | Page | Keys |
 |---|---|
+| Face | Not a key: guided enrolment, below |
 | Matching | `threshold`, `detector_threshold`, `min_face_size_ratio`, `scan_duration_ms`, `liveness.grace_ms`, `capture_timeout_ms`, `scan_interval_ms` |
 | Liveness | `liveness.preset`, `liveness.motion_threshold`, `liveness.residual_motion_threshold`, `liveness.window_ms` |
 | Camera | `device` (picked from the video devices present), `bind_camera`, and the camera pin, which it can remove but not set |
@@ -73,6 +74,35 @@ The file is replaced in one rename, keeping its owner and mode. Edits are made l
 `setting-mode.sh` makes them: a value is replaced where it is, or written over its commented-out
 example line, and a key put back to its default is commented out. Comments and keys the window
 doesn't change are left alone. The next unlock reads the new file; there is no service to restart.
+
+## Guided enrolment
+
+The Face page enrols you through six steps instead of 30 frames of whatever pose you hold: look
+straight at the camera, turn a little to one side, then the other, tilt your chin up, then down,
+then take your glasses off or put them on. It keeps about ten templates. Matching takes the best
+template, so templates that differ cover more of how the camera sees you at unlock.
+
+The poses are measured, not assumed. Each frame's five landmarks (SCRFD's) give the head's turn
+and tilt, measured from your own straight-on pose; a step keeps a frame only once that pose is
+reached and held for two frames, with your eyes at least 30 px apart. A frame almost the same as
+one already kept is skipped. Which way is left isn't assumed either (the image may be mirrored):
+the first turn you make sets the side, and the next step wants the other. A step that isn't done
+within 20 seconds is skipped; only the straight-on step is required.
+
+| Button | Runs |
+|---|---|
+| Start, or Enrol again (with a confirmation) | `vinoauthface enroll --guided`, replacing your templates |
+| Add poses | `vinoauthface improve --guided`, keeping them |
+
+Both run as root through pkexec (polkit actions `enrol-guided` and `retrain-guided`, `auth_admin`),
+with fixed arguments like the tray's Enrol. Skip and Stop write to the enrolment's stdin; stopping
+saves nothing. There's no camera preview: the frames stay in the root process. The same steps run in
+a terminal with `sudo vinoauthface enroll --guided --user $USER` (Enter skips a step, typing
+`cancel` stops). Plain `enroll`, `improve` and the tray are unchanged.
+
+Off-angle templates can raise impostor scores at the same `threshold`, so measure genuine and
+impostor similarity before and after with `vinoauthface-similarity-check` when changing models or
+the poses (see issue #19).
 
 ## Your own models
 

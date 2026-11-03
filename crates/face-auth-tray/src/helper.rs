@@ -99,6 +99,11 @@ pub enum Verb {
     Enrol,
     /// `vinoauthface improve`: append frames, keep what is there.
     Retrain,
+    /// The settings window's guided enrolment: `enroll --guided` and
+    /// `improve --guided`, driven over stdin (Enter skips a step, "cancel"
+    /// stops). Fixed arguments, like the two above.
+    EnrolGuided,
+    RetrainGuided,
     Uninstall,
     /// `vinoauthface-upgrade` to the newest release.
     Upgrade,
@@ -122,6 +127,8 @@ impl Verb {
         match self {
             Verb::Enrol => "enrol".into(),
             Verb::Retrain => "retrain".into(),
+            Verb::EnrolGuided => "enrol-guided".into(),
+            Verb::RetrainGuided => "retrain-guided".into(),
             Verb::Uninstall => "uninstall".into(),
             Verb::Upgrade => "upgrade".into(),
             Verb::LoginOff => "login-off".into(),
@@ -132,9 +139,11 @@ impl Verb {
         }
     }
 
-    const FIXED: [Verb; 8] = [
+    const FIXED: [Verb; 10] = [
         Verb::Enrol,
         Verb::Retrain,
+        Verb::EnrolGuided,
+        Verb::RetrainGuided,
         Verb::Uninstall,
         Verb::Upgrade,
         Verb::LoginOff,
@@ -177,6 +186,8 @@ pub fn command(verb: Verb, user: &str) -> Option<(&'static str, Vec<String>)> {
     Some(match verb {
         Verb::Enrol => (FACE_ENROLL, vec!["enroll".into(), "--user".into(), user.into()]),
         Verb::Retrain => (FACE_ENROLL, vec!["improve".into(), "--user".into(), user.into()]),
+        Verb::EnrolGuided => (FACE_ENROLL, vec!["enroll".into(), "--guided".into(), "--user".into(), user.into()]),
+        Verb::RetrainGuided => (FACE_ENROLL, vec!["improve".into(), "--guided".into(), "--user".into(), user.into()]),
         // Run as root with no SUDO_USER, so its per-user cleanup looks in
         // root's home, not in one the caller controls.
         Verb::Uninstall => ("/bin/bash", vec![UNINSTALLER.into()]),
@@ -246,6 +257,8 @@ mod tests {
             assert_eq!(&argv[1..3], ["--user", "alice"]);
             assert!(argv.iter().all(|a| !a.contains("dir") && !a.contains("model") && !a.contains("device")));
         }
+        assert_eq!(command(Verb::EnrolGuided, "alice").unwrap().1, ["enroll", "--guided", "--user", "alice"]);
+        assert_eq!(command(Verb::RetrainGuided, "alice").unwrap().1, ["improve", "--guided", "--user", "alice"]);
         assert_eq!(command(Verb::Enrol, "alice").unwrap().1[0], "enroll");
         assert_eq!(command(Verb::Retrain, "alice").unwrap().1[0], "improve");
         assert_eq!(command(Verb::Uninstall, "alice").unwrap().1, [UNINSTALLER]);

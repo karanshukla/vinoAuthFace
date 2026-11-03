@@ -74,6 +74,14 @@ struct Capture {
 
     #[arg(long, help = "Embeddings directory (overrides config)")]
     embeddings_dir: Option<String>,
+
+    #[arg(
+        long,
+        conflicts_with_all = ["frames", "interval"],
+        help = "Guided: about ten templates from measured poses (straight, turns, tilts, glasses). \
+                Enter skips a step; \"cancel\", or closing stdin, stops without saving"
+    )]
+    guided: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -166,6 +174,16 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
     let pinned = config.pinned_camera_path.is_some();
     let mut auth = FaceAuth::new(config)?;
 
+    if args.guided {
+        let (added, total) = guided(&mut auth, &info.name, improve)?;
+        if improve {
+            println!("\nAdded {added} embeddings for '{}' ({total} total)", info.name);
+        } else {
+            println!("\nSaved {total} embeddings for '{}'", info.name);
+        }
+        return Ok(());
+    }
+
     let mut progress = |p: EnrollProgress| match p {
         EnrollProgress::Capturing { captured, wanted, attempt } => {
             println!("Capturing frame {}/{} (attempt {})...", captured + 1, wanted, attempt);
@@ -193,6 +211,41 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// `--guided`. Progress goes to stdout one line at a time, each starting with
+/// a word the settings window reads (`step`, `hint`, `kept`, `skipped`), then
+/// words for a person. Control comes from stdin, read on its own thread.
+fn guided(auth: &mut FaceAuth, user: &str, improve: bool) -> anyhow::Result<(usize, usize)> {
+    use face_auth_core::guided::{Control, GuidedProgress};
+    use std::io::{BufRead, Write};
+    use std::sync::mpsc;
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            let control = if line.trim() == "cancel" { Control::Cancel } else { Control::Skip };
+            if tx.send(control).is_err() {
+                return;
+            }
+        }
+        // Whoever was driving it is gone: stop rather than save a run nobody watched.
+        let _ = tx.send(Control::Cancel);
+    });
+    let mut control = || rx.try_recv().ok();
+    let mut progress = |p: GuidedProgress| {
+        match p {
+            GuidedProgress::Step { index, total, step } => {
+                println!("step {index}/{total} {}: {} (Enter skips)", step.id(), step.prompt())
+            }
+            GuidedProgress::Hint(hint) => println!("  hint {}: {}", hint.id(), hint.text()),
+            GuidedProgress::Kept { kept, wanted } => println!("  kept {kept}/{wanted}"),
+            GuidedProgress::Skipped(step) => println!("  skipped {}", step.id()),
+        }
+        let _ = std::io::stdout().flush();
+    };
+    auth.enroll_guided(user, improve, &mut progress, &mut control)
 }
 
 /// A `--device` given to root must be an IR capture node, or the one

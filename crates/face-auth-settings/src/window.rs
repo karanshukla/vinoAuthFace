@@ -21,6 +21,7 @@ use vino_ui::theme;
 use vino_ui::widgets::{self, Button, ChipKind, Row, Tone};
 
 use crate::apply;
+use crate::enrol;
 use crate::files::{self, ConfigFile};
 use crate::keys::{self, Key};
 use crate::models::{self, Check, Checks};
@@ -32,6 +33,7 @@ const DEFAULT_DETECTOR: &str = "/usr/local/share/face-auth/det_500m.onnx";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
+    Face,
     Matching,
     Liveness,
     Camera,
@@ -41,7 +43,8 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 6] = [Page::Matching, Page::Liveness, Page::Camera, Page::Models, Page::Security, Page::You];
+    pub const ALL: [Page; 7] =
+        [Page::Face, Page::Matching, Page::Liveness, Page::Camera, Page::Models, Page::Security, Page::You];
 
     pub fn parse(name: &str) -> Option<Page> {
         let name = name.to_ascii_lowercase();
@@ -50,6 +53,7 @@ impl Page {
 
     fn slug(self) -> &'static str {
         match self {
+            Page::Face => "face",
             Page::Matching => "matching",
             Page::Liveness => "liveness",
             Page::Camera => "camera",
@@ -61,6 +65,7 @@ impl Page {
 
     fn title(self) -> &'static str {
         match self {
+            Page::Face => "Face",
             Page::Matching => "Matching",
             Page::Liveness => "Liveness",
             Page::Camera => "Camera",
@@ -72,6 +77,7 @@ impl Page {
 
     fn icon(self) -> Icon {
         match self {
+            Page::Face => Icon::Refresh,
             Page::Matching => Icon::Search,
             Page::Liveness => Icon::Play,
             Page::Camera => Icon::Hardware,
@@ -169,6 +175,13 @@ pub struct SettingsWindow {
     notice: Option<(Tone, String)>,
     /// Path fields being typed in, by file and key.
     drafts: HashMap<(bool, Key), String>,
+    pub(crate) enrol: enrol::Shared,
+    pub(crate) spawner: enrol::Spawner,
+    /// Whether you have templates; `None` when that can't be read.
+    pub(crate) enrolled: Option<bool>,
+    pub(crate) check_enrolled: fn() -> Option<bool>,
+    /// "Enrol again" waiting for its confirmation.
+    confirm_replace: bool,
     focused: bool,
     kde_header: Option<theme::KdeHeader>,
     text_scale: f32,
@@ -186,6 +199,7 @@ impl SettingsWindow {
         window.cameras = cameras();
         window.ir_cameras = capture::enumerate_ir_cameras().into_iter().map(|(path, _)| path).collect();
         window.kde_header = theme::kde_header();
+        window.enrolled = enrol::enrolled();
         window.follow_text_scale(ctx);
         window
     }
@@ -198,7 +212,7 @@ impl SettingsWindow {
         helper: bool,
     ) -> Self {
         SettingsWindow {
-            page: page.unwrap_or(Page::Matching),
+            page: page.unwrap_or(Page::Face),
             system: ConfigFile::load(system),
             user: ConfigFile::load(user),
             user_dirty: false,
@@ -210,6 +224,11 @@ impl SettingsWindow {
             ir_cameras: Vec::new(),
             notice: None,
             drafts: HashMap::new(),
+            enrol: enrol::Shared::default(),
+            spawner: enrol::pkexec,
+            enrolled: None,
+            check_enrolled: enrol::enrolled,
+            confirm_replace: false,
             focused: false,
             kde_header: None,
             text_scale: 1.0,
@@ -433,6 +452,109 @@ impl SettingsWindow {
     }
 
     // Pages
+
+    /// Guided enrolment. The steps, and why they help a model, are in
+    /// `face_auth_core::guided`.
+    fn face(&mut self, ui: &mut egui::Ui) {
+        let run = {
+            let run = self.enrol.lock().unwrap();
+            (run.running, run.step, run.kept, run.hint)
+        };
+        let (running, step, kept, hint) = run;
+        widgets::group_label(ui, "Guided enrolment");
+        widgets::group_help(
+            ui,
+            "About ten templates from a few poses: straight on, slight turns and tilts, and glasses on \
+             and off. The camera checks each pose, so fewer frames cover more of how you're seen.",
+        );
+        if running {
+            let mut skip = false;
+            let mut stop = false;
+            widgets::group(ui, |ui| {
+                let (title, progress) = match step {
+                    Some((n, total, step)) => (
+                        step.prompt(),
+                        format!("Step {n} of {total}, {} of {} kept.", kept.0, kept.1),
+                    ),
+                    None => ("Waiting for the password prompt…", String::new()),
+                };
+                Row::new(title).help(&progress).show(ui, |ui, _| {
+                    if step.is_some() {
+                        stop = ui.add(Button::secondary("Stop")).clicked();
+                        skip = a11y::for_what(ui.add(Button::ghost("Skip")), "this step").clicked();
+                    }
+                });
+                widgets::group_section(ui, |ui| {
+                    let text = hint.map_or("", |h| h.text());
+                    a11y::live(&widgets::chip(ui, ChipKind::Neutral, text));
+                });
+            });
+            if skip {
+                enrol::send(&self.enrol, false);
+            }
+            if stop {
+                enrol::send(&self.enrol, true);
+            }
+            return;
+        }
+        let mut start = None;
+        widgets::group(ui, |ui| {
+            let (kind, text) = match self.enrolled {
+                Some(true) => (ChipKind::Ok, "Enrolled"),
+                Some(false) => (ChipKind::Warn, "Not enrolled"),
+                None => (ChipKind::Neutral, "Unknown"),
+            };
+            Row::new("Your face").show(ui, |ui, _| {
+                a11y::live(&widgets::chip(ui, kind, text));
+            });
+            let enrolled = self.enrolled == Some(true);
+            if self.confirm_replace {
+                let p = theme::palette(ui.ctx());
+                Row::new("Enrol again")
+                    .help("Your current templates are replaced by the new ones.")
+                    .tone(Tone::Error)
+                    .tint(p.error_tint)
+                    .show(ui, |ui, _| {
+                        if ui.add(Button::ghost("Cancel")).clicked() {
+                            self.confirm_replace = false;
+                        }
+                        if ui.add(Button::destructive("Replace")).clicked() {
+                            self.confirm_replace = false;
+                            start = Some(false);
+                        }
+                    });
+            } else if enrolled {
+                Row::new("Enrol again").help("Starts from nothing, replacing your templates.").show(ui, |ui, _| {
+                    if ui.add(Button::secondary("Enrol again…")).clicked() {
+                        self.confirm_replace = true;
+                    }
+                });
+            } else {
+                Row::new("Enrol").help("Takes about two minutes.").show(ui, |ui, _| {
+                    if ui.add(Button::primary("Start")).clicked() {
+                        start = Some(false);
+                    }
+                });
+            }
+            Row::new("Add poses")
+                .help("The same steps, added to what's enrolled. Good after new glasses.")
+                .show(ui, |ui, _| {
+                    if ui.add_enabled(enrolled && !self.confirm_replace, Button::secondary("Add")).clicked() {
+                        start = Some(true);
+                    }
+                });
+        });
+        ui.add_space(8.0);
+        widgets::small(
+            ui,
+            "Asks for an administrator's password. There's no camera preview: the frames stay with the \
+             enrolment, which runs as root.",
+        );
+        if let Some(append) = start {
+            self.notice = None;
+            enrol::start(&self.enrol, self.spawner, append, ui.ctx());
+        }
+    }
 
     fn matching(&mut self, ui: &mut egui::Ui) {
         let c = self.system.values();
@@ -1060,6 +1182,14 @@ impl SettingsWindow {
         }
         self.focused = focused;
         self.take_apply_result();
+        let enrolled = self.enrol.lock().unwrap().done.take();
+        if let Some(result) = enrolled {
+            self.notice = Some(match result {
+                Ok(saved) => (Tone::Info, saved),
+                Err(e) => (Tone::Error, e),
+            });
+            self.enrolled = (self.check_enrolled)();
+        }
 
         ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(TITLE));
 
@@ -1142,7 +1272,7 @@ impl SettingsWindow {
             .show(root, |ui| {
                 widgets::page_scroll(ui, self.page.title(), widgets::CONTENT_MAX, |ui| {
                     widgets::title(ui, self.page.title());
-                    if self.page != Page::You {
+                    if !matches!(self.page, Page::You | Page::Face) {
                         widgets::small(ui, "For everyone on this computer. Changes wait for Apply.");
                     }
                     if let Some((tone, text)) = self.notice.clone() {
@@ -1151,7 +1281,7 @@ impl SettingsWindow {
                             self.notice = None;
                         }
                     }
-                    if self.page != Page::You {
+                    if !matches!(self.page, Page::You | Page::Face) {
                         if let Some(e) = &self.system.unreadable {
                             ui.add_space(12.0);
                             widgets::banner(ui, Tone::Error, &format!("{SYSTEM_CONFIG_PATH} can't be read: {e}"), |_| {});
@@ -1167,6 +1297,7 @@ impl SettingsWindow {
                     }
                     ui.add_space(16.0);
                     match self.page {
+                        Page::Face => self.face(ui),
                         Page::Matching => self.matching(ui),
                         Page::Liveness => self.liveness(ui),
                         Page::Camera => self.camera_page(ui),

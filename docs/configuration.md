@@ -94,7 +94,11 @@ Face templates are root-owned, so enrolment needs root:
 ```bash
 sudo vinoauthface enroll --user $USER    # replace templates with a new capture (30 frames)
 sudo vinoauthface improve --user $USER   # append, for other lighting or angles
+sudo vinoauthface enroll --guided --user $USER   # six measured poses, about ten templates
 ```
+
+`--guided` (also `improve --guided`) asks for a few poses and only keeps frames that show them; see
+[settings.md](settings.md#guided-enrolment), whose Face page runs it.
 
 30 frames gives enough pose and expression variation from one sitting. Running `improve` in
 different lighting is the biggest gain beyond that. A user can store at most 256 embeddings;

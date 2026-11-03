@@ -13,7 +13,9 @@ replayed on top:
   through a new helper verb, `write-config`, which validates the file as
   authentication reads it and refuses a new model or template path anyone but
   root could write. The Models page loads a model to check it before anyone
-  re-enrols with it. Optional: `deploy.sh --with-settings` builds it from
+  re-enrols with it. Its Face page runs guided enrolment
+  (`vinoauthface enroll --guided`, #19): six steps whose poses are measured
+  from SCRFD's landmarks, about ten templates. Optional: `deploy.sh --with-settings` builds it from
   source (glibc, not musl). The tray is unchanged. See `docs/settings.md`.
 - **SCRFD matches the face nearest the camera.** It took the most confident
   face in the frame, which can be someone standing behind you: on CBSR NIR it

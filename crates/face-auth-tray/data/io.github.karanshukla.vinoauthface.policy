@@ -243,4 +243,27 @@
     <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">write-config</annotate>
   </action>
+  <action id="io.github.karanshukla.vinoauthface.enrol-guided">
+    <description>Enrol your face, guided through a few poses</description>
+    <message>Authentication is required to enrol your face</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">enrol-guided</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.retrain-guided">
+    <description>Add guided poses to your enrolled face</description>
+    <message>Authentication is required to retrain your face</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">retrain-guided</annotate>
+  </action>
 </policyconfig>
