@@ -1,6 +1,7 @@
 pub mod cameras;
 pub mod capture;
 pub mod config;
+pub mod config_write;
 pub mod detector;
 pub mod environment;
 pub mod error;

@@ -110,6 +110,11 @@ pub enum Verb {
     /// `setting-mode.sh set KEY CHOICE`, one verb per choice of each entry in
     /// `SETTINGS`, for the same reason: polkit pins the argument per action.
     Set(&'static Setting, &'static Choice),
+    /// Replace `/etc/face-auth.toml` with the settings window's version, read
+    /// from stdin and checked by `face_auth_core::config_write`. The one verb
+    /// whose effect the caller chooses, so the helper does it itself rather
+    /// than run anything with it.
+    WriteConfig,
 }
 
 impl Verb {
@@ -123,11 +128,20 @@ impl Verb {
             Verb::LoginBoth => "login-both".into(),
             Verb::LoginFace => "login-face".into(),
             Verb::Set(setting, choice) => format!("set-{}-{}", setting.key, choice.id),
+            Verb::WriteConfig => "write-config".into(),
         }
     }
 
-    const FIXED: [Verb; 7] =
-        [Verb::Enrol, Verb::Retrain, Verb::Uninstall, Verb::Upgrade, Verb::LoginOff, Verb::LoginBoth, Verb::LoginFace];
+    const FIXED: [Verb; 8] = [
+        Verb::Enrol,
+        Verb::Retrain,
+        Verb::Uninstall,
+        Verb::Upgrade,
+        Verb::LoginOff,
+        Verb::LoginBoth,
+        Verb::LoginFace,
+        Verb::WriteConfig,
+    ];
 
     /// Every verb there is: the fixed ones, then one per setting choice.
     pub fn all() -> Vec<Verb> {
@@ -157,9 +171,10 @@ pub fn parse_request(args: &[String], pkexec_uid: Option<&str>) -> Result<(Verb,
 }
 
 /// The program and arguments a verb runs for `user`, a name already resolved
-/// from the pkexec caller's user ID.
-pub fn command(verb: Verb, user: &str) -> (&'static str, Vec<String>) {
-    match verb {
+/// from the pkexec caller's user ID. `None` for `WriteConfig`, which runs
+/// nothing.
+pub fn command(verb: Verb, user: &str) -> Option<(&'static str, Vec<String>)> {
+    Some(match verb {
         Verb::Enrol => (FACE_ENROLL, vec!["enroll".into(), "--user".into(), user.into()]),
         Verb::Retrain => (FACE_ENROLL, vec!["improve".into(), "--user".into(), user.into()]),
         // Run as root with no SUDO_USER, so its per-user cleanup looks in
@@ -175,7 +190,8 @@ pub fn command(verb: Verb, user: &str) -> (&'static str, Vec<String>) {
         Verb::Set(setting, choice) => {
             ("/bin/bash", vec![SETTING_MODE.into(), "set".into(), setting.key.into(), choice.id.into()])
         }
-    }
+        Verb::WriteConfig => return None,
+    })
 }
 
 #[cfg(test)]
@@ -193,6 +209,8 @@ mod tests {
         assert_eq!(parse_request(&args(&["uninstall"]), Some("0")), Ok((Verb::Uninstall, 0)));
         assert_eq!(parse_request(&args(&["upgrade"]), Some("1000")), Ok((Verb::Upgrade, 1000)));
         assert_eq!(parse_request(&args(&["login-both"]), Some("1000")), Ok((Verb::LoginBoth, 1000)));
+        assert_eq!(parse_request(&args(&["write-config"]), Some("1000")), Ok((Verb::WriteConfig, 1000)));
+        assert_eq!(command(Verb::WriteConfig, "alice"), None);
     }
 
     #[test]
@@ -206,7 +224,7 @@ mod tests {
     fn a_target_user_cannot_be_named() {
         // The only identity is PKEXEC_UID; a second argument naming someone
         // else is refused, not ignored.
-        for list in [&["enrol", "bob"][..], &["enrol", "--user", "bob"], &["retrain", "0"], &["upgrade", "v1"], &["login-face", "off"]] {
+        for list in [&["enrol", "bob"][..], &["enrol", "--user", "bob"], &["retrain", "0"], &["upgrade", "v1"], &["login-face", "off"], &["write-config", "/tmp/x"]] {
             assert!(parse_request(&args(list), Some("1000")).is_err(), "{list:?}");
         }
         assert!(parse_request(&args(&[]), Some("1000")).is_err());
@@ -223,20 +241,20 @@ mod tests {
     #[test]
     fn commands_never_carry_a_path_override() {
         for verb in [Verb::Enrol, Verb::Retrain] {
-            let (program, argv) = command(verb, "alice");
+            let (program, argv) = command(verb, "alice").unwrap();
             assert_eq!(program, FACE_ENROLL);
             assert_eq!(&argv[1..3], ["--user", "alice"]);
             assert!(argv.iter().all(|a| !a.contains("dir") && !a.contains("model") && !a.contains("device")));
         }
-        assert_eq!(command(Verb::Enrol, "alice").1[0], "enroll");
-        assert_eq!(command(Verb::Retrain, "alice").1[0], "improve");
-        assert_eq!(command(Verb::Uninstall, "alice").1, [UNINSTALLER]);
-        assert_eq!(command(Verb::Upgrade, "alice").1, [UPGRADER]);
-        assert_eq!(command(Verb::LoginOff, "alice").1, [LOGIN_MODE, "off"]);
-        assert_eq!(command(Verb::LoginBoth, "alice").1, [LOGIN_MODE, "both"]);
-        assert_eq!(command(Verb::LoginFace, "alice").1, [LOGIN_MODE, "face"]);
+        assert_eq!(command(Verb::Enrol, "alice").unwrap().1[0], "enroll");
+        assert_eq!(command(Verb::Retrain, "alice").unwrap().1[0], "improve");
+        assert_eq!(command(Verb::Uninstall, "alice").unwrap().1, [UNINSTALLER]);
+        assert_eq!(command(Verb::Upgrade, "alice").unwrap().1, [UPGRADER]);
+        assert_eq!(command(Verb::LoginOff, "alice").unwrap().1, [LOGIN_MODE, "off"]);
+        assert_eq!(command(Verb::LoginBoth, "alice").unwrap().1, [LOGIN_MODE, "both"]);
+        assert_eq!(command(Verb::LoginFace, "alice").unwrap().1, [LOGIN_MODE, "face"]);
         let security = setting("security").unwrap();
-        assert_eq!(command(Verb::Set(security, &security.choices[2]), "alice").1, [SETTING_MODE, "set", "security", "strict"]);
+        assert_eq!(command(Verb::Set(security, &security.choices[2]), "alice").unwrap().1, [SETTING_MODE, "set", "security", "strict"]);
     }
 
     #[test]

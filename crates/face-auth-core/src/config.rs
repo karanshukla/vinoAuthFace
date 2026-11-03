@@ -19,16 +19,16 @@ pub const DEFAULT_EMBEDDINGS_DIR: &str = "/var/lib/face-auth";
 
 // Bounds applied to every config source. A threshold near zero accepts any
 // face at all, so the floor is enforced rather than merely documented.
-const THRESHOLD_RANGE: std::ops::RangeInclusive<f32> = 0.3..=1.0;
-const DETECTOR_THRESHOLD_RANGE: std::ops::RangeInclusive<f32> = 0.05..=1.0;
-const CAPTURE_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 100..=30_000;
-const SCAN_DURATION_RANGE: std::ops::RangeInclusive<u64> = 500..=30_000;
-const LIVENESS_GRACE_RANGE: std::ops::RangeInclusive<u64> = 0..=10_000;
-const LIVENESS_WINDOW_RANGE: std::ops::RangeInclusive<u64> = 0..=2_000;
-const SCAN_INTERVAL_RANGE: std::ops::RangeInclusive<u64> = 0..=5_000;
-const LIVENESS_MOTION_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
-const START_DELAY_RANGE: std::ops::RangeInclusive<u64> = 0..=10_000;
-const MIN_FACE_SIZE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.75;
+pub const THRESHOLD_RANGE: std::ops::RangeInclusive<f32> = 0.3..=1.0;
+pub const DETECTOR_THRESHOLD_RANGE: std::ops::RangeInclusive<f32> = 0.05..=1.0;
+pub const CAPTURE_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 100..=30_000;
+pub const SCAN_DURATION_RANGE: std::ops::RangeInclusive<u64> = 500..=30_000;
+pub const LIVENESS_GRACE_RANGE: std::ops::RangeInclusive<u64> = 0..=10_000;
+pub const LIVENESS_WINDOW_RANGE: std::ops::RangeInclusive<u64> = 0..=2_000;
+pub const SCAN_INTERVAL_RANGE: std::ops::RangeInclusive<u64> = 0..=5_000;
+pub const LIVENESS_MOTION_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
+pub const START_DELAY_RANGE: std::ops::RangeInclusive<u64> = 0..=10_000;
+pub const MIN_FACE_SIZE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.75;
 
 /// `[liveness]` (or `liveness.key = ...`): the motion-liveness settings as one
 /// group. Each key is the flat `liveness_<key>` field under a shorter name.
@@ -298,6 +298,33 @@ impl FaceAuthConfig {
         config.fold_sections().context("invalid system config")?;
         config.validate().context("invalid system config")?;
         Ok(config)
+    }
+
+    /// The text of a system config, parsed, folded and validated exactly as
+    /// [`FaceAuthConfig::load_system`] reads the file. What the settings
+    /// window's root helper checks a new `/etc/face-auth.toml` with.
+    pub fn parse_system(text: &str) -> Result<Self> {
+        let config = Self::from_toml(text)?;
+        config.validate().context("invalid system config")?;
+        Ok(config)
+    }
+
+    /// Parsed and folded, not validated: for showing a file's values, even
+    /// one [`FaceAuthConfig::validate`] would refuse.
+    pub fn from_toml(text: &str) -> Result<Self> {
+        let mut config: FaceAuthConfig = Config::builder()
+            .add_source(File::from_str(text, config::FileFormat::Toml))
+            .build()?
+            .try_deserialize()?;
+        config.fold_sections().context("invalid system config")?;
+        Ok(config)
+    }
+
+    /// What authentication uses for a user whose own file is `overlay`: the
+    /// settings window shows it beside a user's values.
+    pub fn with_user_overlay(mut self, overlay: &FaceAuthConfig) -> Self {
+        self.apply_user_overlay(overlay);
+        self
     }
 
     /// Merge the safe subset of a user's config over a system baseline.

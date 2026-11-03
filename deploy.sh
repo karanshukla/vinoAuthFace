@@ -726,6 +726,24 @@ if [ "$WITH_TRAY" = 1 ]; then
     fi
 fi
 
+# The settings window (docs/settings.md), beside the tray: its Apply runs the
+# tray's helper. Built from source only, for the host (glibc), never musl:
+# winit and glow load the desktop's libraries at run time. The release has no
+# glibc builds, so without a Rust toolchain there is no window.
+SETTINGS_SRC=""
+if [ "$WITH_TRAY" = 1 ] && [ -n "$TRAY_SRC" ]; then
+    if [ -f "$TARGET_DIR/release/vinoauthface-settings" ] && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ] \
+         && ! needs_rebuild "$TARGET_DIR/release/vinoauthface-settings"; then
+        SETTINGS_SRC="$TARGET_DIR/release"
+    elif CARGO_BIN="$(find_cargo)"; then
+        step "building the settings window"
+        SETTINGS_UNITS=0
+        [ "$INTERACTIVE" = 1 ] && SETTINGS_UNITS="$(count_units "$CARGO_BIN" tree --locked -p face-auth-settings)"
+        cargo_build "Compiling" "$SETTINGS_UNITS" as_user "$CARGO_BIN" build --release --locked \
+            -p face-auth-settings && SETTINGS_SRC="$TARGET_DIR/release"
+    fi
+fi
+
 # A binary that does not match the backend written to the config fails at
 # unlock time with a confusing error, so check the linkage now.
 if [ "$NPU_ACTIVE" = 1 ] && ! ldd "$BIN_SRC/vinoauthface-auth" | grep -q libopenvino; then
@@ -833,9 +851,17 @@ if [ -n "$TRAY_SRC" ]; then
         install -Dm644 "$TRAY_DATA/$icon-symbolic.svg" \
             "/usr/local/share/icons/hicolor/symbolic/apps/$icon-symbolic.svg"
     done
+    if [ -n "$SETTINGS_SRC" ]; then
+        install -Dm755 "$SETTINGS_SRC/vinoauthface-settings" "$BIN_DIR/vinoauthface-settings"
+        install -Dm644 crates/face-auth-settings/data/vinoauthface-settings.desktop \
+            /usr/local/share/applications/vinoauthface-settings.desktop
+    else
+        warn Settings "No settings window: it builds from source, and there is no Rust toolchain."
+    fi
     if command -v restorecon &>/dev/null; then
         restorecon "$BIN_DIR/vinoauthface-tray" /usr/local/libexec/vinoauthface-helper \
             "$POLKIT_ACTIONS_DIR/io.github.karanshukla.vinoauthface.policy" 2>/dev/null || true
+        [ -n "$SETTINGS_SRC" ] && restorecon "$BIN_DIR/vinoauthface-settings" 2>/dev/null || true
     fi
 elif [ "$WITH_TRAY" = 1 ]; then
     warn Tray "No tray binaries to install (no Rust toolchain, and the release has none)."

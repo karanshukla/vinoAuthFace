@@ -142,6 +142,15 @@ else
     ok Build "CPU backend (tract, static musl)"
 fi
 
+# The settings window, where deploy.sh installed it: glibc whatever the backend.
+SETTINGS=0
+if [ "$TRAY" = 1 ] && [ -f "$BIN_DIR/vinoauthface-settings" ]; then
+    SETTINGS=1
+    step "building the settings window"
+    as_user "$CARGO" build --release --locked -p face-auth-settings \
+        || { fail "Settings window build failed" "Nothing was installed."; exit 1; }
+fi
+
 # ---- Install ----
 # install <src> <dest> <owner:group> <mode>, reporting whether it changed.
 CHANGED=0
@@ -166,6 +175,9 @@ put "$BIN_SRC/vinoauthface-unseal" /usr/local/libexec/vinoauthface-unseal root:r
 if [ "$TRAY" = 1 ]; then
     put "$TARGET_DIR/$MUSL_TARGET/release/vinoauthface-tray" "$BIN_DIR/vinoauthface-tray" root:root 0755
     put "$TARGET_DIR/$MUSL_TARGET/release/vinoauthface-helper" "$HELPER" root:root 0755
+fi
+if [ "$SETTINGS" = 1 ]; then
+    put "$TARGET_DIR/release/vinoauthface-settings" "$BIN_DIR/vinoauthface-settings" root:root 0755
 fi
 
 printf '\n'
