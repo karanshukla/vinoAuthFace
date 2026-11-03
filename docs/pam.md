@@ -55,8 +55,9 @@ until `deploy.sh` is re-run (`update.sh` doesn't touch PAM).
 Before Plasma 6.8, KScreenLocker runs two background PAM services next to the password field,
 `kde-fingerprint` and `kde-smartcard`. From 6.8 only `kde-fingerprint` runs there; `kde-smartcard`
 (and Plasma's own `kde-face`) run only when picked on the lock screen in place of the password.
-`deploy.sh` puts face in a background service, so the KDE lock screen unlocks hands-free: look at
-the camera and it opens, or type your password as usual.
+`deploy.sh` puts face in a background service, so there's nothing to pick on the KDE lock screen:
+wake it (any key, click or touch) and look at the camera, or type your password as usual. Plasma
+starts no PAM service until the lock screen is woken, so a scan never starts on its own.
 
 | `kde-fingerprint` | `kde-smartcard` | Face goes in | Line |
 |---|---|---|---|
