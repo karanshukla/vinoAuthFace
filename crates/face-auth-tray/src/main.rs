@@ -26,7 +26,6 @@ use std::time::{Duration, Instant};
 
 const TRAY: &str = "/usr/local/bin/vinoauthface-tray";
 const DOCS: &str = "https://vinoauthface.vinopilot.ca/";
-const SETTINGS_WINDOW: &str = "/usr/local/bin/vinoauthface-settings";
 /// How often `/proc` is checked for a running scan.
 const SCAN_POLL: Duration = Duration::from_millis(200);
 /// How often enrolment is re-read, to catch a `sudo vinoauthface enroll` run by hand.
@@ -559,13 +558,6 @@ fn settings_menu(status: &Status, idle: bool, idle_minutes: u64) -> Vec<MenuItem
         menu.push(MenuItem::Separator);
     }
     menu.extend(idle_radio(idle_minutes));
-    // Everything else in the config, where deploy.sh built the window.
-    if Path::new(SETTINGS_WINDOW).exists() {
-        menu.push(MenuItem::Separator);
-        menu.push(item("All settings…", "preferences-system", true, |_| {
-            let _ = Command::new(SETTINGS_WINDOW).stdin(Stdio::null()).spawn();
-        }));
-    }
     menu
 }
 

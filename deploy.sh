@@ -101,21 +101,32 @@ cargo_build() {
 # (login-mode.sh). Without it a re-deploy or upgrade keeps what's installed,
 # and a fresh install gets off.
 #
+# --with-settings (or FACE_AUTH_SETTINGS=1) also builds the optional settings
+# window (docs/settings.md), which needs the tray's helper and a Rust
+# toolchain. A re-deploy keeps it where it's installed; --no-settings removes it.
+#
 # --build-runtime is accepted and ignored: it compiled ONNX Runtime to get a
 # newer OpenVINO, and face-auth never uses ONNX Runtime. OpenVINO alone now
 # comes prebuilt (see the ovfetch section below).
 WITH_TRAY="${FACE_AUTH_TRAY:-1}"
 LOGIN_MODE="${FACE_AUTH_LOGIN:-}"
-USAGE="Usage: sudo ./deploy.sh [--no-tray] [--login=off|both|face]"
+WITH_SETTINGS="${FACE_AUTH_SETTINGS:-}"
+USAGE="Usage: sudo ./deploy.sh [--no-tray] [--with-settings|--no-settings] [--login=off|both|face]"
 for arg in "$@"; do
     case "$arg" in
         --with-tray) WITH_TRAY=1 ;;
         --no-tray) WITH_TRAY=0 ;;
+        --with-settings) WITH_SETTINGS=1 ;;
+        --no-settings) WITH_SETTINGS=0 ;;
         --build-runtime) warn Runtime "--build-runtime is no longer needed: OpenVINO now installs prebuilt, with no compile." ;;
         --login=off|--login=both|--login=face) LOGIN_MODE="${arg#--login=}" ;;
         *) fail "Unknown option '$arg'" "$USAGE"; exit 1 ;;
     esac
 done
+if [ -z "$WITH_SETTINGS" ]; then
+    WITH_SETTINGS=0
+    [ -f /usr/local/bin/vinoauthface-settings ] && WITH_SETTINGS=1
+fi
 case "$LOGIN_MODE" in
     ""|off|both|face) ;;
     *) fail "FACE_AUTH_LOGIN must be off, both or face" "$USAGE"; exit 1 ;;
@@ -726,12 +737,12 @@ if [ "$WITH_TRAY" = 1 ]; then
     fi
 fi
 
-# The settings window (docs/settings.md), beside the tray: its Apply runs the
-# tray's helper. Built from source only, for the host (glibc), never musl:
+# The optional settings window (docs/settings.md, --with-settings), beside the
+# tray: its Apply runs the tray's helper. Built from source only, for the host (glibc), never musl:
 # winit and glow load the desktop's libraries at run time. The release has no
 # glibc builds, so without a Rust toolchain there is no window.
 SETTINGS_SRC=""
-if [ "$WITH_TRAY" = 1 ] && [ -n "$TRAY_SRC" ]; then
+if [ "$WITH_SETTINGS" = 1 ] && [ "$WITH_TRAY" = 1 ] && [ -n "$TRAY_SRC" ]; then
     if [ -f "$TARGET_DIR/release/vinoauthface-settings" ] && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ] \
          && ! needs_rebuild "$TARGET_DIR/release/vinoauthface-settings"; then
         SETTINGS_SRC="$TARGET_DIR/release"
@@ -855,8 +866,10 @@ if [ -n "$TRAY_SRC" ]; then
         install -Dm755 "$SETTINGS_SRC/vinoauthface-settings" "$BIN_DIR/vinoauthface-settings"
         install -Dm644 crates/face-auth-settings/data/vinoauthface-settings.desktop \
             /usr/local/share/applications/vinoauthface-settings.desktop
-    else
+    elif [ "$WITH_SETTINGS" = 1 ]; then
         warn Settings "No settings window: it builds from source, and there is no Rust toolchain."
+    else
+        rm -f "$BIN_DIR/vinoauthface-settings" /usr/local/share/applications/vinoauthface-settings.desktop
     fi
     if command -v restorecon &>/dev/null; then
         restorecon "$BIN_DIR/vinoauthface-tray" /usr/local/libexec/vinoauthface-helper \

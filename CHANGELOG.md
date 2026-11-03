@@ -13,8 +13,8 @@ replayed on top:
   through a new helper verb, `write-config`, which validates the file as
   authentication reads it and refuses a new model or template path anyone but
   root could write. The Models page loads a model to check it before anyone
-  re-enrols with it. `deploy.sh` builds it from source with the tray (glibc,
-  not musl); the tray's Settings menu opens it. See `docs/settings.md`.
+  re-enrols with it. Optional: `deploy.sh --with-settings` builds it from
+  source (glibc, not musl). The tray is unchanged. See `docs/settings.md`.
 - **SCRFD matches the face nearest the camera.** It took the most confident
   face in the frame, which can be someone standing behind you: on CBSR NIR it
   picked a person in the background in 11 of 3,940 images. It now takes the

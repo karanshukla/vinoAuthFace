@@ -5,13 +5,11 @@ nav_order: 8
 
 # Settings window
 
-`vinoauthface-settings` shows every key in `/etc/face-auth.toml`, and the ones you may set in
-your own `~/.config/face-auth.toml`, in one window. It sits beside the [tray](tray.md), whose
-Settings menu keeps the few presets. Like the tray it runs as you and is never part of
-authentication.
+`vinoauthface-settings` is an optional window that shows every key in `/etc/face-auth.toml`,
+and the ones you may set in your own `~/.config/face-auth.toml`. The [tray](tray.md) is
+unchanged and doesn't need it. Like the tray it runs as you and is never part of authentication.
 
-Open it from the app launcher ("vinoAuthFace settings"), the tray's Settings menu ("All
-settings…"), or a terminal:
+Open it from the app launcher ("vinoAuthFace settings") or a terminal:
 
 ```bash
 vinoauthface-settings                  # or --page matching|liveness|camera|models|security|you
@@ -19,7 +17,8 @@ vinoauthface-settings                  # or --page matching|liveness|camera|mode
 
 ## Install
 
-`sudo ./deploy.sh` builds and installs it with the tray when it finds a Rust toolchain. It is built
+`sudo ./deploy.sh --with-settings` builds and installs it (it needs the tray and a Rust
+toolchain). Later deploys keep it; `--no-settings` removes it. It is built
 for the host (glibc), not static musl like the other binaries, since the window loads the
 desktop's Wayland and OpenGL libraries. Releases ship musl only, so a deploy from a downloaded
 release with no Rust toolchain has no settings window; edit `/etc/face-auth.toml` by hand there.
