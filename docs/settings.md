@@ -5,31 +5,28 @@ nav_order: 8
 
 # Settings window
 
-`vinoauthface-settings` is an optional window that shows every key in `/etc/face-auth.toml`,
-and the ones you may set in your own `~/.config/face-auth.toml`. The [tray](tray.md) is
-unchanged and doesn't need it. Like the tray it runs as you and is never part of authentication.
-
-Open it from the app launcher ("vinoAuthFace settings") or a terminal:
+`vinoauthface-settings` is an optional window for every key in `/etc/face-auth.toml` and your own
+`~/.config/face-auth.toml`. It runs as you and is never part of authentication. The
+[tray](tray.md) doesn't need it.
 
 ```bash
-vinoauthface-settings                  # or --page matching|liveness|camera|models|security|you
+vinoauthface-settings    # or --page matching|liveness|camera|models|security|you
 ```
 
 ## Install
 
-`sudo ./deploy.sh --with-settings` builds and installs it (it needs the tray and a Rust
-toolchain). Later deploys keep it; `--no-settings` removes it. It is built
-for the host (glibc), not static musl like the other binaries, since the window loads the
-desktop's Wayland and OpenGL libraries. Releases ship musl only, so a deploy from a downloaded
-release with no Rust toolchain has no settings window; edit `/etc/face-auth.toml` by hand there.
-`sudo ./update.sh` rebuilds it where it's installed, and `uninstall.sh` removes it.
+```bash
+sudo ./deploy.sh --with-settings
+```
+
+It needs the tray and a Rust toolchain, and builds for glibc, not musl: the window loads the
+desktop's Wayland and OpenGL libraries. Releases ship musl only, so without a toolchain there's
+no window. Later deploys and `update.sh` keep it; `--no-settings` and `uninstall.sh` remove it.
 
 | File | What |
 |---|---|
-| `/usr/local/bin/vinoauthface-settings` | The window. Runs as you |
+| `/usr/local/bin/vinoauthface-settings` | The window |
 | `/usr/local/share/applications/vinoauthface-settings.desktop` | Its launcher |
-
-It needs the tray's root helper and polkit action (`--no-tray` skips both, and the window).
 
 ## Pages
 
@@ -38,88 +35,69 @@ It needs the tray's root helper and polkit action (`--no-tray` skips both, and t
 | Face | Not a key: guided enrolment, below |
 | Matching | `threshold`, `detector_threshold`, `min_face_size_ratio`, `scan_duration_ms`, `liveness.grace_ms`, `capture_timeout_ms`, `scan_interval_ms` |
 | Liveness | `liveness.preset`, `liveness.motion_threshold`, `liveness.residual_motion_threshold`, `liveness.window_ms` |
-| Camera | `device` (picked from the video devices present), `bind_camera`, and the camera pin, which it can remove but not set |
+| Camera | `device`, `bind_camera`, the camera pin (remove only) |
 | Models | `model_path`, `detector_model_path`, `backend`, `npu_device` |
 | Security | `guards.*`, `lockout.*`, `seal_embeddings`, `embeddings_dir`, `update_check` |
-| Just you | Your own file: the thresholds, which only count when stricter than the computer's, the scan timing, your IR camera and `tray_idle_minutes` |
+| Just you | Your own file: stricter thresholds, scan timing, your IR camera, `tray_idle_minutes` |
 
-What each key does is in [configuration.md](configuration.md) and the comments in
+Each key is described in [configuration.md](configuration.md) and
 [`config/face-auth.toml.example`](https://github.com/karanshukla/vinoAuthFace/blob/main/config/face-auth.toml.example).
 
 ## Saving
 
-**Just you** saves as you change it: the file is yours, no password needed. A value looser than
-the computer's says "Ignored", since authentication would ignore it anyway.
+**Just you** saves as you change it. A value looser than the computer's shows as "Ignored", as
+authentication ignores it.
 
-**Everything else** is for everyone on the computer, so changes wait in a bar at the bottom of
-the window until you press **Apply…**, which asks for an administrator's password once for all of
-them. **Discard** puts them back.
+**The other pages** apply to everyone, so changes wait for **Apply…**: one administrator
+password for all of them. **Discard** drops them.
 
-Apply runs `pkexec /usr/local/libexec/vinoauthface-helper write-config` (polkit action
-`io.github.karanshukla.vinoauthface.write-config`, `auth_admin`) with the new file on stdin. It is
-the one helper verb whose content comes from the caller, so the helper trusts none of it:
+Apply runs `pkexec /usr/local/libexec/vinoauthface-helper write-config` (`auth_admin`) with the
+new file on stdin. The helper doesn't trust it:
 
-- The new file must parse and validate exactly as authentication reads it. A file face unlock
-  would refuse is never written.
-- It must have been made from the file as it is now. If something else changed
-  `/etc/face-auth.toml` since the window read it (you by hand, the tray, `deploy.sh`), nothing is
-  written; the window reads the file again when it regains focus.
-- A `model_path`, `detector_model_path` or `embeddings_dir` that changes must be root's: it, and
-  every directory above it, owned by root and writable by nobody else. Either decides whose face
-  unlocks an account, so a path you could write to would make the password prompt a formality.
-  The window says so before you press Apply.
-- The camera pin can be removed, not set: `pin-camera.sh` reads it from sysfs.
+- It must validate as authentication reads it.
+- It must be based on the current file. If the file changed since the window read it, nothing is
+  written.
+- A new `model_path`, `detector_model_path` or `embeddings_dir` must be root's all the way up.
+  Each decides whose face unlocks, so a path you could write would bypass the password prompt.
+- The camera pin can be removed, not set.
 
-The file is replaced in one rename, keeping its owner and mode. Edits are made line by line, as
-`setting-mode.sh` makes them: a value is replaced where it is, or written over its commented-out
-example line, and a key put back to its default is commented out. Comments and keys the window
-doesn't change are left alone. The next unlock reads the new file; there is no service to restart.
+The file is replaced in one rename, keeping its owner and mode. Only the changed lines move: a
+value is replaced in place or over its commented-out example, and a default is commented out.
+There's no service to restart.
 
 ## Guided enrolment
 
-The Face page enrols you through six steps instead of 30 frames of whatever pose you hold: look
-straight at the camera, turn a little to one side, then the other, tilt your chin up, then down,
-then take your glasses off or put them on. It keeps about ten templates. Matching takes the best
-template, so templates that differ cover more of how the camera sees you at unlock.
+The Face page enrols you in six steps instead of 30 frames of one pose: straight on, a slight turn
+each way, a slight tilt up and down, then glasses off or on. It keeps about ten templates; matching
+takes the best one, so varied templates cover more of how you're seen.
 
-The poses are measured, not assumed. Each frame's five landmarks (SCRFD's) give the head's turn
-and tilt, measured from your own straight-on pose; a step keeps a frame only once that pose is
-reached and held for two frames, with your eyes at least 30 px apart. A frame almost the same as
-one already kept is skipped. Which way is left isn't assumed either (the image may be mirrored):
-the first turn you make sets the side, and the next step wants the other. A step that isn't done
-within 20 seconds is skipped; only the straight-on step is required.
+Poses are measured from SCRFD's five landmarks, relative to your own straight-on pose. A frame
+counts once the pose is held for two frames with the eyes at least 30 px apart, and near-copies of
+a kept frame are skipped. Your first turn sets which side is which, so a mirrored image works. A
+step not done in 20 s is skipped; only straight on is required.
 
 | Button | Runs |
 |---|---|
-| Start, or Enrol again (with a confirmation) | `vinoauthface enroll --guided`, replacing your templates |
+| Start, or Enrol again (confirmed) | `vinoauthface enroll --guided`, replacing your templates |
 | Add poses | `vinoauthface improve --guided`, keeping them |
 
-Both run as root through pkexec (polkit actions `enrol-guided` and `retrain-guided`, `auth_admin`),
-with fixed arguments like the tray's Enrol. Skip and Stop write to the enrolment's stdin; stopping
-saves nothing. There's no camera preview: the frames stay in the root process. The same steps run in
-a terminal with `sudo vinoauthface enroll --guided --user $USER` (Enter skips a step, typing
-`cancel` stops). Plain `enroll`, `improve` and the tray are unchanged.
+Both run as root through pkexec (`enrol-guided`, `retrain-guided`, `auth_admin`). Skip and Stop
+go to the enrolment's stdin; Stop saves nothing. There's no camera preview. In a terminal:
+`sudo vinoauthface enroll --guided --user $USER` (Enter skips, `cancel` stops).
 
-Off-angle templates can raise impostor scores at the same `threshold`, so measure genuine and
-impostor similarity before and after with `vinoauthface-similarity-check` when changing models or
-the poses (see issue #19).
+Off-angle templates can raise impostor scores, so measure before and after with
+`vinoauthface-similarity-check` (see #19).
 
 ## Your own models
 
-The Models page has a **Check** button beside each model path. It loads the file as
-authentication would (with tract on the CPU, whatever the backend) and says what it found: how
-many values the recognition model gives per face (the shipped ones give 512), or whether a
-detector is SCRFD, whose landmarks align the face, or box only. A model that doesn't load says
-why.
+**Check**, beside each model path, loads the model with tract on the CPU and reports what it
+found: values per face (the shipped models give 512), or SCRFD vs box-only for a detector.
 
-To use one, copy it where only root can write, then pick it:
+Copy a model where only root can write before picking it:
 
 ```bash
 sudo install -m 644 my-model.onnx /usr/local/share/face-auth/
 ```
 
-Templates are tagged with the models that made them (see
-[configuration.md](configuration.md)), so a new recognition or detector model means everyone
-enrols again. The Templates row says when a change would do that, and the notice after Apply
-repeats it. Enrol from the tray's "Enrol again from scratch", or `sudo vinoauthface enroll --user
-$USER`.
+Templates are tagged with their models (see [configuration.md](configuration.md)), so a new
+model means everyone enrols again. The Templates row warns before Apply.

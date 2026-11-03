@@ -97,8 +97,8 @@ sudo vinoauthface improve --user $USER   # append, for other lighting or angles
 sudo vinoauthface enroll --guided --user $USER   # six measured poses, about ten templates
 ```
 
-`--guided` (also `improve --guided`) asks for a few poses and only keeps frames that show them; see
-[settings.md](settings.md#guided-enrolment), whose Face page runs it.
+`--guided` (also for `improve`) keeps only frames that show the poses it asks for. See
+[settings.md](settings.md#guided-enrolment).
 
 30 frames gives enough pose and expression variation from one sitting. Running `improve` in
 different lighting is the biggest gain beyond that. A user can store at most 256 embeddings;

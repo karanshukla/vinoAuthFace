@@ -198,7 +198,7 @@ fn a_change_for_everyone_waits_for_apply() {
     // Read back from the file the helper wrote.
     assert_eq!(h.state().system.changes(), vec![]);
     assert!(!h.state().system.values().abort_if_ssh());
-    h.get_by_label("Saved. The next unlock uses the new settings.");
+    h.get_by_label("Saved.");
     assert!(h.query_by_role_and_label(Role::Button, "Apply…").is_none());
 }
 
@@ -258,20 +258,17 @@ fn a_looser_value_of_yours_says_it_is_ignored() {
     let (w, _, _) = window(Page::You, "looser", Some("threshold = 0.5\ndevice = \"/dev/video0\"\n"), refuse);
     let h = harness(w, WIDE, Theme::Light);
     h.get_by_label("Ignored: looser than this computer's 0.60.");
-    h.get_by_label("Ignored: only a real IR sensor on this computer can be picked here.");
+    h.get_by_label("Ignored: not an IR sensor on this computer.");
 }
 
 #[test]
 fn a_new_model_says_everyone_enrols_again() {
     let (w, _, _) = window(Page::Models, "model", None, refuse);
     let mut h = harness(w, WIDE, Theme::Light);
-    h.get_by_label("Made with w600k_mbf.onnx+det_500m.onnx. Faces enrolled with other models are refused.");
+    h.get_by_label("Made with w600k_mbf.onnx+det_500m.onnx. Other models' templates are refused.");
     h.state_mut().set(false, keys::MODEL_PATH, Some(keys::string("/usr/local/share/face-auth/mine.onnx")));
     settle(&mut h);
-    h.get_by_label(
-        "w600k_mbf.onnx+det_500m.onnx becomes mine.onnx+det_500m.onnx: after Apply, everyone enrols again (the \
-         tray's Enrol again from scratch).",
-    );
+    h.get_by_label("w600k_mbf.onnx+det_500m.onnx becomes mine.onnx+det_500m.onnx: everyone enrols again after Apply.");
 }
 
 #[test]
@@ -344,7 +341,7 @@ fn stopping_guided_enrolment_saves_nothing() {
     // Enrolled already: adding poses is one click, replacing them two.
     h.get_by_role_and_label(Role::Button, "Enrol again…").click();
     settle(&mut h);
-    h.get_by_label("Your current templates are replaced by the new ones.");
+    h.get_by_label("Your current templates will be replaced.");
     h.get_by_role_and_label(Role::Button, "Cancel").click();
     settle(&mut h);
     h.get_by_role_and_label(Role::Button, "Add").click();

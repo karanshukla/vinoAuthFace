@@ -86,9 +86,9 @@ impl Step {
             Step::Straight => "Look straight at the camera.",
             Step::Side => "Turn your head a little to one side.",
             Step::OtherSide => "Now a little to the other side.",
-            Step::Up => "Look straight again, then tilt your chin up a little.",
+            Step::Up => "Tilt your chin up a little.",
             Step::Down => "Now tilt it down a little.",
-            Step::Glasses => "Take your glasses off, or put them on, and look at the camera. Skip this if you don't wear any.",
+            Step::Glasses => "Take your glasses off, or put them on. Skip if you wear none.",
         }
     }
 
@@ -160,7 +160,7 @@ impl Hint {
 
     pub fn text(self) -> &'static str {
         match self {
-            Hint::NoContent => "The camera sees nothing: is the IR emitter on?",
+            Hint::NoContent => "Nothing in view. Is the IR emitter on?",
             Hint::NoFace => "No face in view.",
             Hint::TooFar => "Move closer.",
             Hint::LookAtCamera => "Look at the camera.",
