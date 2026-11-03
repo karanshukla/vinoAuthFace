@@ -40,7 +40,8 @@ While scanning, `vinoauthface-auth` shows `Looking for your face...`:
   `stdout` has `pam_exec` relay to the application as a PAM info message, as it arrives. The
   application decides how to show it and replaces it with its own prompt if the scan falls
   through. `pam_exec` relays stderr the same way, so in this mode `vinoauthface-auth` sends its
-  stderr to `/dev/null`: errors are in `journalctl -t vinoauthface-auth` either way.
+  stderr to `/dev/null`: errors are in `journalctl -t vinoauthface-auth` either way. The KDE lock
+  screen never shows it (see [KDE](#kde)).
 
 Only `sudo` (and `sudo -i`, `sudo su -`, which authenticate through it) is covered on a text
 console. `su` isn't: it authenticates the *target* account, so a face can only ever match the
@@ -70,6 +71,11 @@ takes Plasma 6.8 to be installed when `kscreenlocker_worker` is. In the smartcar
 the same time and Plasma's hint reads "(or scan your smartcard)". Sharing the fingerprint slot
 with fprintd, face runs first and the reader waits until the scan ends. Re-running `deploy.sh`
 after enabling or disabling fingerprint login moves face to match.
+
+The lock screen doesn't show `Looking for your face...`. Plasma's lock screen only displays
+messages from the password service (`kde`), and drops those from the background services, the
+same way it drops `pam_fprintd`'s. The Plasma Login screen runs face in its main stack, so it
+does show the line.
 
 In a slot of its own, a miss ends the stack with an error instead of falling through. On Fedora
 the rest of the stack is a stub that answers "unavailable", and KScreenLocker stops using a
