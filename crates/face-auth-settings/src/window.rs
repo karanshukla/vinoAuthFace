@@ -328,7 +328,7 @@ impl SettingsWindow {
         let mut tone = Tone::Neutral;
         if !current.is_empty() && Some(&current) != was.as_ref() {
             if let Err(e) = config_write::trusted_path(Path::new(&current), dir) {
-                help = format!("Apply will refuse this: {e}. Copy it somewhere only root can write.");
+                help = format!("Apply will refuse this: {e}.");
                 tone = Tone::Warn;
             }
         } else if !Path::new(&effective).exists() {
@@ -404,17 +404,17 @@ impl SettingsWindow {
         let shown = current.as_deref().map_or_else(|| auto.to_string(), label);
         let (help, tone) = match (&current, user) {
             (Some(path), true) if !self.ir_cameras.contains(path) => {
-                ("Ignored: only a real IR sensor on this computer can be picked here.".to_string(), Tone::Warn)
+                ("Ignored: not an IR sensor on this computer.".to_string(), Tone::Warn)
             }
             (Some(path), false) if name_of(path).is_none() => {
-                (format!("{path} isn't on this computer now, so face unlock finds no camera."), Tone::Warn)
+                (format!("{path} isn't here, so face unlock finds no camera."), Tone::Warn)
             }
             (None, false) => (
-                "Auto-detect picks the first real IR sensor, and never a virtual camera.".to_string(),
+                "The first real IR sensor. Never a virtual camera.".to_string(),
                 Tone::Neutral,
             ),
-            (None, true) => ("The one this computer's settings pick.".to_string(), Tone::Neutral),
-            _ => ("Set by hand: only for testing, or a computer with two IR sensors.".to_string(), Tone::Neutral),
+            (None, true) => ("This computer's camera.".to_string(), Tone::Neutral),
+            _ => ("Set by hand. For testing, or two IR sensors.".to_string(), Tone::Neutral),
         };
         let mut picked = current.clone();
         Row::new("IR camera").help(&help).tone(tone).show(ui, |ui, named| {
@@ -440,7 +440,7 @@ impl SettingsWindow {
         widgets::group(ui, |ui| {
             self.number(ui, false, keys::THRESHOLD, Num {
                 title: "Match threshold",
-                help: "How alike a face must be to yours. Higher turns away more lookalikes, and asks you to retry more."
+                help: "How alike a face must be to yours. Higher is stricter."
                     .into(),
                 tone: Tone::Neutral,
                 value: c.threshold().into(),
@@ -451,7 +451,7 @@ impl SettingsWindow {
             });
             self.number(ui, false, keys::DETECTOR_THRESHOLD, Num {
                 title: "Face detection",
-                help: "How sure the detector must be that there is a face at all.".into(),
+                help: "How sure the detector must be that it sees a face.".into(),
                 tone: Tone::Neutral,
                 value: c.detector_threshold().into(),
                 default: 0.5,
@@ -461,7 +461,7 @@ impl SettingsWindow {
             });
             self.number(ui, false, keys::MIN_FACE_SIZE_RATIO, Num {
                 title: "Smallest face",
-                help: "The face's size as a share of the frame. Smaller ones are ignored; 0 is off.".into(),
+                help: "Share of the frame. Smaller faces are ignored; 0 is off.".into(),
                 tone: Tone::Neutral,
                 value: c.min_face_size_ratio().into(),
                 default: 0.0,
@@ -492,7 +492,7 @@ impl SettingsWindow {
             }
         };
         let help = format!(
-            "How long a scan looks for your face before the password.{}",
+            "How long to look before the password.{}",
             inherits(keys::SCAN_DURATION_MS, Unit::Seconds.show(secs(sys.scan_duration_ms())))
         );
         self.number(ui, user, keys::SCAN_DURATION_MS, Num {
@@ -506,7 +506,7 @@ impl SettingsWindow {
             log: false,
         });
         let help = format!(
-            "Once you've matched but not yet moved enough, the scan waits this much longer, once.{}",
+            "Extra wait, once, for a match that hasn't moved yet.{}",
             inherits(keys::LIVENESS_GRACE_MS, Unit::Seconds.show(secs(sys.liveness_grace_ms())))
         );
         self.number(ui, user, keys::LIVENESS_GRACE_MS, Num {
@@ -520,7 +520,7 @@ impl SettingsWindow {
             log: false,
         });
         let help = format!(
-            "How long to wait for a frame from the camera.{}",
+            "How long to wait for a frame.{}",
             inherits(keys::CAPTURE_TIMEOUT_MS, Unit::Seconds.show(secs(sys.capture_timeout_ms() as u64)))
         );
         self.number(ui, user, keys::CAPTURE_TIMEOUT_MS, Num {
@@ -534,7 +534,7 @@ impl SettingsWindow {
             log: false,
         });
         let help = format!(
-            "Trades unlock speed for CPU; 0 is right for nearly everyone.{}",
+            "Saves CPU, costs speed. 0 suits nearly everyone.{}",
             inherits(keys::SCAN_INTERVAL_MS, Unit::Seconds.show(secs(sys.scan_interval_ms())))
         );
         self.number(ui, user, keys::SCAN_INTERVAL_MS, Num {
@@ -560,14 +560,14 @@ impl SettingsWindow {
             _ => "",
         };
         let (help, tone) = match preset {
-            "off" => ("Off: a photo of your face, or a video of it, can unlock this computer.", Tone::Warn),
-            "" => ("Custom: the values below are set by hand.", Tone::Neutral),
-            _ => ("Strict also turns away a photo moved by hand, and can fail if you sit very still.", Tone::Neutral),
+            "off" => ("Off: a photo or video of you can unlock this computer.", Tone::Warn),
+            "" => ("Custom: set by hand below.", Tone::Neutral),
+            _ => ("Strict also stops a photo moved by hand, but may fail if you sit very still.", Tone::Neutral),
         };
         widgets::group_label(ui, "Motion check");
         widgets::group_help(
             ui,
-            "A match only counts once your face has moved a little, which a photo can't. Only the face is compared.",
+            "A match counts only once your face has moved a little, which a photo can't.",
         );
         widgets::group(ui, |ui| {
             let mut picked = preset;
@@ -588,7 +588,7 @@ impl SettingsWindow {
             }
             self.number(ui, false, keys::LIVENESS_MOTION, Num {
                 title: "Face motion",
-                help: "Share of the face that must change within the look-back time. Stops a photo held still; 0 is off."
+                help: "Share of the face that must change. Stops a photo held still; 0 is off."
                     .into(),
                 tone: Tone::Neutral,
                 value: motion.into(),
@@ -599,7 +599,7 @@ impl SettingsWindow {
             });
             self.number(ui, false, keys::LIVENESS_RESIDUAL, Num {
                 title: "Movement in parts",
-                help: "Motion a moved photo can't make, like a blink. 0 is off; 0.3 is the value to try.".into(),
+                help: "Motion a moved photo can't make, like a blink. 0 is off; try 0.3.".into(),
                 tone: Tone::Neutral,
                 value: residual.into(),
                 default: 0.0,
@@ -609,7 +609,7 @@ impl SettingsWindow {
             });
             self.number(ui, false, keys::LIVENESS_WINDOW_MS, Num {
                 title: "Look back",
-                help: "How far back face motion is measured. 0 compares each frame with the one before.".into(),
+                help: "How far back motion is measured. 0 compares frame to frame.".into(),
                 tone: Tone::Neutral,
                 value: secs(c.liveness_window_ms()),
                 default: 1.0,
@@ -630,7 +630,7 @@ impl SettingsWindow {
                 false,
                 keys::BIND_CAMERA,
                 "Only cameras you enrolled on",
-                "Turns away another camera plugged in to stand in for the IR sensor, by its USB ID.",
+                "Refuses a different camera, by USB ID.",
                 c.bind_camera(),
                 true,
             );
@@ -653,7 +653,7 @@ impl SettingsWindow {
                 }
                 _ => {
                     Row::new("Pinned to a USB port")
-                        .help("No. sudo ./pin-camera.sh pins the camera to the port it's on now.")
+                        .help("No. sudo ./pin-camera.sh pins it.")
                         .show(ui, |_, _| {});
                 }
             }
@@ -666,15 +666,14 @@ impl SettingsWindow {
         widgets::group_label(ui, "Recognition");
         widgets::group_help(
             ui,
-            "Models load from files only root can write. To try your own: sudo install -m 644 model.onnx \
-             /usr/local/share/face-auth/",
+            "Only files root owns. To add one: sudo install -m 644 model.onnx /usr/local/share/face-auth/",
         );
         widgets::group(ui, |ui| {
             self.path(
                 ui,
                 keys::MODEL_PATH,
                 "Recognition model",
-                "Turns a face into the values that are compared.",
+                "Turns a face into values to compare.",
                 DEFAULT_MODEL,
                 false,
                 Some(models::Kind::Encoder),
@@ -692,12 +691,12 @@ impl SettingsWindow {
             let old = was.as_ref().map(FaceAuthConfig::model_tag).unwrap_or_else(|| tag.clone());
             if tag == old {
                 Row::new("Templates")
-                    .help(&format!("Made with {tag}. Faces enrolled with other models are refused."))
+                    .help(&format!("Made with {tag}. Other models' templates are refused."))
                     .show(ui, |_, _| {});
             } else {
                 Row::new("Templates")
                     .help(&format!(
-                        "{old} becomes {tag}: after Apply, everyone enrols again (the tray's Enrol again from scratch)."
+                        "{old} becomes {tag}: everyone enrols again after Apply."
                     ))
                     .tone(Tone::Warn)
                     .show(ui, |_, _| {});
@@ -711,7 +710,7 @@ impl SettingsWindow {
                 ui,
                 keys::BACKEND,
                 "Backend",
-                "OpenVINO needs a build with the npu feature, which deploy.sh makes when it finds OpenVINO.",
+                "OpenVINO needs an npu build; deploy.sh makes one when it finds OpenVINO.",
                 Tone::Neutral,
                 &backend,
                 "tract",
@@ -731,7 +730,7 @@ impl SettingsWindow {
             );
         });
         ui.add_space(8.0);
-        widgets::small(ui, "Check loads a model with tract on the CPU, whichever backend is set.");
+        widgets::small(ui, "Check always uses tract on the CPU.");
     }
 
     fn security(&mut self, ui: &mut egui::Ui) {
@@ -743,7 +742,7 @@ impl SettingsWindow {
                 false,
                 keys::ABORT_IF_SSH,
                 "Skip over SSH",
-                "Straight to the password when sudo runs in an SSH session: nobody is at the camera.",
+                "Straight to the password for sudo over SSH.",
                 c.abort_if_ssh(),
                 true,
             );
@@ -752,7 +751,7 @@ impl SettingsWindow {
                 false,
                 keys::ABORT_IF_LID_CLOSED,
                 "Skip with the lid closed",
-                "When the built-in camera can't see you. Leave off for an external camera.",
+                "Leave off with an external camera.",
                 c.abort_if_lid_closed(),
                 false,
             );
@@ -761,7 +760,7 @@ impl SettingsWindow {
                 false,
                 keys::SEAT_CHECK,
                 "Only the person at the screen",
-                "Only the account using the screen now. Also turns away root as the target.",
+                "Only the account using the screen. Also refuses root as the target.",
                 c.seat_check(),
                 false,
             );
@@ -770,13 +769,13 @@ impl SettingsWindow {
                 false,
                 keys::REQUIRE_CONFIRMATION,
                 "Confirm sudo with Enter",
-                "After a match for sudo, su or polkit in a terminal, press Enter to let it through.",
+                "After a match in a terminal, press Enter to let sudo through.",
                 c.require_confirmation_elevation.unwrap_or(false),
                 false,
             );
             self.number(ui, false, keys::START_DELAY_MS, Num {
                 title: "Wait before scanning",
-                help: "So whoever is at the camera when the screen locks isn't let straight back in. 0 is off."
+                help: "So locking the screen doesn't let you straight back in. 0 is off."
                     .into(),
                 tone: Tone::Neutral,
                 value: secs(c.start_delay_ms()),
@@ -804,7 +803,7 @@ impl SettingsWindow {
         widgets::group(ui, |ui| {
             self.number(ui, false, keys::LOCKOUT_THRESHOLD, Num {
                 title: "Failures allowed",
-                help: "Scans that see a face and don't match it, before the first pause.".into(),
+                help: "Non-matching scans before the first pause.".into(),
                 tone: Tone::Neutral,
                 value: lockout.threshold.into(),
                 default: 5.0,
@@ -814,7 +813,7 @@ impl SettingsWindow {
             });
             self.number(ui, false, keys::LOCKOUT_BASE_DELAY_MS, Num {
                 title: "First pause",
-                help: "Doubles with each further failure.".into(),
+                help: "Doubles after each failure.".into(),
                 tone: Tone::Neutral,
                 value: secs(lockout.base_delay_ms),
                 default: 2.0,
@@ -841,7 +840,7 @@ impl SettingsWindow {
                 false,
                 keys::SEAL_EMBEDDINGS,
                 "Seal to the TPM",
-                "Protects a stolen disk, not a running system. Applies from the next enrol or retrain.",
+                "Protects a stolen disk, not a running system. From the next enrol.",
                 c.seal_embeddings(),
                 false,
             );
@@ -849,7 +848,7 @@ impl SettingsWindow {
                 ui,
                 keys::EMBEDDINGS_DIR,
                 "Template folder",
-                "Must be root's: whatever can write here chooses whose face unlocks.",
+                "Must be root's: whoever can write here picks whose face unlocks.",
                 limits::DEFAULT_EMBEDDINGS_DIR,
                 true,
                 None,
@@ -863,7 +862,7 @@ impl SettingsWindow {
                 false,
                 keys::UPDATE_CHECK,
                 "Check for updates",
-                "doctor and the tray ask GitHub's releases API, once a day. Never part of unlocking.",
+                "Once a day, from doctor and the tray. Never part of unlocking.",
                 c.update_check(),
                 true,
             );
@@ -877,13 +876,13 @@ impl SettingsWindow {
         if let Err(e) = &self.user.config {
             if self.user.read.is_some() {
                 ui.add_space(10.0);
-                widgets::banner(ui, Tone::Error, &format!("Your file doesn't parse, so face unlock ignores it: {e}"), |_| {});
+                widgets::banner(ui, Tone::Error, &format!("Your file doesn't parse, so it's ignored: {e}"), |_| {});
             }
         }
         widgets::group_label(ui, "Stricter for you");
         widgets::group_help(
             ui,
-            "Saved to ~/.config/face-auth.toml as you change it. Values looser than this computer's are ignored.",
+            "Saved to ~/.config/face-auth.toml as you go. Looser values than this computer's are ignored.",
         );
         widgets::group(ui, |ui| {
             let floors = [
@@ -952,7 +951,7 @@ impl SettingsWindow {
             self.camera(ui, true);
             self.number(ui, true, keys::TRAY_IDLE_MINUTES, Num {
                 title: "Hide the tray icon after",
-                help: "Minutes with nothing happening, then it tucks behind the panel's arrow. 0 keeps it in view."
+                help: "Minutes idle before it hides. 0 keeps it in view."
                     .into(),
                 tone: Tone::Neutral,
                 value: mine.tray_idle_minutes() as f64,
@@ -976,9 +975,9 @@ impl SettingsWindow {
                 };
                 self.system.reload();
                 self.notice = Some(if tag_changed {
-                    (Tone::Warn, "Saved. The models changed, so enrol again from the tray before face unlock works.".into())
+                    (Tone::Warn, "Saved. The models changed: enrol again before face unlock works.".into())
                 } else {
-                    (Tone::Info, "Saved. The next unlock uses the new settings.".into())
+                    (Tone::Info, "Saved.".into())
                 });
             }
             Some(Err(e)) => self.notice = Some((Tone::Error, e)),
@@ -1015,7 +1014,7 @@ impl SettingsWindow {
         let (text, can) = if running {
             ("Waiting for the password prompt…".to_string(), false)
         } else if !self.helper {
-            ("Can't apply: vinoauthface-helper isn't installed (deploy.sh without --no-tray installs it).".into(), false)
+            ("Can't apply: vinoauthface-helper isn't installed.".into(), false)
         } else if let Err(e) = &valid {
             (format!("Can't apply: {e:#}"), false)
         } else {
@@ -1181,7 +1180,7 @@ impl SettingsWindow {
         if self.user_dirty && ctx.dragged_id().is_none() && !ctx.egui_wants_keyboard_input() {
             self.user_dirty = false;
             if let Err(e) = self.user.save() {
-                self.notice = Some((Tone::Error, format!("Your settings couldn't be saved: {e}")));
+                self.notice = Some((Tone::Error, format!("Couldn't save your settings: {e}")));
             }
         }
     }
