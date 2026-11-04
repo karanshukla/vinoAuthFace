@@ -77,13 +77,13 @@ impl Page {
 
     fn icon(self) -> Icon {
         match self {
-            Page::Face => Icon::Refresh,
-            Page::Matching => Icon::Search,
-            Page::Liveness => Icon::Play,
+            Page::Face => Icon::Face,
+            Page::Matching => Icon::Sliders,
+            Page::Liveness => Icon::Motion,
             Page::Camera => Icon::Hardware,
             Page::Models => Icon::Model,
             Page::Security => Icon::Lock,
-            Page::You => Icon::Key,
+            Page::You => Icon::User,
         }
     }
 }
