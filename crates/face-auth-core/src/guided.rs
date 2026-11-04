@@ -24,9 +24,8 @@ use crate::{face_input, Camera, FaceAuth};
 use anyhow::{bail, Result};
 use std::time::{Duration, Instant};
 
-/// Eyes closer than this in the frame are too far away to keep. IMPROVE.md's
-/// quality gate: below about 30 px the five points, and so the alignment, get
-/// unreliable.
+/// Eyes closer than this in the frame are too far away to keep: below about
+/// 30 px the five points, and so the alignment, get unreliable.
 pub const MIN_EYES_PX: f32 = 30.0;
 /// Straight on: the nose within this share of the eye distance of the eyes'
 /// midpoint, and between the eyes and the mouth.
@@ -92,7 +91,7 @@ impl Step {
         }
     }
 
-    /// Templates kept from it: ten in all, IMPROVE.md's 5 to 10.
+    /// Templates kept from it: ten in all.
     pub fn wanted(self) -> usize {
         match self {
             Step::Up | Step::Down => 1,
