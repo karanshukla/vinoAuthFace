@@ -553,7 +553,7 @@ OV_FOUND=0
 case "$OPENVINO_MODE" in ovfetch|kept|system|archive) OV_FOUND=1 ;; esac
 if [ "$OPENVINO_MODE" = "ovfetch" ]; then
     stage_ovfetch || { [ -n "$OV_STAGE" ] && rm -rf "$OV_STAGE"; exit 1; }
-elif [ "$OV_FOUND" = 1 ]; then
+elif [ "$OPENVINO_MODE" = system ] || [ "$OPENVINO_MODE" = archive ]; then
     ok OpenVINO "$OPENVINO_MODE install"
 fi
 # Release downloads: the static musl CPU build, or with OpenVINO here the
