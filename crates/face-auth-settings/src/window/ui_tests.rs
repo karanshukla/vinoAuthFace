@@ -265,10 +265,14 @@ fn a_looser_value_of_yours_says_it_is_ignored() {
 fn a_new_model_says_everyone_enrols_again() {
     let (w, _, _) = window(Page::Models, "model", None, refuse);
     let mut h = harness(w, WIDE, Theme::Light);
-    h.get_by_label("Made with w600k_mbf.onnx+det_500m.onnx. Other models' templates are refused.");
+    // The detector part of the tag depends on which models are installed here.
+    let before = FaceAuthConfig::from_toml(EXAMPLE).unwrap().model_tag();
+    h.get_by_label(&format!("Made with {before}. Other models' templates are refused."));
     h.state_mut().set(false, keys::MODEL_PATH, Some(keys::string("/usr/local/share/face-auth/mine.onnx")));
     settle(&mut h);
-    h.get_by_label("w600k_mbf.onnx+det_500m.onnx becomes mine.onnx+det_500m.onnx: everyone enrols again after Apply.");
+    let after = h.state().system.values().model_tag();
+    assert!(after.starts_with("mine.onnx"), "{after}");
+    h.get_by_label(&format!("{before} becomes {after}: everyone enrols again after Apply."));
 }
 
 #[test]
