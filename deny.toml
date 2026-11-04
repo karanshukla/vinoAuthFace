@@ -34,6 +34,8 @@ exceptions = [
     # Inter and JetBrains Mono), under their font licenses. Never linked into
     # face-auth.
     { crate = "epaint_default_fonts", allow = ["OFL-1.1", "Ubuntu-font-1.0"] },
+    # vino-ui's embedded fonts. The tray builds it with default-features =
+    # false, which leaves them (and egui) out.
     { crate = "vino-user-interface", allow = ["OFL-1.1"] },
 ]
 

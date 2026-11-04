@@ -1625,6 +1625,7 @@ dependencies = [
  "face-auth-core",
  "ksni",
  "libc",
+ "vino-user-interface",
  "zbus",
 ]
 
@@ -4723,9 +4724,9 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vino-user-interface"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcdca6c0852ad0a6f1d6ee06c7045c7b8b6ee9e50b448c0202a1a2dc38388770"
+checksum = "0826415a447a4cd504ef344a49cbce8102ffd71adb629e957322ea4b7a33d9cb"
 dependencies = [
  "egui",
 ]

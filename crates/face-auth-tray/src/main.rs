@@ -14,6 +14,8 @@ use face_auth_tray::idle::{self, Idle};
 use face_auth_tray::{progress, scanning, single_instance};
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{CheckmarkItem, RadioGroup, RadioItem, StandardItem, SubMenu};
+use vino_ui::family::{self, App};
+use vino_ui::tray::{MenuIcon, APPS_MENU};
 use ksni::{Category, MenuItem, ToolTip};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
@@ -410,11 +412,11 @@ impl ksni::Tray for Tray {
             if s.openvino() {
                 menu.push(info(format!("Update available: {tag}. Run sudo vinoauthface-upgrade")));
             } else {
-                menu.push(item(&format!("Update to {tag}…"), "software-update-available", idle, |t| {
+                menu.push(item(&format!("Update to {tag}…"), MenuIcon::Update.name(), idle, |t| {
                     t.run(Action::Upgrade)
                 }));
             }
-            menu.push(item(&format!("What's new in {tag}"), "help-about", true, move |_| {
+            menu.push(item(&format!("What's new in {tag}"), MenuIcon::About.name(), true, move |_| {
                 let _ = Command::new("xdg-open").arg(&url).stdin(Stdio::null()).spawn();
             }));
             menu.push(info(format!("Installed: {}", update::CURRENT)));
@@ -430,7 +432,7 @@ impl ksni::Tray for Tray {
         menu.push(
             SubMenu {
                 label: if plain { "Status".into() } else { format!("Status: {}", self.summary()) },
-                icon_name: if s.ready() { "dialog-information" } else { "dialog-warning" }.into(),
+                icon_name: if s.ready() { MenuIcon::Info } else { MenuIcon::Warning }.name().into(),
                 submenu: s.lines().into_iter().map(info).collect(),
                 ..Default::default()
             }
@@ -439,22 +441,22 @@ impl ksni::Tray for Tray {
         menu.push(MenuItem::Separator);
 
         if s.enrolled == Some(false) {
-            menu.push(item("Enrol face…", "list-add-user", idle, |t| t.run(Action::Enrol)));
+            menu.push(item("Enrol face…", MenuIcon::Add.name(), idle, |t| t.run(Action::Enrol)));
         } else {
             // Unknown is treated as enrolled: a one-click enrol could replace
             // templates the tray just failed to see.
-            menu.push(item("Retrain face (add more frames)…", "view-refresh", idle, |t| t.run(Action::Retrain)));
+            menu.push(item("Retrain face (add more frames)…", MenuIcon::Refresh.name(), idle, |t| t.run(Action::Retrain)));
             if enrolled {
-                menu.push(item("Test scan", "camera-web", idle, |t| t.run(Action::Test)));
+                menu.push(item("Test scan", MenuIcon::Camera.name(), idle, |t| t.run(Action::Test)));
             }
             // Re-enrolling throws the existing templates away, so it takes a
             // second click.
             if self.confirm == Some(Confirm::Enrol) {
-                menu.push(item("Replace your enrolled face? Click to confirm", "dialog-warning", idle, |t| {
+                menu.push(item("Replace your enrolled face? Click to confirm", MenuIcon::Warning.name(), idle, |t| {
                     t.run(Action::Enrol)
                 }));
             } else {
-                menu.push(item("Enrol again from scratch…", "list-add-user", idle, |t| {
+                menu.push(item("Enrol again from scratch…", MenuIcon::Add.name(), idle, |t| {
                     t.confirm = Some(Confirm::Enrol)
                 }));
             }
@@ -464,7 +466,7 @@ impl ksni::Tray for Tray {
             menu.push(
                 SubMenu {
                     label: format!("Login screen: {}", mode.label()),
-                    icon_name: "system-users".into(),
+                    icon_name: MenuIcon::Users.name().into(),
                     submenu: vec![RadioGroup {
                         selected: LoginMode::ALL.iter().position(|m| *m == mode).unwrap_or(0),
                         select: Box::new(move |t: &mut Tray, i| {
@@ -486,7 +488,7 @@ impl ksni::Tray for Tray {
         menu.push(
             SubMenu {
                 label: "Settings".into(),
-                icon_name: "preferences-system".into(),
+                icon_name: MenuIcon::Settings.name().into(),
                 submenu: settings_menu(s, idle, self.idle_minutes),
                 ..Default::default()
             }
@@ -495,27 +497,43 @@ impl ksni::Tray for Tray {
 
         menu.push(MenuItem::Separator);
         if self.confirm == Some(Confirm::Uninstall) {
-            menu.push(item("Uninstall vinoAuthFace? Click to confirm", "dialog-warning", idle, |t| {
+            menu.push(item("Uninstall vinoAuthFace? Click to confirm", MenuIcon::Warning.name(), idle, |t| {
                 t.run(Action::Uninstall)
             }));
         } else {
-            menu.push(item("Uninstall vinoAuthFace…", "edit-delete", idle, |t| {
+            menu.push(item("Uninstall vinoAuthFace…", MenuIcon::Remove.name(), idle, |t| {
                 t.confirm = Some(Confirm::Uninstall)
             }));
         }
         if self.confirm.is_some() {
-            menu.push(item("Cancel", "dialog-cancel", true, |t| t.confirm = None));
+            menu.push(item("Cancel", MenuIcon::Cancel.name(), true, |t| t.confirm = None));
         }
         menu.push(MenuItem::Separator);
-        menu.push(item("Open documentation", "help-contents", true, |_| {
+        menu.push(item("Open documentation", MenuIcon::Help.name(), true, |_| {
             let _ = Command::new("xdg-open").arg(DOCS).stdin(Stdio::null()).spawn();
         }));
-        menu.push(item("Quit", "application-exit", true, |t| {
+        menu.push(apps_menu());
+        menu.push(item("Quit", MenuIcon::Quit.name(), true, |t| {
             let _ = t.tx.send(Msg::Quit);
         }));
         escape_underscores(&mut menu);
         menu
     }
+}
+
+/// vinopilot.ca and the other vinoPilot apps, the same submenu every
+/// vinoPilot tray ends with.
+fn apps_menu() -> MenuItem<Tray> {
+    let link = |label: &str, url: &'static str, icon: &str| -> MenuItem<Tray> {
+        item(label, icon, true, move |_| {
+            if let Err(e) = family::open(url) {
+                eprintln!("vinoauthface-tray: couldn't open {url}: {e}");
+            }
+        })
+    };
+    let mut submenu = vec![link(family::SITE_LABEL, family::SITE, MenuIcon::Website.name()), MenuItem::Separator];
+    submenu.extend(App::AuthFace.others().map(|app| link(app.name(), app.page(), "")));
+    SubMenu { label: APPS_MENU.into(), icon_name: MenuIcon::Apps.name().into(), submenu, ..Default::default() }.into()
 }
 
 /// ksni hands labels to dbusmenu as they are, where "_" marks an access key
@@ -1121,6 +1139,27 @@ mod tests {
         s.settings = SETTINGS.iter().map(|x| (x.key.to_string(), "custom".to_string())).collect();
         all.push(("hand-set values", tray(s)));
         all
+    }
+
+    #[test]
+    fn the_menu_ends_with_the_other_apps_then_quit() {
+        let menu = tray(status(Some("/dev/video2"), Some(true))).menu();
+        let [.., MenuItem::SubMenu(apps), MenuItem::Standard(quit)] = menu.as_slice() else {
+            panic!("the menu should end with a submenu, then Quit");
+        };
+        assert_eq!(apps.label, APPS_MENU);
+        assert_eq!(quit.label, "Quit");
+        let labels: Vec<&str> = apps
+            .submenu
+            .iter()
+            .filter_map(|i| match i {
+                MenuItem::Standard(i) => Some(i.label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(labels[0], family::SITE_LABEL);
+        assert_eq!(labels.len(), App::ALL.len());
+        assert!(!labels.contains(&"vinoAuthFace"));
     }
 
     /// What a screen reader would read for one item: its label with
