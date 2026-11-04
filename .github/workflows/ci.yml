@@ -523,7 +523,9 @@ jobs:
           # No NPU, so no `ovfetch npu install` prefix to mirror for PAM.
           test ! -e /usr/local/lib/face-auth/npu
           readelf -d /usr/local/bin/vinoauthface-auth | grep -q 'RPATH.*/usr/local/lib/face-auth/openvino'
-          ldd /usr/local/bin/vinoauthface-auth | grep -q 'libopenvino_c.*/usr/local/lib/face-auth/openvino/'
+          # Loaded at run time, not linked: --build says which backend it has.
+          test "$(/usr/local/bin/vinoauthface-auth --build)" = openvino
+          if readelf -d /usr/local/bin/vinoauthface-auth | grep NEEDED | grep -i openvino; then exit 1; fi
           # Its SELinux domain can't read OpenVINO, so it must not link it.
           ! ldd /usr/local/libexec/vinoauthface-unseal | grep -q openvino
 
@@ -544,17 +546,52 @@ jobs:
           echo 'npu_device = "CPU"' | sudo tee -a /etc/face-auth.toml
           sudo vinoauthface-auth --warm-cache
 
-      # Not root, so the set-group-ID bit puts glibc in secure mode. With no
-      # PAM_USER it exits 1 after loading; a loader failure would exit 127.
+      # Not root, so the set-group-ID bit puts glibc in secure mode, where
+      # OpenVINO's own $ORIGIN rpaths are ignored. --openvino-devices loads
+      # OpenVINO, its TBB and its CPU plugin the way a scan does.
       - name: Libraries load in secure mode
         run: |
+          env -i /usr/local/bin/vinoauthface-auth --openvino-devices | tee "$RUNNER_TEMP/devices"
+          grep -q '^/usr/local/lib/face-auth/openvino/libopenvino_c.so: .*CPU' "$RUNNER_TEMP/devices"
+
+      # Without OpenVINO the npu build runs both models on tract rather than
+      # failing every scan; doctor warns. Moved aside, then put back.
+      - name: Missing OpenVINO falls back to tract
+        run: |
+          sudo mv /usr/local/lib/face-auth/openvino /usr/local/lib/face-auth/openvino.away
           set +e
-          env -i /usr/local/bin/vinoauthface-auth 2> "$RUNNER_TEMP/err"
-          rc=$?
+          /usr/local/bin/vinoauthface-auth --openvino-devices 2> "$RUNNER_TEMP/err"; rc=$?
           set -e
+          sudo mv /usr/local/lib/face-auth/openvino.away /usr/local/lib/face-auth/openvino
           cat "$RUNNER_TEMP/err"
           test "$rc" = 1
-          ! grep -q 'error while loading shared libraries' "$RUNNER_TEMP/err"
+          grep -q 'OpenVINO is not installed' "$RUNNER_TEMP/err"
+
+      # The release path: the npu binaries as release.yml ships them, through
+      # install.sh, which must install them with no build. Then as root alone,
+      # the way the tray upgrades: no ovfetch to ask, so the installed runtime
+      # is kept, hashes checked.
+      - name: install.sh installs the NPU release build
+        run: |
+          rel="$RUNNER_TEMP/release"
+          mkdir -p "$rel"
+          cp target/release/vinoauthface-auth "$rel/vinoauthface-auth-openvino-x86_64-unknown-linux-gnu"
+          cp target/release/vinoauthface "$rel/vinoauthface-openvino-x86_64-unknown-linux-gnu"
+          git archive --format=tar.gz --prefix=vinoauthface-v999/ \
+            --add-virtual-file="vinoauthface-v999/VERSION:v999" -o "$rel/vinoauthface-source.tar.gz" HEAD
+          (cd "$rel" && sha256sum -- * > SHA256SUMS)
+          sudo env FACE_AUTH_DEPLOY_RELEASE_BASE="file://$rel" bash -s -- v999 --no-tray < install.sh \
+            | tee "$RUNNER_TEMP/install.log"
+          grep -q 'NPU backend (OpenVINO), checksums verified' "$RUNNER_TEMP/install.log"
+          grep -q 'via ovfetch' "$RUNNER_TEMP/install.log"
+          if grep -q 'Compiling\|building' "$RUNNER_TEMP/install.log"; then exit 1; fi
+          cmp /usr/local/bin/vinoauthface-auth "$rel/vinoauthface-auth-openvino-x86_64-unknown-linux-gnu"
+          grep -q '^backend = "openvino"' /etc/face-auth.toml
+          sudo env -u SUDO_USER PATH="/usr/sbin:/usr/bin:/sbin:/bin" FACE_AUTH_DEPLOY_RELEASE_BASE="file://$rel" \
+            bash -s -- v999 --no-tray < install.sh | tee "$RUNNER_TEMP/kept.log"
+          grep -q 'keeping the installed runtime (hashes verified' "$RUNNER_TEMP/kept.log"
+          grep -q '^backend = "openvino"' /etc/face-auth.toml
+          ovfetch verify --prefix /usr/local/lib/face-auth/openvino
 
       - name: Uninstall removes the prefix
         run: |

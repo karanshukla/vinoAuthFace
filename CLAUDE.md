@@ -20,8 +20,11 @@ rustup target add x86_64-unknown-linux-musl
 # Build the two deployable binaries (static musl, CPU/tract backend)
 cargo build --release --locked --target x86_64-unknown-linux-musl -p face-auth -p face-enroll
 
-# OpenVINO/NPU backend. Host (glibc) target, never musl: it links OpenVINO's
-# .so files. Needs the OpenVINO runtime; deploy.sh provisions it with ovfetch.
+# OpenVINO/NPU backend. Host (glibc) target, never musl: it dlopens OpenVINO's
+# .so files at startup (openvino's runtime-linking), so it builds without
+# OpenVINO; running it needs the runtime, which deploy.sh provisions with
+# ovfetch. The rpath is how OpenVINO's own libraries are found in secure mode.
+RUSTFLAGS="-C link-arg=-Wl,--disable-new-dtags,-rpath,/usr/local/lib/face-auth/openvino" \
 cargo build --release --locked -p face-auth -p face-enroll \
   --features face-auth-core/npu,face-auth/npu,face-enroll/npu
 
@@ -55,7 +58,8 @@ cargo deny check
   are consecutive (`v2`, `v3`), cut with `scripts/release.sh`; see `docs/releasing.md`.
 - `ci.yml`'s `npu` job builds, lints and tests the `npu` feature against an OpenVINO that
   ovfetch provisions, then runs the ovfetch deploy path (compiling on OpenVINO's CPU plugin,
-  since runners have no NPU). It isn't a required check. `release.yml` still ships musl only.
+  since runners have no NPU). It isn't a required check. `release.yml` also ships the npu build
+  (glibc, ubuntu-22.04, no OpenVINO at build time) as `*-openvino-x86_64-unknown-linux-gnu`.
 - `guard.yml` fails any non-owner PR touching anything outside its prose allow-list (see SECURITY.md). It runs
   from main's copy via `pull_request_target`, so changes to it only take effect once merged.
 - The `main` ruleset requires a PR plus `test`, `clippy`, `deny`, `deploy-script` and `guard`.
@@ -132,7 +136,10 @@ Seven crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM
   file line by line; changes to `/etc` go through the helper's `write-config`. A new config key
   needs a `Key` there and a row in `window.rs`.
 
-`with_ov_core` (inference.rs) preloads `/usr/local/lib/face-auth/npu` before the first Core:
+`with_ov_core` (inference.rs) first loads `libopenvino_c` itself (`load_openvino`: fixed
+directories only, `OPENVINO_SEARCH`, never the environment; none found is `OpenVinoMissing`, the
+one error the encoder and detector fall back to tract for), then preloads
+`/usr/local/lib/face-auth/npu` before the first Core:
 deploy.sh's root copy of the user's `ovfetch npu install` prefix (ovfetch 0.6.0), the compiler
 Fedora's 1.32.0 driver rpm lacks. Absolute entries in its `ovfetch-preload.txt` are re-rooted to
 that dir by file name (`npu_preload_entries`), so the list can't load anything outside it. The
@@ -269,8 +276,9 @@ never builds. Keep everything in its `main` function, called on the last line, s
 download can't run. `setup.sh` is the system half of `deploy.sh` (PAM, login screen, Bitwarden,
 SELinux), installed as `vinoauthface-setup`; it reads `login-mode.sh` and `selinux/` from beside
 itself, so anything it needs must also be copied into `/usr/local/share/face-auth/`.
-`vinoauthface-upgrade` hands CPU installs to the installed `install.sh` and builds only OpenVINO
-ones.
+`vinoauthface-upgrade` hands every install, CPU or NPU, to the installed `install.sh`. Scripts tell
+the two builds apart with `vinoauthface-auth --build` (`openvino` or `tract`), not `ldd`: the npu
+build loads OpenVINO at run time.
 
 `pin-camera.sh` (installed as `vinoauthface-pin-camera`) is a separate, opt-in hardening step (frame-injection defense via USB bus-path
 pinning). Read `docs/security.md`'s "Frame injection (a fake camera)" section before touching

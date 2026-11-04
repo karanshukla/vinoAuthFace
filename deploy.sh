@@ -359,18 +359,22 @@ build_with_cargo() {
 section "Build"
 
 # ---- OpenVINO (NPU backend) detection ----
-# The `npu` feature links OpenVINO's glibc .so files, so an NPU build uses the
-# host (glibc) target instead of static musl. Three ways to get OpenVINO, in
-# order of preference:
+# The `npu` feature loads OpenVINO's glibc .so files when the backend starts
+# (face_auth_core::inference::load_openvino), so an NPU build is glibc rather
+# than static musl, needs no OpenVINO to build, and runs against whichever
+# release is installed. Ways to get OpenVINO, in order of preference:
 #
 #   ovfetch https://github.com/karanshukla/ovfetch picks the OpenVINO build the
 #           NPU and its installed driver need, and hash-verifies it. Installed
-#           into $OPENVINO_INSTALL_DIR; face-auth finds it through an rpath.
+#           into $OPENVINO_INSTALL_DIR, where face-auth loads it from.
+#   kept    that prefix from an earlier deploy, when ovfetch isn't here to ask
+#           (or this is root alone, as the tray's upgrade is): reused as is if
+#           it still matches its SHA256SUMS.
 #   system  RPM/DEB package: libopenvino_c lands in a standard lib dir and the
-#           package ran ldconfig, so build and PAM-time loading both just work.
+#           package ran ldconfig.
 #   archive extracted tarball (~/.local/opt or /opt/intel) with setupvars.sh.
-#           That covers the build, but PAM runs face-auth with no shell
-#           profile, so the runtime libraries are copied system-wide below.
+#           PAM runs face-auth with no shell profile, so the runtime libraries
+#           are copied system-wide below.
 ACTUAL_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
 OPENVINO_MODE=""
 NPU_PREFIX_SRC=""
@@ -385,6 +389,37 @@ NPU_PREFIX_SRC=""
 OVFETCH_MIN="0.6.0"
 OVFETCH_ARGS=(--openvino-only)
 OV_LOCK="$OPENVINO_INSTALL_DIR/ovfetch.lock.json"
+
+# sha256sum -c checks what SHA256SUMS lists, not what it doesn't, and the
+# prefix is on vinoauthface-auth's rpath (OpenVINO also loads plugins by
+# scanning it). So, as ovfetch's own verify does, only allow its sums and
+# lock files, the files listed, and SONAME symlinks to a listed file in the
+# same directory. Prints whatever else is there.
+ov_untracked() {
+    local dir path name target real listed
+    real="$(readlink -f "$1")"
+    listed="$(sed -E 's/^[0-9a-f]{64} [ *]//' "$real/SHA256SUMS" 2>/dev/null || true)"
+    while IFS= read -r -d '' path; do
+        name="${path##*/}"
+        if [ -L "$path" ]; then
+            target="$(readlink -f "$path" || true)"
+            if [ "${target%/*}" = "$real" ] && [ -f "$target" ] \
+               && grep -qxF -- "${target##*/}" <<<"$listed"; then
+                continue
+            fi
+        elif [ -f "$path" ]; then
+            case "$name" in SHA256SUMS|ovfetch.lock.json) continue ;; esac
+            grep -qxF -- "$name" <<<"$listed" && continue
+        fi
+        printf '%s\n' "$name"
+    done < <(find "$real" -mindepth 1 -maxdepth 1 -print0)
+}
+# The installed prefix matches its SHA256SUMS and holds nothing else.
+ov_installed_intact() {
+    [ -f "$OV_LOCK" ] \
+        && (cd "$OPENVINO_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS) 2>/dev/null \
+        && [ -z "$(ov_untracked "$OPENVINO_INSTALL_DIR")" ]
+}
 
 # secure_path drops ~/.cargo/bin under sudo, the same as for cargo.
 find_ovfetch() {
@@ -405,10 +440,7 @@ find_ovfetch() {
 
 # No config yet on a first install: sed fails, and pipefail must not end the script.
 CONF_NPU_DEVICE="$(sed -n 's/^npu_device *= *"\(.*\)"/\1/p' "$CONFIG_DIR/face-auth.toml" 2>/dev/null | head -1 || true)"
-if [ "$PREBUILT" = 1 ]; then
-    # The release binaries are the CPU (tract) build.
-    OPENVINO_MODE="none"
-elif OVFETCH_BIN="$(find_ovfetch)"; then
+if OVFETCH_BIN="$(find_ovfetch)"; then
     # Run as the user: resolving and downloading need no privileges. The plan
     # is reused below to install exactly what was checked here.
     step "asking ovfetch which OpenVINO this machine needs (takes a few seconds)"
@@ -454,12 +486,19 @@ elif OVFETCH_BIN="$(find_ovfetch)"; then
     else
         warn OpenVINO "ovfetch found no build for this machine (see above)."
     fi
+elif ov_installed_intact; then
+    # ovfetch is missing or too old, or this is root with no user behind it
+    # (the tray's upgrade), but the runtime it installed is intact. The npu
+    # build loads whichever OpenVINO is there, so keep it as it is, and the
+    # NPU prefix beside it.
+    OPENVINO_MODE="kept"
+    ok OpenVINO "keeping the installed runtime (hashes verified; no ovfetch $OVFETCH_MIN+ to look for a newer one)"
 elif [ -f "$OV_LOCK" ]; then
-    # The installed runtime came from ovfetch. Falling through to the CPU
-    # (tract) backend because ovfetch is missing or too old would swap a
-    # working NPU install for a slower one, with only a warning to show for it.
-    fail "No ovfetch $OVFETCH_MIN or newer, but the installed OpenVINO came from ovfetch." \
-        "Upgrade it, then re-run: cargo install ovfetch --locked"
+    # The installed runtime came from ovfetch, and no longer matches its
+    # sums. Falling through to the CPU (tract) backend would swap a working
+    # NPU install for a slower one, with only a warning to show for it.
+    fail "The installed OpenVINO doesn't match its SHA256SUMS, and there is no ovfetch $OVFETCH_MIN or newer to replace it." \
+        "Install or upgrade it, then re-run: cargo install ovfetch --locked"
     exit 1
 fi
 if [ -z "$OPENVINO_MODE" ]; then
@@ -486,34 +525,10 @@ BIN_SRC="$ARTIFACT_DIR"
 
 # ovfetch's prefix. Downloaded only when the resolved build differs from the
 # one already installed, or those files no longer match their SHA256SUMS.
-# Otherwise ovfetch runs as the user into a staging directory: the build links
-# against that, and the system prefix is only replaced once the new binaries
-# are installed, so a failed build leaves the working install alone.
+# Otherwise ovfetch runs as the user into a staging directory, and the system
+# prefix is only replaced once the new binaries are installed, so a failed
+# build or download leaves the working install alone.
 OV_STAGE=""
-# sha256sum -c checks what SHA256SUMS lists, not what it doesn't, and the
-# prefix is on vinoauthface-auth's rpath (OpenVINO also loads plugins by
-# scanning it). So, as ovfetch's own verify does, only allow its sums and
-# lock files, the files listed, and SONAME symlinks to a listed file in the
-# same directory. Prints whatever else is there.
-ov_untracked() {
-    local dir path name target real listed
-    real="$(readlink -f "$1")"
-    listed="$(sed -E 's/^[0-9a-f]{64} [ *]//' "$real/SHA256SUMS" 2>/dev/null || true)"
-    while IFS= read -r -d '' path; do
-        name="${path##*/}"
-        if [ -L "$path" ]; then
-            target="$(readlink -f "$path" || true)"
-            if [ "${target%/*}" = "$real" ] && [ -f "$target" ] \
-               && grep -qxF -- "${target##*/}" <<<"$listed"; then
-                continue
-            fi
-        elif [ -f "$path" ]; then
-            case "$name" in SHA256SUMS|ovfetch.lock.json) continue ;; esac
-            grep -qxF -- "$name" <<<"$listed" && continue
-        fi
-        printf '%s\n' "$name"
-    done < <(find "$real" -mindepth 1 -maxdepth 1 -print0)
-}
 # The full version (2025.4.1); the plan's floor only has two parts.
 ov_version() { grep -oE '"openvino": "[0-9]+\.[0-9]+\.[0-9]+"' <<<"$1" | head -1 | cut -d'"' -f4 || true; }
 stage_ovfetch() {
@@ -525,72 +540,53 @@ stage_ovfetch() {
        && (cd "$OPENVINO_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS) 2>/dev/null \
        && [ -z "$(ov_untracked "$OPENVINO_INSTALL_DIR")" ]; then
         ok OpenVINO "$(ov_version "$OVFETCH_PLAN") via ovfetch (installed, hashes verified)"
-        OV_LIB_DIR="$OPENVINO_INSTALL_DIR"
         return 0
     fi
     OV_STAGE="$(as_user mktemp -d)"
     as_user "$OVFETCH_BIN" install --prefix "$OV_STAGE/ov" "${OVFETCH_ARGS[@]}" || return 1
-    OV_LIB_DIR="$OV_STAGE/ov"
     ok OpenVINO "$(ov_version "$OVFETCH_PLAN") via ovfetch (downloaded, hashes verified)"
 }
 
-if [ "$PREBUILT" = 0 ] && [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(find_cargo)"; then
-    [ "$OPENVINO_MODE" = "ovfetch" ] || ok OpenVINO "$OPENVINO_MODE install"
-    NPU_STEP="building with the NPU backend (a first build takes a few minutes)"
+# The npu build loads OpenVINO when it starts, so it builds without one and
+# CI ships it: with OpenVINO here, a release install gets it too.
+OV_FOUND=0
+case "$OPENVINO_MODE" in ovfetch|kept|system|archive) OV_FOUND=1 ;; esac
+if [ "$OPENVINO_MODE" = "ovfetch" ]; then
+    stage_ovfetch || { [ -n "$OV_STAGE" ] && rm -rf "$OV_STAGE"; exit 1; }
+elif [ "$OV_FOUND" = 1 ]; then
+    ok OpenVINO "$OPENVINO_MODE install"
+fi
+# Release downloads: the static musl CPU build, or with OpenVINO here the
+# glibc npu build. The unseal helper and the tray are musl either way.
+ASSET_SUFFIX="$MUSL_TARGET"
+[ "$OV_FOUND" = 1 ] && ASSET_SUFFIX="openvino-$GNU_TARGET"
+
+if [ "$OV_FOUND" = 1 ] && [ "$PREBUILT" = 0 ] && CARGO_BIN="$(find_cargo)"; then
     NPU_UNITS=0
     [ "$INTERACTIVE" = 1 ] && NPU_UNITS="$(count_units "$CARGO_BIN" tree --locked --features "$NPU_FEATURES" \
         -p face-auth -p face-enroll)"
-    if [ "$OPENVINO_MODE" = "ovfetch" ]; then
-        stage_ovfetch || { [ -n "$OV_STAGE" ] && rm -rf "$OV_STAGE"; exit 1; }
-        # openvino-sys's build script records where it found OpenVINO and
-        # never reruns on an environment change. A first install builds
-        # against the staging prefix, deleted once installed, so the next
-        # relink would search a directory that is gone. Rebuild it whenever
-        # the recorded directory is not the one this build uses.
-        if grep -hs '^cargo:rustc-link-search=native=' "$TARGET_DIR"/release/build/openvino-sys-*/output \
-                | grep -qvxF "cargo:rustc-link-search=native=$OV_LIB_DIR"; then
-            as_user "$CARGO_BIN" clean --quiet --release -p openvino-sys
-        fi
-        # LD_LIBRARY_PATH is where openvino-sys's build script looks for a flat
-        # prefix. The rpath is how face-auth finds it at unlock time: pam_exec
-        # gives it no environment. DT_RPATH (--disable-new-dtags) rather than
-        # RUNPATH, because only DT_RPATH also covers the libraries OpenVINO
-        # itself pulls in, and set-group-ID face-auth runs in glibc's secure
-        # mode, where their own $ORIGIN rpaths are ignored.
-        step "$NPU_STEP"
-        # The staging directory is new every run, and openvino-sys bakes the
-        # library path it found into its cached build output. Reused from an
-        # earlier build, that is a -L to a directory that no longer exists.
-        as_user "$CARGO_BIN" clean --quiet --release -p openvino-sys >/dev/null 2>&1 || true
-        # Rust 1.98's default linker, rust-lld, segfaults linking openvino-sys's
-        # build script (RUSTFLAGS reaches build scripts on a host-target build).
-        # GNU ld is the fallback where it exists.
-        NPU_RUSTFLAGS="-C link-arg=-Wl,--disable-new-dtags,-rpath,$OPENVINO_INSTALL_DIR"
-        command -v ld.bfd >/dev/null 2>&1 && NPU_RUSTFLAGS="$NPU_RUSTFLAGS -C link-arg=-fuse-ld=bfd"
-        cargo_build "Compiling" "$NPU_UNITS" as_user env LD_LIBRARY_PATH="$OV_LIB_DIR" \
-            RUSTFLAGS="$NPU_RUSTFLAGS" \
-            "$CARGO_BIN" build --release --locked --features "$NPU_FEATURES" \
-            -p face-auth -p face-enroll || { [ -n "$OV_STAGE" ] && rm -rf "$OV_STAGE"; exit 1; }
-    elif [ "$OPENVINO_MODE" = "system" ]; then
-        step "$NPU_STEP"
-        cargo_build "Compiling" "$NPU_UNITS" as_user "$CARGO_BIN" build --release --locked \
-            --features "$NPU_FEATURES" -p face-auth -p face-enroll || exit 1
-    else
-        step "$NPU_STEP"
-        cargo_build "Compiling" "$NPU_UNITS" as_user bash -c "
-            set -eo pipefail
-            source '$OPENVINO_SRC/setupvars.sh' >/dev/null
-            set -u
-            '$CARGO_BIN' build --release --locked --features '$NPU_FEATURES' -p face-auth -p face-enroll \"\$@\"
-        " _ || exit 1
-    fi
+    # The rpath is how OpenVINO's own libraries (TBB) are found at unlock
+    # time: pam_exec gives face-auth no environment. DT_RPATH
+    # (--disable-new-dtags) rather than RUNPATH, because only DT_RPATH also
+    # covers the libraries OpenVINO itself pulls in, and set-group-ID
+    # face-auth runs in glibc's secure mode, where their own $ORIGIN rpaths
+    # are ignored. Harmless for a system or archive install, which ldconfig
+    # covers. Rust 1.98's default linker, rust-lld, segfaults linking some
+    # build scripts (RUSTFLAGS reaches them on a host-target build); GNU ld
+    # is the fallback where it exists.
+    NPU_RUSTFLAGS="-C link-arg=-Wl,--disable-new-dtags,-rpath,$OPENVINO_INSTALL_DIR"
+    command -v ld.bfd >/dev/null 2>&1 && NPU_RUSTFLAGS="$NPU_RUSTFLAGS -C link-arg=-fuse-ld=bfd"
+    step "building with the NPU backend (a first build takes a few minutes)"
+    cargo_build "Compiling" "$NPU_UNITS" as_user env RUSTFLAGS="$NPU_RUSTFLAGS" \
+        "$CARGO_BIN" build --release --locked --features "$NPU_FEATURES" \
+        -p face-auth -p face-enroll || { [ -n "$OV_STAGE" ] && rm -rf "$OV_STAGE"; exit 1; }
     BIN_SRC="$TARGET_DIR/release"
     NPU_ACTIVE=1
     ok Build "NPU backend (OpenVINO, glibc)"
-elif [ "$PREBUILT" = 0 ] && [ -f "$ARTIFACT_DIR/vinoauthface-auth" ] && [ -f "$ARTIFACT_DIR/vinoauthface" ] \
+elif [ "$OV_FOUND" = 0 ] && [ "$PREBUILT" = 0 ] && [ -f "$ARTIFACT_DIR/vinoauthface-auth" ] && [ -f "$ARTIFACT_DIR/vinoauthface" ] \
    && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ] && ! needs_rebuild "$ARTIFACT_DIR/vinoauthface-auth"; then
     skip Build "using $ARTIFACT_DIR/ (FACE_AUTH_FORCE_BUILD=1 to rebuild)"
-elif [ "$PREBUILT" = 0 ] && CARGO_BIN="$(find_cargo)"; then
+elif [ "$OV_FOUND" = 0 ] && [ "$PREBUILT" = 0 ] && CARGO_BIN="$(find_cargo)"; then
     build_with_cargo "$CARGO_BIN" || exit 1
     ok Build "CPU backend (tract, static musl)"
 else
@@ -627,7 +623,7 @@ else
     printf '    %-10s %s%s%s\n' "" "$DIM" "$DOWNLOAD_BASE" "$RESET"
     DL_DIR="$(mktemp -d)"
     DOWNLOAD_OK=1
-    for asset in vinoauthface-auth-$MUSL_TARGET vinoauthface-$MUSL_TARGET SHA256SUMS; do
+    for asset in vinoauthface-auth-$ASSET_SUFFIX vinoauthface-$ASSET_SUFFIX SHA256SUMS; do
         curl "${CURL_FLAGS[@]}" --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
             -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" || { DOWNLOAD_OK=0; break; }
     done
@@ -635,7 +631,7 @@ else
         # Both binaries must be listed, not just match: --ignore-missing alone
         # would pass a file SHA256SUMS never mentions.
         if ! (cd "$DL_DIR" \
-                && grep -E "[ *](vinoauthface-auth|vinoauthface)-$MUSL_TARGET\$" SHA256SUMS > want \
+                && grep -E "[ *](vinoauthface-auth|vinoauthface)-$ASSET_SUFFIX\$" SHA256SUMS > want \
                 && [ "$(wc -l < want)" -eq 2 ] \
                 && sha256sum -c --strict --quiet want); then
             fail "Checksum verification failed for the downloaded binaries"
@@ -643,10 +639,15 @@ else
             exit 1
         fi
         mkdir -p "$DL_DIR/bin"
-        mv "$DL_DIR/vinoauthface-auth-$MUSL_TARGET" "$DL_DIR/bin/vinoauthface-auth"
-        mv "$DL_DIR/vinoauthface-$MUSL_TARGET" "$DL_DIR/bin/vinoauthface"
+        mv "$DL_DIR/vinoauthface-auth-$ASSET_SUFFIX" "$DL_DIR/bin/vinoauthface-auth"
+        mv "$DL_DIR/vinoauthface-$ASSET_SUFFIX" "$DL_DIR/bin/vinoauthface"
         BIN_SRC="$DL_DIR/bin"
-        ok Download "release binaries, checksums verified"
+        if [ "$OV_FOUND" = 1 ]; then
+            NPU_ACTIVE=1
+            ok Download "release binaries, NPU backend (OpenVINO), checksums verified"
+        else
+            ok Download "release binaries, checksums verified"
+        fi
         # Optional: releases before it have none, and without it sealed
         # templates still unseal everywhere but an SELinux-confined greeter.
         asset="vinoauthface-unseal-$MUSL_TARGET"
@@ -778,10 +779,11 @@ if [ "$WITH_SETTINGS" = 1 ] && [ "$WITH_TRAY" = 1 ] && [ -n "$TRAY_SRC" ]; then
     fi
 fi
 
-# A binary that does not match the backend written to the config fails at
-# unlock time with a confusing error, so check the linkage now.
-if [ "$NPU_ACTIVE" = 1 ] && ! ldd "$BIN_SRC/vinoauthface-auth" | grep -q libopenvino; then
-    fail "NPU build requested, but $BIN_SRC/vinoauthface-auth has no OpenVINO linkage"
+# A binary that does not match the backend written to the config falls back
+# to tract at every unlock, so check what it was built with now. It loads
+# OpenVINO at run time, so ldd can't tell.
+if [ "$NPU_ACTIVE" = 1 ] && [ "$("$BIN_SRC/vinoauthface-auth" --build 2>/dev/null)" != openvino ]; then
+    fail "NPU build requested, but $BIN_SRC/vinoauthface-auth has no OpenVINO backend"
     exit 1
 fi
 
@@ -984,6 +986,11 @@ if [ -n "$NPU_PREFIX_SRC" ] && [ "$OPENVINO_MODE" = "ovfetch" ]; then
         fi
         ok NPU "compiler from ovfetch in $NPU_INSTALL_DIR (hashes verified)"
     fi
+elif [ "$OPENVINO_MODE" = "kept" ] && [ -d "$NPU_INSTALL_DIR" ] \
+     && (cd "$NPU_INSTALL_DIR" && sha256sum -c --strict --quiet SHA256SUMS) 2>/dev/null \
+     && [ -z "$(ov_untracked "$NPU_INSTALL_DIR")" ]; then
+    # No ovfetch to ask, and the copy a previous deploy made is intact.
+    ok NPU "keeping the compiler in $NPU_INSTALL_DIR (hashes verified)"
 elif [ -d "$NPU_INSTALL_DIR" ]; then
     # No prefix to mirror any more (removed, another device, or OpenVINO from
     # elsewhere): the auth binary would still preload a stale copy.
@@ -992,7 +999,7 @@ elif [ -d "$NPU_INSTALL_DIR" ]; then
 fi
 # The archive install's library path entry would shadow the rpath, and
 # expose its TBB to everything else on the system.
-if [ "$OPENVINO_MODE" = "ovfetch" ] && [ -f /etc/ld.so.conf.d/face-auth-openvino.conf ]; then
+if { [ "$OPENVINO_MODE" = "ovfetch" ] || [ "$OPENVINO_MODE" = "kept" ]; } && [ -f /etc/ld.so.conf.d/face-auth-openvino.conf ]; then
     rm -f /etc/ld.so.conf.d/face-auth-openvino.conf
     ldconfig
 fi

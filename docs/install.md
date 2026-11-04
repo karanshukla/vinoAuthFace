@@ -11,7 +11,7 @@ Two ways in, both ending in the same `deploy.sh`:
 # A release: checksum-verified binaries, nothing to build
 curl -fsSL https://github.com/karanshukla/vinoAuthFace/releases/latest/download/install.sh | sudo bash
 
-# A checkout: builds from source (needed for the NPU backend)
+# A checkout: builds from source
 sudo ./deploy.sh
 ```
 
@@ -22,8 +22,11 @@ This page covers what they do, building from source, camera pinning, and removal
 `install.sh` asks GitHub for the newest release, downloads its source bundle
 (`vinoauthface-source.tar.gz`) and `SHA256SUMS`, refuses the bundle unless it's listed there and
 matches, and runs that release's own `deploy.sh --prebuilt` from a private temporary directory.
-`--prebuilt` installs the release's static binaries (checked against the same `SHA256SUMS`) even
-if Rust or OpenVINO is installed, so nothing compiles. Options go after `bash -s --`:
+`--prebuilt` installs the release's binaries (checked against the same `SHA256SUMS`) even if Rust
+is installed, so nothing compiles. With [ovfetch](https://github.com/karanshukla/ovfetch) on the
+`PATH`, or OpenVINO installed another way, that's the [NPU build](#openvino--npu-backend) and the
+OpenVINO runtime ovfetch picks for this machine; otherwise the static CPU build. Options go after
+`bash -s --`:
 
 | Option | |
 |---|---|
@@ -32,10 +35,9 @@ if Rust or OpenVINO is installed, so nothing compiles. Options go after `bash -s
 | `--no-tray` | No [tray](tray.md) |
 | `--login=off\|both\|face` | Face unlock at the KDE [login screen](pam.md#login-screen) |
 
-Running it again reinstalls, keeping your config, templates and PAM setup. Release binaries are the
-CPU (`tract`) build, so on a machine with the OpenVINO build it stops and points at
-`vinoauthface-upgrade`, which rebuilds that one. The checksums come from the same release as the
-files, so they catch a corrupted or truncated download, not a compromised GitHub account.
+Running it again reinstalls, keeping your config, templates and PAM setup. The checksums come from
+the same release as the files, so they catch a corrupted or truncated download, not a compromised
+GitHub account.
 
 Every install also leaves these commands, so the repo isn't needed afterwards:
 
@@ -71,7 +73,8 @@ the distro name; reports either way are welcome.
 No build toolchain is required. `install.sh` never builds, and if `deploy.sh` finds no Rust
 toolchain and no local build, it downloads the static musl binaries from
 [GitHub Releases](https://github.com/karanshukla/vinoAuthFace/releases) too, verified against the
-release's `SHA256SUMS`. Build from source for an unreleased change or the NPU backend.
+release's `SHA256SUMS`, the NPU build if OpenVINO is installed. Build from source for an unreleased
+change.
 
 ## What deploy.sh does
 
@@ -82,7 +85,7 @@ there before. It takes `--login=off|both|face` too, and refuses to run with noth
 
 | Step | What | Details |
 |------|------|---------|
-| Build | Picks the first that applies | `--prebuilt`: download the release binaries. OpenVINO + cargo: NPU build. Prebuilt binaries in `target/`: use them, unless cargo is available and the sources are newer than they are (`FACE_AUTH_FORCE_BUILD=1` rebuilds regardless; it covers the tray too). Cargo: static musl build. Otherwise: download and checksum-verify the release binaries |
+| Build | Picks the first that applies | `--prebuilt`: download the release binaries (the NPU build if OpenVINO is installed). OpenVINO + cargo: NPU build. OpenVINO, no cargo: download the NPU build. Prebuilt binaries in `target/`: use them, unless cargo is available and the sources are newer than they are (`FACE_AUTH_FORCE_BUILD=1` rebuilds regardless; it covers the tray too). Cargo: static musl build. Otherwise: download and checksum-verify the release binaries |
 | Binaries | Installs to `/usr/local/bin` | `vinoauthface-auth` (set-group-ID `face-auth`, see [security.md](security.md#trust-model)) and `vinoauthface`, plus its bash, zsh and fish completions under `/usr/local/share` (regenerate with `vinoauthface completions bash`, `zsh` or `fish`) |
 | Models | Downloads and SHA-256 verifies | Recognition model (`w600k_r50.onnx` for an NPU build, `w600k_mbf.onnx` otherwise) and the `det_500m.onnx` (SCRFD) detector, to `/usr/local/share/face-auth/`. Installing the detector over an older install means re-enrolling; `deploy.sh` says so. A copy in `models/` is used first, and verified too |
 | Config | Installs default config | `/etc/face-auth.toml`, kept if it already exists; the deploy appends any settings from `config/face-auth.toml.example` it lacks, commented out at their defaults |
@@ -127,24 +130,36 @@ not leave root-owned files in `target/`.
 ### OpenVINO / NPU backend
 
 The `npu` feature swaps pure-Rust `tract` inference for OpenVINO on an Intel NPU, GPU or CPU. It
-links OpenVINO's glibc libraries, so it can't be a static musl build.
+loads OpenVINO's glibc libraries when the backend starts rather than linking them, so it's a glibc
+build (not static musl), it builds with no OpenVINO present, and one binary runs against whichever
+OpenVINO release is installed (2025.1 or newer). Releases ship it as
+`vinoauthface-auth-openvino-x86_64-unknown-linux-gnu` and `vinoauthface-openvino-…`, built on
+Ubuntu 22.04.
 
-`deploy.sh` handles it. If it finds OpenVINO and a Rust toolchain, it builds with `--features
-npu` and sets `backend = "openvino"` in `/etc/face-auth.toml`. Pick the device with
-`npu_device = "NPU" | "GPU" | "CPU"`. It looks for OpenVINO in this order:
+`deploy.sh` and the installer handle it. If they find OpenVINO, they install the NPU build (built
+from source in a checkout with Rust, downloaded otherwise) and set `backend = "openvino"` in
+`/etc/face-auth.toml`. Pick the device with `npu_device = "NPU" | "GPU" | "CPU"`. They look for
+OpenVINO in this order:
 
-| Source | How it's found | Runtime lookup |
+| Source | How it's found | Where `vinoauthface-auth` loads it from |
 |--------|----------------|----------------|
-| [ovfetch](https://github.com/karanshukla/ovfetch) 0.6.0+ | On `PATH` or in `~/.cargo/bin` | rpath baked into `vinoauthface-auth` |
-| System package | `libopenvino_c.so*` in a standard lib dir | The package's own `ldconfig` entry |
-| Extracted archive | `~/.local/opt` or `/opt/intel`, with `setupvars.sh` | Copied, then registered with `ldconfig` |
+| [ovfetch](https://github.com/karanshukla/ovfetch) 0.6.0+ | On `PATH` or in `~/.cargo/bin` | `/usr/local/lib/face-auth/openvino`, its dependencies through the binary's rpath |
+| The runtime ovfetch installed before | ovfetch missing (or the tray's upgrade, which runs as root alone), prefix still matches its `SHA256SUMS` | The same, kept as it is |
+| System package | `libopenvino_c.so*` in a standard lib dir | That lib dir |
+| Extracted archive | `~/.local/opt` or `/opt/intel`, with `setupvars.sh` | Copied to `/usr/local/lib/face-auth/openvino/intel64`, registered with `ldconfig` |
+
+`vinoauthface-auth` only looks in those fixed directories, never the environment. If OpenVINO
+isn't in any of them, both models run on `tract` instead (same models, same templates, slower) and
+`vinoauthface doctor` warns; an OpenVINO that is there but won't load fails the scan, and unlock
+falls back to the password. `vinoauthface-auth --openvino-devices` loads it the way a scan does
+and lists the devices it sees.
 
 ovfetch is the recommended one. It picks the OpenVINO build your NPU and its installed driver
 need, and refuses anything whose hash independent sources don't agree on. It installs to
 `/usr/local/lib/face-auth/openvino`, and later deploys only download again when a different build
 resolves. ovfetch runs as you, into a staging directory; once root has copied that into place,
 `deploy.sh` checks every file against ovfetch's `SHA256SUMS` and removes the directory if anything
-doesn't match or isn't listed (face unlock then falls back to the password). It installs OpenVINO alone (`ovfetch install --openvino-only`), without ONNX Runtime, which face-auth doesn't use: that is the newest OpenVINO the NPU driver supports, the same release the machine's other NPU programs run, with nothing to compile. (`--build-runtime`, which compiled ONNX Runtime to get there, is no longer needed and is ignored.) If ovfetch installed the current runtime and is now missing or older than 0.6.0, deploy stops and asks you to upgrade it rather than switch to the CPU backend. Install it with `cargo install ovfetch --locked`, or grab the attested binary from its
+doesn't match or isn't listed (face unlock then falls back to the password). It installs OpenVINO alone (`ovfetch install --openvino-only`), without ONNX Runtime, which face-auth doesn't use: that is the newest OpenVINO the NPU driver supports, the same release the machine's other NPU programs run, with nothing to compile. (`--build-runtime`, which compiled ONNX Runtime to get there, is no longer needed and is ignored.) If ovfetch installed the current runtime and is now missing or older than 0.6.0, deploy keeps that runtime as long as it still matches its `SHA256SUMS`, and stops rather than switch to the CPU backend if it doesn't. Install it with `cargo install ovfetch --locked`, or grab the attested binary from its
 releases.
 
 If the NPU driver has no compiler library (Fedora's 1.32.0 rpm ships none), OpenVINO can't compile
@@ -265,19 +280,16 @@ sudo vinoauthface-upgrade --force  # reinstall the one you're on
 
 `vinoauthface-update` is the same command under another name.
 
-On a CPU install it runs the [one-line installer](#the-one-line-installer) for that release:
-the release's binaries, nothing built. Every upgrade is a full reinstall by the release's own
-deploy logic, so anything a release changes beyond the binaries (models, config, PAM, SELinux)
-comes with it. A `--no-tray` install stays one, and so does one with the settings window.
+It runs the [one-line installer](#the-one-line-installer) for that release: the release's
+binaries, CPU or NPU, nothing built. Every upgrade is a full reinstall by the release's own deploy
+logic, so anything a release changes beyond the binaries (models, config, PAM, SELinux) comes with
+it. A `--no-tray` install stays one, and so does one with the settings window. Run with `sudo`, an
+NPU install asks ovfetch (as you) whether this machine now wants a different OpenVINO. The tray's
+"Update to vN" entry runs the same command through pkexec (see [tray.md](tray.md)), as root alone,
+so it keeps the OpenVINO runtime that's installed.
 
-An OpenVINO install has no release binaries, so it builds instead: the release's source bundle,
-checked against `SHA256SUMS`, unpacked into `~/.cache/vinoauthface/src/<tag>` and built by that
-release's `deploy.sh` as you, with your Rust and ovfetch, the same as a checkout. The build
-directory, `~/.cache/vinoauthface/target`, is kept and shared by every release, so an upgrade
-recompiles only vinoAuthFace's own crates. It can take a few GB; `uninstall.sh` removes it, and
-deleting it by hand is safe. That's also why the tray can't upgrade an OpenVINO install: its
-helper runs as root only. The tray's "Update to vN" entry is for CPU installs, and runs the same
-command through pkexec (see [tray.md](tray.md)).
+NPU upgrades used to build from source into `~/.cache/vinoauthface`; the first upgrade under
+`sudo` deletes it.
 
 Releases before the one-line installer have no bundle; use a checkout for those.
 
@@ -295,7 +307,7 @@ sudo ./update.sh --no-tray  # leave the tray alone
 ```
 
 For iterating on the code. It rebuilds from source with the same backend as the installed
-`vinoauthface-auth` (an NPU build if it links OpenVINO, static musl if not), then replaces
+`vinoauthface-auth` (an NPU build if `vinoauthface-auth --build` says `openvino`, static musl if not), then replaces
 `vinoauthface-auth` (keeping it set-group-ID `face-auth`), `vinoauthface`, and the tray and its
 helper if they're installed. Unchanged binaries are left alone. Models, config, PAM, SELinux
 policy, the OpenVINO runtime, the NPU cache and the template store aren't touched, and it

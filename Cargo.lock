@@ -1593,6 +1593,7 @@ dependencies = [
  "libc",
  "nix",
  "openvino",
+ "openvino-sys",
  "serde",
  "thiserror 2.0.21",
  "toml",
@@ -3129,6 +3130,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "775748e90aab1c4e923c8676e0b2401fadf8a9c6d25ff8e18ac5039a0a1c549e"
 dependencies = [
  "env_logger",
+ "libloading",
  "openvino-finder",
 ]
 

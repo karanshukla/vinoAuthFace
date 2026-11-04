@@ -7,6 +7,79 @@ use openvino::{Core as OvCore, DeviceType, ElementType, InferRequest, PartialSha
 #[cfg(feature = "npu")]
 const ENCODER_SIZE: i64 = 112;
 
+/// Where `deploy.sh` installs ovfetch's OpenVINO prefix. The auth binary
+/// carries it as its rpath too, which is how OpenVINO's own dependencies
+/// (TBB) are found in glibc's secure mode, where their `$ORIGIN` is ignored.
+pub const OPENVINO_DIR: &str = "/usr/local/lib/face-auth/openvino";
+
+/// Where to look for `libopenvino_c`, in order: ovfetch's prefix, an archive
+/// install's copy (beside it, registered with `ldconfig`), then a distro
+/// package. Fixed paths only, never the environment: PAM callers' environment
+/// is scrubbed, and a set-group-ID binary must not load a library a caller
+/// named.
+#[cfg(feature = "npu")]
+const OPENVINO_SEARCH: &[&str] = &[
+    OPENVINO_DIR,
+    "/usr/local/lib/face-auth/openvino/intel64",
+    "/usr/lib64",
+    "/usr/lib/x86_64-linux-gnu",
+    "/lib/x86_64-linux-gnu",
+    "/usr/lib",
+];
+
+/// OpenVINO isn't installed anywhere `OPENVINO_SEARCH` looks. The one
+/// OpenVINO failure the backends fall back to tract for: the same model runs
+/// on the CPU, so nothing about matching changes, only speed. A library that
+/// is there but won't load is a broken install, and fails closed.
+#[derive(Debug)]
+pub struct OpenVinoMissing;
+
+impl std::fmt::Display for OpenVinoMissing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "OpenVINO is not installed (no libopenvino_c in {OPENVINO_DIR} or the system library directories)")
+    }
+}
+
+impl std::error::Error for OpenVinoMissing {}
+
+/// The `libopenvino_c` to load from `dir`: the unversioned name if the
+/// directory has it (ovfetch's prefix does), else the highest versioned one
+/// (a distro package without its -devel symlink).
+pub fn openvino_c_in(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let plain = dir.join("libopenvino_c.so");
+    if plain.is_file() {
+        return Some(plain);
+    }
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let version: u64 = name.strip_prefix("libopenvino_c.so.")?.parse().ok()?;
+            e.path().is_file().then_some((version, e.path()))
+        })
+        .max_by_key(|(version, _)| *version)
+        .map(|(_, path)| path)
+}
+
+/// The `libopenvino_c` the backend would load, if OpenVINO is installed.
+#[cfg(feature = "npu")]
+pub fn find_openvino() -> Option<std::path::PathBuf> {
+    OPENVINO_SEARCH.iter().find_map(|dir| openvino_c_in(std::path::Path::new(dir)))
+}
+
+/// Load the OpenVINO C API, once per process, before the first Core.
+#[cfg(feature = "npu")]
+fn load_openvino() -> anyhow::Result<()> {
+    let Some(path) = find_openvino() else {
+        return Err(OpenVinoMissing.into());
+    };
+    openvino_sys::library::load_from(&path)
+        .map_err(|e| anyhow::anyhow!("loading OpenVINO from {}: {e}", path.display()))?;
+    tracing::debug!(library = %path.display(), "OpenVINO loaded");
+    Ok(())
+}
+
 /// Where `deploy.sh` copies the user's `ovfetch npu install` prefix: the NPU
 /// compiler a distro's driver package lacks (Fedora's 1.32.0 rpm ships none,
 /// and every `compile_model` fails with `ZE_RESULT_ERROR_UNSUPPORTED_FEATURE`),
@@ -40,11 +113,11 @@ pub fn npu_preload_entries(list: &str, dir: &std::path::Path) -> Vec<std::path::
 /// Load the NPU prefix, if `deploy.sh` installed one, before OpenVINO first
 /// opens the NPU. `RTLD_GLOBAL`, so that when the driver later asks for a
 /// library by soname the dynamic linker returns the copy already loaded.
-/// OpenVINO itself is linked, so its TBB (which the compiler needs) is already
-/// in. The order is the file's: a driver loaded before the Level Zero loader
+/// The order is the file's: a driver loaded before the Level Zero loader
 /// crashed on its first call into it (ovfetch's README, measured 2026-10-24).
 /// A library that will not load is an error, and the backend fails closed to
 /// the password, which is also what the NPU would do without its compiler.
+/// Runs after `load_openvino`, so OpenVINO's TBB is already in.
 #[cfg(feature = "npu")]
 fn preload_npu_prefix() -> anyhow::Result<()> {
     use std::io::ErrorKind;
@@ -88,10 +161,22 @@ pub(crate) fn with_ov_core<T>(f: impl FnOnce(&mut OvCore) -> anyhow::Result<T>) 
     static CORE: std::sync::Mutex<Option<OvCore>> = std::sync::Mutex::new(None);
     let mut core = CORE.lock().unwrap_or_else(|e| e.into_inner());
     if core.is_none() {
+        load_openvino()?;
         preload_npu_prefix()?;
         *core = Some(OvCore::new()?);
     }
     f(core.as_mut().expect("set above"))
+}
+
+/// Load OpenVINO the way a scan does (library, NPU prefix, Core) and list
+/// the devices it sees, with the library it loaded. For `vinoauthface-auth
+/// --openvino-devices`: run as a user, it shows the libraries load in the
+/// set-group-ID binary's secure mode.
+#[cfg(feature = "npu")]
+pub fn openvino_devices() -> anyhow::Result<(std::path::PathBuf, Vec<String>)> {
+    let devices = with_ov_core(|core| Ok(core.available_devices()?.iter().map(|d| d.to_string()).collect()))?;
+    let lib = find_openvino().ok_or(OpenVinoMissing)?;
+    Ok((lib, devices))
 }
 
 // One encoder per process, so the size gap between variants costs nothing.
@@ -116,7 +201,13 @@ impl FaceEncoder {
             anyhow::bail!("face encoder model not found at {model_path}");
         }
         match backend {
-            "openvino" => Self::new_openvino(model_path, device),
+            "openvino" => match Self::new_openvino(model_path, device) {
+                Err(e) if e.is::<OpenVinoMissing>() => {
+                    tracing::warn!("{e}; running the encoder on tract instead");
+                    Self::new_tract(model_path)
+                }
+                other => other,
+            },
             _ => Self::new_tract(model_path),
         }
     }
@@ -196,7 +287,7 @@ impl FaceEncoder {
 
 #[cfg(test)]
 mod tests {
-    use super::npu_preload_entries;
+    use super::{npu_preload_entries, openvino_c_in};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -224,5 +315,26 @@ mod tests {
         let dir = Path::new("/usr/local/lib/face-auth/npu");
         let entries = npu_preload_entries("/tmp/evil/libnpu_driver_compiler.so\n/\n", dir);
         assert_eq!(entries, vec![dir.join("libnpu_driver_compiler.so")]);
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("vaf-ov-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn openvino_c_prefers_the_plain_name_then_the_newest_version() {
+        let dir = scratch("pick");
+        assert_eq!(openvino_c_in(&dir), None);
+        for name in ["libopenvino_c.so.2541", "libopenvino_c.so.2641", "libopenvino_c.so.9.bak", "libopenvino.so.2641"] {
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+        assert_eq!(openvino_c_in(&dir), Some(dir.join("libopenvino_c.so.2641")));
+        std::fs::write(dir.join("libopenvino_c.so"), b"").unwrap();
+        assert_eq!(openvino_c_in(&dir), Some(dir.join("libopenvino_c.so")));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(openvino_c_in(Path::new("/nonexistent/vaf")), None);
     }
 }

@@ -2,10 +2,10 @@ name: Release binaries
 
 # Builds static musl binaries so users can install without a Rust toolchain: install.sh (the
 # one-line installer, also attached) and vinoauthface-upgrade install these, and deploy.sh falls
-# back to them when `cargo` isn't found. The settings window is the one glibc binary. Only the default CPU/tract backend is
-# built here: the `npu` feature dynamically links OpenVINO's own .so files and needs the actual
-# OpenVINO runtime + NPU hardware present at build time, which a generic CI runner doesn't have
-# — that build stays a local, deploy.sh-driven path (see deploy.sh's OpenVINO detection).
+# back to them when `cargo` isn't found. Two builds are glibc: the settings window, and the
+# `npu` (OpenVINO) build of vinoauthface-auth and vinoauthface, which loads OpenVINO when it
+# starts rather than linking it, so it builds here with no OpenVINO and runs against whichever
+# release ovfetch installs on the machine.
 on:
   push:
     tags:
@@ -19,9 +19,10 @@ on:
 permissions: {}
 
 jobs:
-  # glibc, not musl: winit and glow dlopen the desktop's libraries. Built on the oldest runner
-  # so it runs on any glibc from 2.35 (Ubuntu 22.04, Debian 12, every current Fedora) up.
-  settings:
+  # glibc, not musl: winit and glow dlopen the desktop's libraries, and the npu build dlopens
+  # OpenVINO (which is glibc). Built on the oldest runner so they run on any glibc from 2.35
+  # (Ubuntu 22.04, Debian 12, every current Fedora) up.
+  glibc:
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -49,15 +50,49 @@ jobs:
           mkdir -p dist
           cp "$bin" dist/vinoauthface-settings-x86_64-unknown-linux-gnu
 
+      # The rpath is where OpenVINO's own libraries (TBB) are found at unlock time, in the
+      # set-group-ID binary's secure mode; deploy.sh installs ovfetch's prefix there. GNU ld
+      # because rust-lld has segfaulted linking build scripts (see deploy.sh).
+      - name: Build the NPU (OpenVINO) backend
+        env:
+          VINOAUTHFACE_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'dev' }}
+          RUSTFLAGS: -C link-arg=-Wl,--disable-new-dtags,-rpath,/usr/local/lib/face-auth/openvino -C link-arg=-fuse-ld=bfd
+        run: |
+          cargo build --release --locked -p face-auth -p face-enroll \
+            --features face-auth-core/npu,face-auth/npu,face-enroll/npu
+
+      # Built with the backend, linking no OpenVINO (it is loaded at run time), carrying the
+      # rpath, stamped with the tag. With no OpenVINO on the runner, loading it reports it
+      # missing (the case scans fall back to tract for) instead of crashing.
+      - name: Smoke-test the NPU binaries
+        env:
+          TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'dev' }}
+        run: |
+          dir=target/release
+          test "$("$dir/vinoauthface-auth" --build)" = openvino
+          "$dir/vinoauthface" --version | tee /dev/stderr | grep -qF " $TAG"
+          if readelf -d "$dir/vinoauthface-auth" | grep NEEDED | grep -i openvino; then exit 1; fi
+          readelf -d "$dir/vinoauthface-auth" | grep -q 'RPATH.*/usr/local/lib/face-auth/openvino'
+          set +e
+          "$dir/vinoauthface-auth" --openvino-devices 2> err; rc_ov=$?
+          env -i "$dir/vinoauthface-auth"; rc_pam=$?
+          set -e
+          cat err
+          test "$rc_ov" = 1
+          grep -q 'OpenVINO is not installed' err
+          test "$rc_pam" = 1
+          cp "$dir/vinoauthface-auth" dist/vinoauthface-auth-openvino-x86_64-unknown-linux-gnu
+          cp "$dir/vinoauthface" dist/vinoauthface-openvino-x86_64-unknown-linux-gnu
+
       - name: Upload build artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: vinoauthface-settings
+          name: vinoauthface-glibc
           path: dist/*
           if-no-files-found: error
 
   build:
-    needs: settings
+    needs: glibc
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -104,7 +139,7 @@ jobs:
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: vinoauthface-settings
+          name: vinoauthface-glibc
           path: dist
 
       # The source bundle is what install.sh and vinoauthface-upgrade install from: the tag's

@@ -17,6 +17,8 @@ publish = false
 [workspace.dependencies]
 tract-onnx = "0.23"
 openvino = "0.11"
+# For library::load_from: the npu build loads OpenVINO from a fixed path at startup.
+openvino-sys = "0.11"
 image = "0.25.4"
 anyhow = "1.0"
 thiserror = "2.0"

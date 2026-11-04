@@ -321,7 +321,13 @@ impl FaceDetector {
             anyhow::bail!("face detector model not found at {model_path}");
         }
         match backend {
-            "openvino" => Self::new_openvino(model_path, threshold, device),
+            "openvino" => match Self::new_openvino(model_path, threshold, device) {
+                Err(e) if e.is::<crate::inference::OpenVinoMissing>() => {
+                    tracing::warn!("{e}; running the detector on tract instead");
+                    Self::new_tract(model_path, threshold)
+                }
+                other => other,
+            },
             _ => Self::new_tract(model_path, threshold),
         }
     }

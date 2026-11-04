@@ -314,6 +314,13 @@ fn run_warm_cache() -> ! {
         std::process::exit(0);
     }
     let device = config.npu_device();
+    // The backends fall back to tract without OpenVINO, which would compile
+    // nothing and still report success here.
+    #[cfg(feature = "npu")]
+    if face_auth_core::inference::find_openvino().is_none() {
+        eprintln!("cannot compile the models for {device}: {}", face_auth_core::inference::OpenVinoMissing);
+        std::process::exit(1);
+    }
     let t = Instant::now();
     if let Err(e) = FaceAuth::new(config) {
         eprintln!("cannot compile the models for {device}: {e}");
@@ -321,6 +328,27 @@ fn run_warm_cache() -> ! {
     }
     println!("compiled both models for {device} in {:.1?}", t.elapsed());
     std::process::exit(0);
+}
+
+/// Load OpenVINO from its fixed paths and list its devices. Reads no config
+/// and no templates, so it is open to any caller.
+fn run_openvino_devices() -> ! {
+    #[cfg(feature = "npu")]
+    match face_auth_core::inference::openvino_devices() {
+        Ok((lib, devices)) => {
+            println!("{}: {}", lib.display(), devices.join(" "));
+            std::process::exit(0)
+        }
+        Err(e) => {
+            eprintln!("{e:#}");
+            std::process::exit(1)
+        }
+    }
+    #[cfg(not(feature = "npu"))]
+    {
+        eprintln!("this build has no OpenVINO backend (tract only)");
+        std::process::exit(1)
+    }
 }
 
 /// Does the caller have templates? Exit 0 yes, 1 no, 2 error. For the tray's
@@ -388,11 +416,20 @@ fn main() {
             [flag, name] if flag == "--verify" => run_verify(name),
             [flag] if flag == "--warm-cache" => run_warm_cache(),
             [flag] if flag == "--enrolled" => run_enrolled(),
+            // For the install scripts: which backend this binary can run.
+            // Since the npu build loads OpenVINO at run time, ldd can't tell.
+            [flag] if flag == "--build" => {
+                println!("{}", if cfg!(feature = "npu") { "openvino" } else { "tract" });
+                std::process::exit(0)
+            }
+            [flag] if flag == "--openvino-devices" => run_openvino_devices(),
             _ => {
                 eprintln!("usage: vinoauthface-auth            (PAM mode, reads PAM_USER)");
                 eprintln!("       vinoauthface-auth --verify USER  (test a stored face, requires root)");
                 eprintln!("       vinoauthface-auth --warm-cache   (compile the models into the NPU cache, requires root)");
                 eprintln!("       vinoauthface-auth --enrolled     (exit 0 if you have enrolled a face)");
+                eprintln!("       vinoauthface-auth --build        (print the backend built in: openvino or tract)");
+                eprintln!("       vinoauthface-auth --openvino-devices (load OpenVINO, list what it can run on)");
                 std::process::exit(2);
             }
         }

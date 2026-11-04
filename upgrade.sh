@@ -7,22 +7,21 @@ set -euo pipefail
 # with, so config, templates and PAM are kept the same way a re-run of
 # deploy.sh keeps them.
 #
-# A CPU install hands over to install.sh, which installs the release's
-# binaries: nothing builds. An OpenVINO install has no release binaries, so
-# this downloads the release's source bundle, verifies it against the
-# release's SHA256SUMS, and builds it with the release's own deploy.sh.
+# It hands over to install.sh, which installs the release's binaries, CPU or
+# NPU (OpenVINO) alike: nothing builds. Run as root alone (the tray's helper),
+# an NPU install keeps the OpenVINO runtime it has, since there is no user to
+# run ovfetch as.
 #
 #   sudo vinoauthface-upgrade          # the newest release
 #   sudo vinoauthface-upgrade v3       # a specific one (also to go back)
 #   sudo vinoauthface-upgrade --force  # reinstall even if already on it
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-    BOLD=$'\e[1m' DIM=$'\e[2m' GREEN=$'\e[32m' RED=$'\e[31m' RESET=$'\e[0m'
+    BOLD=$'\e[1m' GREEN=$'\e[32m' RED=$'\e[31m' RESET=$'\e[0m'
 else
-    BOLD="" DIM="" GREEN="" RED="" RESET=""
+    BOLD="" GREEN="" RED="" RESET=""
 fi
 ok()   { printf '  %s✓%s %-10s %s\n' "$GREEN" "$RESET" "$1" "$2"; }
-step() { printf '  %s… %s%s\n' "$DIM" "$1" "$RESET"; }
 fail() {
     printf '%s✗ %s%s\n' "$RED" "$1" "$RESET" >&2
     shift
@@ -52,20 +51,6 @@ fi
 
 # Keep in step with deploy.sh.
 RELEASE_REPO="karanshukla/vinoAuthFace"
-BUNDLE="vinoauthface-source.tar.gz"
-
-# The bundle is unpacked and built as the user who ran sudo, like a checkout
-# in their home: deploy.sh compiles as that user, never as root. On disk, not
-# /tmp, which is RAM on many systems and an NPU build's target/ is gigabytes.
-ACTUAL_USER="${SUDO_USER:-root}"
-ACTUAL_HOME="$(getent passwd "$ACTUAL_USER" | cut -d: -f6)"
-as_user() {
-    if [ "$ACTUAL_USER" != root ]; then sudo -u "$ACTUAL_USER" -H "$@"; else "$@"; fi
-}
-CACHE_DIR="$ACTUAL_HOME/.cache/vinoauthface/src"
-# One build directory for every release, outside the per-tag sources, so an
-# upgrade recompiles only what changed rather than every dependency.
-TARGET_DIR="$ACTUAL_HOME/.cache/vinoauthface/target"
 
 printf '%svinoAuthFace upgrade%s\n' "$BOLD" "$RESET"
 
@@ -96,64 +81,15 @@ ok Version "${INSTALLED:-nothing} installed, installing $TAG"
 DEPLOY_ARGS=()
 [ -x /usr/local/bin/vinoauthface-tray ] || DEPLOY_ARGS+=(--no-tray)
 
-if ! ldd /usr/local/bin/vinoauthface-auth 2>/dev/null | grep -q libopenvino; then
-    printf '\n'
-    exec bash /usr/local/share/face-auth/install.sh "$TAG" "${DEPLOY_ARGS[@]}"
-fi
-
-# An OpenVINO build compiles as the user, with their Rust and ovfetch. Run as
-# plain root (the tray's helper), deploy.sh would find neither and quietly
-# install the CPU build instead.
-if [ "$ACTUAL_USER" = root ]; then
-    fail "This is an OpenVINO build, which compiles as your user" \
-        "Run sudo vinoauthface-upgrade in a terminal."
-    exit 1
-fi
-
-BASE="${FACE_AUTH_DEPLOY_RELEASE_BASE:-https://github.com/$RELEASE_REPO/releases/download/$TAG}"
-DEST="$CACHE_DIR/$TAG"
-as_user mkdir -p "$CACHE_DIR" "$TARGET_DIR"
-as_user rm -rf "$DEST.download"
-as_user mkdir "$DEST.download"
-
-step "downloading $BASE/$BUNDLE"
-for asset in "$BUNDLE" SHA256SUMS; do
-    if ! as_user curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
-            -o "$DEST.download/$asset" "$BASE/$asset"; then
-        fail "Download failed: $BASE/$asset" \
-            "Releases before the upgrade command have no source bundle: use a git checkout for those."
-        as_user rm -rf "$DEST.download"
-        exit 1
-    fi
-done
-# The bundle must be listed, not just match: --ignore-missing alone would pass
-# a file SHA256SUMS never mentions.
-if ! (cd "$DEST.download" \
-        && grep -E "[ *]$BUNDLE\$" SHA256SUMS > want \
-        && [ "$(wc -l < want)" -eq 1 ] \
-        && sha256sum -c --strict --quiet want); then
-    fail "Checksum verification failed for $BUNDLE"
-    as_user rm -rf "$DEST.download"
-    exit 1
-fi
-ok Download "source bundle, checksum verified"
-
-as_user rm -rf "$DEST"
-as_user mkdir "$DEST"
-as_user tar -xzf "$DEST.download/$BUNDLE" -C "$DEST" --strip-components=1 --no-same-owner
-as_user rm -rf "$DEST.download"
-if [ "$(cat "$DEST/VERSION" 2>/dev/null)" != "$TAG" ] || [ ! -f "$DEST/deploy.sh" ]; then
-    fail "The bundle isn't the $TAG release"
-    as_user rm -rf "$DEST"
-    exit 1
-fi
-
 printf '\n'
-cd "$DEST"
-# Forced: the shared build directory still holds the previous release's
-# binaries, which deploy.sh would otherwise install as they are.
-CARGO_TARGET_DIR="$TARGET_DIR" FACE_AUTH_FORCE_BUILD=1 ./deploy.sh "${DEPLOY_ARGS[@]}"
+bash /usr/local/share/face-auth/install.sh "$TAG" "${DEPLOY_ARGS[@]}"
 
-# The previous releases' sources aren't needed again. The build directory is
-# kept for the next upgrade.
-find "$CACHE_DIR" -mindepth 1 -maxdepth 1 ! -name "$TAG" -exec rm -rf {} +
+# Upgrades of NPU installs used to build here, into the user's cache. Nothing
+# reads it any more. As the user: it's in their home, so root resolving the
+# path could be steered elsewhere by a symlinked ~/.cache.
+if [ -n "${SUDO_USER:-}" ]; then
+    user_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+    if [ -n "$user_home" ] && [ -d "$user_home/.cache/vinoauthface" ]; then
+        sudo -u "$SUDO_USER" rm -rf "$user_home/.cache/vinoauthface"
+    fi
+fi

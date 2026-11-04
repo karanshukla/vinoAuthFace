@@ -18,6 +18,18 @@ replayed on top:
   `pin-camera.sh` and `uninstall.sh` are installed as
   `vinoauthface-pin-camera` and `vinoauthface-uninstall`, so nothing needs the
   repo after installing.
+- **The NPU build installs from releases too.** The `npu` feature now loads
+  OpenVINO when the backend starts (`openvino`'s runtime linking) from fixed
+  paths, `/usr/local/lib/face-auth/openvino` first, instead of linking the
+  exact `libopenvino_c.so.<version>` ovfetch had installed. So CI builds it
+  with no OpenVINO, releases ship it, and one binary runs against whichever
+  OpenVINO ovfetch picks for the machine. With ovfetch on the PATH, the
+  installer and `vinoauthface-upgrade` install it and nothing compiles; the
+  tray can upgrade an NPU install now, keeping its runtime as long as it
+  matches its `SHA256SUMS`. Without OpenVINO, the npu build runs the same
+  models on tract (slower, same templates) instead of failing every scan, and
+  `doctor` warns. New: `vinoauthface-auth --build` (which backend it has) and
+  `--openvino-devices` (load OpenVINO, list devices).
 - **Detector formats are modular.** The detector is now picked by its outputs'
   names and shapes, not only their count, and a third format is supported: a
   BlazeFace-style detector with the five alignment points (896 anchors,
