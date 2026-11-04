@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui::{self, Align, Layout, RichText};
 use face_auth_core::config::{self as limits, SYSTEM_CONFIG_PATH};
-use face_auth_core::{capture, config_write, FaceAuthConfig};
+use face_auth_core::{capture, config_write, update, FaceAuthConfig};
 use vino_ui::a11y;
 use vino_ui::icons::Icon;
 use vino_ui::theme;
@@ -40,11 +40,20 @@ pub enum Page {
     Models,
     Security,
     You,
+    About,
 }
 
 impl Page {
-    pub const ALL: [Page; 7] =
-        [Page::Face, Page::Matching, Page::Liveness, Page::Camera, Page::Models, Page::Security, Page::You];
+    pub const ALL: [Page; 8] = [
+        Page::Face,
+        Page::Matching,
+        Page::Liveness,
+        Page::Camera,
+        Page::Models,
+        Page::Security,
+        Page::You,
+        Page::About,
+    ];
 
     pub fn parse(name: &str) -> Option<Page> {
         let name = name.to_ascii_lowercase();
@@ -60,6 +69,7 @@ impl Page {
             Page::Models => "models",
             Page::Security => "security",
             Page::You => "you",
+            Page::About => "about",
         }
     }
 
@@ -72,6 +82,7 @@ impl Page {
             Page::Models => "Models",
             Page::Security => "Security",
             Page::You => "Just you",
+            Page::About => vino_ui::about::TITLE,
         }
     }
 
@@ -84,6 +95,7 @@ impl Page {
             Page::Models => Icon::Model,
             Page::Security => Icon::Lock,
             Page::You => Icon::User,
+            Page::About => Icon::Info,
         }
     }
 }
@@ -1294,7 +1306,7 @@ impl SettingsWindow {
             .show(root, |ui| {
                 widgets::page_scroll(ui, self.page.title(), widgets::CONTENT_MAX, |ui| {
                     widgets::title(ui, self.page.title());
-                    if !matches!(self.page, Page::You | Page::Face) {
+                    if !matches!(self.page, Page::You | Page::Face | Page::About) {
                         widgets::small(ui, "For everyone on this computer. Changes wait for Apply.");
                     }
                     if let Some((tone, text)) = self.notice.clone() {
@@ -1326,6 +1338,8 @@ impl SettingsWindow {
                         Page::Models => self.models(ui),
                         Page::Security => self.security(ui),
                         Page::You => self.you(ui),
+                        // The release tag ("v3"), or "dev" for a local build.
+                        Page::About => vino_ui::about::page(ui, vino_ui::App::AuthFace, update::CURRENT),
                     }
                 });
             });
