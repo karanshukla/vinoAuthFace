@@ -111,7 +111,10 @@ crates/
 config/face-auth.toml.example   # Documented config template
 selinux/face-auth.te            # SELinux policy source
 selinux/face-auth.fc            # SELinux file labels (NPU node, store, lockout, NPU cache)
-deploy.sh / uninstall.sh        # Install and removal
+install.sh                      # One-line installer: a release's bundle, then its deploy.sh --prebuilt
+deploy.sh / uninstall.sh        # Install (build or download, then files) and removal
+setup.sh                        # PAM, login screen, Bitwarden, SELinux (deploy.sh runs it; also vinoauthface-setup)
+upgrade.sh                      # vinoauthface-upgrade
 login-mode.sh                   # Plasma login screen mode (deploy.sh and the tray helper run it)
 setting-mode.sh                 # the tray's Settings menu: the few config keys it may set (the tray helper runs it)
 pin-camera.sh                   # Pins the camera by USB bus path

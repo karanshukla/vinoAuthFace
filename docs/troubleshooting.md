@@ -65,7 +65,7 @@ shows up in `vinoauthface-camera-diag list`, or set `device` in `/etc/face-auth.
 ## "camera identity mismatch"
 
 The camera is pinned and `device` now resolves to a different physical port or node. If you
-replaced or moved the hardware on purpose, re-run `sudo ./pin-camera.sh`.
+replaced or moved the hardware on purpose, re-run `sudo vinoauthface-pin-camera`.
 
 ## "no face detected" every time
 
@@ -79,7 +79,7 @@ isn't firing and no software will help.
 The lock screen runs `vinoauthface-auth` as you, through its set-group-ID bit.
 
 - `ls -l /usr/local/bin/vinoauthface-auth` should show `-rwxr-sr-x root face-auth`. If the `s` is missing,
-  re-run `sudo ./deploy.sh`.
+  reinstall (the one-line installer, or `sudo ./deploy.sh`).
 - If `deploy.sh` warned that `/usr/local/bin` is mounted `nosuid`, the kernel ignores the bit and
   the lock screen can't read templates.
 - Check that your lock screen's PAM service is wired up: [pam.md](pam.md).

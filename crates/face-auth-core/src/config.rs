@@ -648,7 +648,7 @@ impl FaceAuthConfig {
             bail!(
                 "camera identity mismatch: pinned to {pinned_path} (index {pinned_index}), but \
                  {device} resolves to {path} (index {index}); refusing to trust its frames. \
-                 If you replaced or moved the hardware on purpose, re-run pin-camera.sh."
+                 If you replaced or moved the hardware on purpose, re-run vinoauthface-pin-camera."
             );
         }
         Ok(())

@@ -41,7 +41,7 @@ It starts at the next login, or run `vinoauthface-tray` now (it detaches from th
 | `/etc/xdg/autostart/vinoauthface-tray.desktop` | Starts it at login |
 | `/usr/local/share/applications/vinoauthface-{tray,enrol}.desktop` | Launchers. "Enrol face" works without the tray running |
 | `/usr/local/share/face-auth/{login,setting}-mode.sh` | What the login-screen and Settings entries run |
-| `/usr/local/share/face-auth/uninstall.sh` | Installed by every deploy, so `sudo /usr/local/share/face-auth/uninstall.sh` works after the repo is gone |
+| `/usr/local/share/face-auth/uninstall.sh` | Installed by every deploy (and linked as `vinoauthface-uninstall`), so uninstalling works after the repo is gone |
 | `/usr/local/bin/vinoauthface-upgrade` | Installed by every deploy (not only with the tray). The upgrade entry runs it |
 
 ## Menu

@@ -126,7 +126,7 @@ if [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 1 ] \
    && [ ! -x /usr/local/libexec/vinoauthface-unseal ] \
    && grep -qE '^[[:space:]]*seal_embeddings[[:space:]]*=[[:space:]]*true' /etc/face-auth.toml 2>/dev/null; then
     if [ "$MODE" = both ]; then
-        echo "Refusing both: sealed templates need /usr/local/libexec/vinoauthface-unseal at the login screen under SELinux, and it isn't installed, so no one could log in. Re-run deploy.sh." >&2
+        echo "Refusing both: sealed templates need /usr/local/libexec/vinoauthface-unseal at the login screen under SELinux, and it isn't installed, so no one could log in. Reinstall vinoAuthFace." >&2
         exit 1
     fi
     if [ "$MODE" = face ]; then

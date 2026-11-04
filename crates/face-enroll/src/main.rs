@@ -205,7 +205,7 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
         println!("\nSaved {} embeddings for '{}'", saved, info.name);
         if !pinned {
             println!("\nThat confirms {device} is the right camera. Recommended next step:");
-            println!("  sudo ./pin-camera.sh {device}");
+            println!("  sudo vinoauthface-pin-camera {device}");
             println!("so a spoofed USB device claiming the same VID/PID cannot inject frames.");
         }
     }

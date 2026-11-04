@@ -48,8 +48,10 @@ cargo deny check
   `cargo llvm-cov` over the workspace tests, lcov uploaded as an artifact, summary on the run
   page, failing under a line-coverage floor. Raise the floor as coverage grows.
 - `release.yml` smoke-tests what it built (static, `--version` carries the tag, the PAM
-  entry point's exit codes) before staging it, then publishes static musl binaries and `vinoauthface-source.tar.gz` (the tag's tree
-  plus `VERSION`, what `upgrade.sh` installs from) on `v*` tags. Versions
+  entry point's exit codes) before staging it, then publishes static musl binaries, the glibc
+  settings window (built on ubuntu-22.04 for an old glibc), `install.sh` and
+  `vinoauthface-source.tar.gz` (the tag's tree plus `VERSION`, what `install.sh` and `upgrade.sh`
+  install from) on `v*` tags. Versions
   are consecutive (`v2`, `v3`), cut with `scripts/release.sh`; see `docs/releasing.md`.
 - `ci.yml`'s `npu` job builds, lints and tests the `npu` feature against an OpenVINO that
   ovfetch provisions, then runs the ovfetch deploy path (compiling on OpenVINO's CPU plugin,
@@ -261,7 +263,16 @@ required file, update both scripts and `config/face-auth.toml.example` together,
 Rust defaults. The deploy script is often the only thing that actually creates these files on a
 target system.
 
-`pin-camera.sh` is a separate, opt-in hardening step (frame-injection defense via USB bus-path
+`install.sh` is the one-line installer (`curl … | sudo bash`): it verifies a release's source
+bundle and runs that release's `deploy.sh --prebuilt`, which downloads the release binaries and
+never builds. Keep everything in its `main` function, called on the last line, so a truncated
+download can't run. `setup.sh` is the system half of `deploy.sh` (PAM, login screen, Bitwarden,
+SELinux), installed as `vinoauthface-setup`; it reads `login-mode.sh` and `selinux/` from beside
+itself, so anything it needs must also be copied into `/usr/local/share/face-auth/`.
+`vinoauthface-upgrade` hands CPU installs to the installed `install.sh` and builds only OpenVINO
+ones.
+
+`pin-camera.sh` (installed as `vinoauthface-pin-camera`) is a separate, opt-in hardening step (frame-injection defense via USB bus-path
 pinning). Read `docs/security.md`'s "Frame injection (a fake camera)" section before touching
 `config.rs::verify_pinned_camera` or `capture.rs`'s `device_bus_path`/`device_capture_index`.
 

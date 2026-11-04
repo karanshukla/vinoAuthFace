@@ -83,7 +83,7 @@ mod tests {
             "Capturing frame x/30 (attempt 1)...",
             "Capturing frame 3 (attempt 1)...",
             "  captured 3/",
-            "  sudo ./pin-camera.sh /dev/video2",
+            "  sudo vinoauthface-pin-camera /dev/video2",
         ] {
             assert_eq!(parse(line), None, "{line:?}");
         }

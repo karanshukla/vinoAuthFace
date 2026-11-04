@@ -6,6 +6,18 @@ This fork (karanshukla/vinoAuthFace) was rebuilt on top of upstream's security
 pass below instead of merging, so upstream's fixes all apply. Fork features
 replayed on top:
 
+- **One-line install, no build.** `curl -fsSL
+  https://github.com/karanshukla/vinoAuthFace/releases/latest/download/install.sh
+  | sudo bash` verifies a release's source bundle and runs its `deploy.sh
+  --prebuilt`, which installs the release binaries even where Rust is
+  installed. `vinoauthface-upgrade` does the same for CPU installs, so they no
+  longer compile on upgrade; OpenVINO installs still build. Releases now ship
+  the settings window too (glibc 2.35 and newer). PAM, the login screen,
+  Bitwarden and SELinux moved into `setup.sh`, installed as
+  `vinoauthface-setup` to re-apply them after an update resets `/etc/pam.d`.
+  `pin-camera.sh` and `uninstall.sh` are installed as
+  `vinoauthface-pin-camera` and `vinoauthface-uninstall`, so nothing needs the
+  repo after installing.
 - **Detector formats are modular.** The detector is now picked by its outputs'
   names and shapes, not only their count, and a third format is supported: a
   BlazeFace-style detector with the five alignment points (896 anchors,

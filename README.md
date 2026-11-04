@@ -40,9 +40,8 @@ You need an IR camera on `uvcvideo`. Not sure yours works? See
 [docs/hardware.md](docs/hardware.md).
 
 ```bash
-# 1. Install. Builds from source if it finds cargo, otherwise downloads
-#    checksum-verified release binaries.
-sudo ./deploy.sh        # ./install.sh does the same
+# 1. Install the latest release: checksum-verified binaries, no build.
+curl -fsSL https://github.com/karanshukla/vinoAuthFace/releases/latest/download/install.sh | sudo bash
 
 # 2. Enrol your face
 sudo vinoauthface enroll --user $USER
@@ -51,8 +50,12 @@ sudo vinoauthface enroll --user $USER
 sudo -k && sudo true
 
 # 4. Recommended: pin the camera (vinoauthface enroll prints the exact command)
-sudo ./pin-camera.sh /dev/videoN
+sudo vinoauthface-pin-camera /dev/videoN
 ```
+
+Options go after `bash -s --`, e.g. `| sudo bash -s -- --with-settings` for the settings window.
+The NPU (OpenVINO) backend still builds from source: clone the repo and run `sudo ./deploy.sh`.
+See [docs/install.md](docs/install.md).
 
 A face match unlocks immediately. Anything else (no match, no camera, lockout) falls through to
 your normal password prompt, so a broken camera can't lock you out.
@@ -75,8 +78,8 @@ Details and insertion points: [docs/pam.md](docs/pam.md).
 ## Uninstall
 
 ```bash
-sudo ./uninstall.sh           # everything except your face templates
-sudo ./uninstall.sh --purge   # templates too
+sudo vinoauthface-uninstall           # everything except your face templates
+sudo vinoauthface-uninstall --purge   # templates too
 ```
 
 ## Documentation

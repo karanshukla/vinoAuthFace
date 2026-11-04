@@ -2,11 +2,15 @@
 set -euo pipefail
 
 # Upgrade an install to a release without a git checkout. deploy.sh installs
-# this as vinoauthface-upgrade, and vinoauthface-update links to it. It downloads the release's source bundle,
-# verifies it against the release's SHA256SUMS, and runs that release's own
-# deploy.sh: every upgrade is a full reinstall, done by the deploy logic the
-# release shipped with, so config, templates and PAM are kept the same way a
-# re-run of deploy.sh keeps them.
+# this as vinoauthface-upgrade, and vinoauthface-update links to it. Every
+# upgrade is a full reinstall, done by the deploy logic the release shipped
+# with, so config, templates and PAM are kept the same way a re-run of
+# deploy.sh keeps them.
+#
+# A CPU install hands over to install.sh, which installs the release's
+# binaries: nothing builds. An OpenVINO install has no release binaries, so
+# this downloads the release's source bundle, verifies it against the
+# release's SHA256SUMS, and builds it with the release's own deploy.sh.
 #
 #   sudo vinoauthface-upgrade          # the newest release
 #   sudo vinoauthface-upgrade v3       # a specific one (also to go back)
@@ -88,11 +92,19 @@ if [ "$INSTALLED" = "$TAG" ] && [ "$FORCE" = 0 ]; then
 fi
 ok Version "${INSTALLED:-nothing} installed, installing $TAG"
 
+# A --no-tray install stays one.
+DEPLOY_ARGS=()
+[ -x /usr/local/bin/vinoauthface-tray ] || DEPLOY_ARGS+=(--no-tray)
+
+if ! ldd /usr/local/bin/vinoauthface-auth 2>/dev/null | grep -q libopenvino; then
+    printf '\n'
+    exec bash /usr/local/share/face-auth/install.sh "$TAG" "${DEPLOY_ARGS[@]}"
+fi
+
 # An OpenVINO build compiles as the user, with their Rust and ovfetch. Run as
 # plain root (the tray's helper), deploy.sh would find neither and quietly
 # install the CPU build instead.
-if [ "$ACTUAL_USER" = root ] \
-   && ldd /usr/local/bin/vinoauthface-auth 2>/dev/null | grep -q libopenvino; then
+if [ "$ACTUAL_USER" = root ]; then
     fail "This is an OpenVINO build, which compiles as your user" \
         "Run sudo vinoauthface-upgrade in a terminal."
     exit 1
@@ -135,10 +147,6 @@ if [ "$(cat "$DEST/VERSION" 2>/dev/null)" != "$TAG" ] || [ ! -f "$DEST/deploy.sh
     as_user rm -rf "$DEST"
     exit 1
 fi
-
-# A --no-tray install stays one.
-DEPLOY_ARGS=()
-[ -x /usr/local/bin/vinoauthface-tray ] || DEPLOY_ARGS+=(--no-tray)
 
 printf '\n'
 cd "$DEST"
