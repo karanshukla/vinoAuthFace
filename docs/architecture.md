@@ -44,6 +44,11 @@ Installs from before SCRFD used the box-only `version-slim-320.onnx`
 MIT); vinoAuthFace falls back to it when `det_500m.onnx` isn't installed. The detector is part of
 the templates' model tag, so switching means re-enrolling.
 
+`detector_model_path` can also name a BlazeFace-style detector that outputs the same five points:
+896 anchors, a 128x128 input, outputs named `regressors` and `classificators`. vinoAuthFace tells
+the three formats apart by their outputs and decodes each its own way (`blazeface.rs` runs a
+second pass on a crop around the face). None ships with vinoAuthFace.
+
 tract 0.21 mis-evaluated SCRFD's upsampling (`Resize` given sizes and empty scales resizes
 nothing), so `detector.rs` rewires those nodes to explicit ×2 scales before loading. The rewrite
 is still applied on tract 0.23; whether 0.23 still needs it hasn't been checked.
@@ -87,7 +92,8 @@ crates/
     src/
       capture.rs           # V4L2 capture, formats, IR auto-detect, sysfs identity
       config.rs            # Layered config + narrowing overlay for PAM, camera pin check
-      detector.rs          # Frame quality gates + face detection with box decode
+      blazeface.rs         # BlazeFace-style five-point detector: anchors, decode, two passes
+      detector.rs          # Frame quality gates, detector formats, slim box decode
       error.rs             # Error types
       inference.rs         # tract / OpenVINO encoder
       lib.rs               # FaceAuth: auth scan (liveness, lockout) + enrolment

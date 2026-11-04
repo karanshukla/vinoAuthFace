@@ -1,3 +1,4 @@
+pub mod blazeface;
 pub mod cameras;
 pub mod capture;
 pub mod config;

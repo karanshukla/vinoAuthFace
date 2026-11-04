@@ -65,7 +65,7 @@ pub fn preprocess(frame: &IrFrame) -> anyhow::Result<(Array3<f32>, Letterbox)> {
 }
 
 /// Bilinear sample in frame pixel coordinates; outside the frame is 0.
-fn sample(frame: &IrFrame, x: f32, y: f32) -> f32 {
+pub(crate) fn sample(frame: &IrFrame, x: f32, y: f32) -> f32 {
     let (w, h) = (frame.width as i64, frame.height as i64);
     let (x0, y0) = (x.floor(), y.floor());
     let (fx, fy) = (x - x0, y - y0);
