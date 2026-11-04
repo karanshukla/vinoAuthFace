@@ -10,7 +10,7 @@ nav_order: 8
 [tray](tray.md) doesn't need it.
 
 ```bash
-vinoauthface-settings    # or --page face|matching|liveness|camera|models|security|you
+vinoauthface-settings    # or --page face|matching|liveness|camera|models|security|you|about
 ```
 
 ## Install
@@ -39,6 +39,7 @@ no window. Later deploys and `update.sh` keep it; `--no-settings` and `uninstall
 | Models | `model_path`, `detector_model_path`, `backend`, `npu_device` |
 | Security | `guards.*`, `lockout.*`, `seal_embeddings`, `embeddings_dir`, `update_check` |
 | Just you | Your own file: stricter thresholds, scan timing, your IR camera, `tray_idle_minutes` |
+| About | The version, and links to vinopilot.ca and the other vinoPilot apps |
 
 Each key is described in [configuration.md](configuration.md) and
 [`config/face-auth.toml.example`](https://github.com/karanshukla/vinoAuthFace/blob/main/config/face-auth.toml.example).
