@@ -30,6 +30,9 @@ exceptions = [
     # Public-domain dedication. The tray's StatusNotifierItem; never linked
     # into face-auth.
     { crate = "ksni", allow = ["Unlicense"] },
+    # vino-ui's embedded Inter and JetBrains Mono fonts. The tray builds it
+    # with default-features = false, which leaves them (and egui) out.
+    { crate = "vino-user-interface", allow = ["OFL-1.1"] },
 ]
 
 [bans]

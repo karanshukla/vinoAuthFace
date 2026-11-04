@@ -21,6 +21,8 @@ dirs = { workspace = true }
 libc = "0.2"
 # Pure Rust StatusNotifierItem over zbus; zbus again for notifications.
 ksni = { version = "0.3.6", default-features = false, features = ["blocking", "async-io"] }
+# The vinoPilot apps and the tray menu icons every vinoPilot tray shares; no egui.
+vino-ui = { package = "vino-user-interface", version = "0.2.4", default-features = false }
 zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }
 
 [features]
