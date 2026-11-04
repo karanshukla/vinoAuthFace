@@ -10,7 +10,7 @@ nav_order: 8
 [tray](tray.md) doesn't need it.
 
 ```bash
-vinoauthface-settings    # or --page matching|liveness|camera|models|security|you
+vinoauthface-settings    # or --page face|matching|liveness|camera|models|security|personal
 ```
 
 ## Install
@@ -38,14 +38,14 @@ no window. Later deploys and `update.sh` keep it; `--no-settings` and `uninstall
 | Camera | `device`, `bind_camera`, the camera pin (remove only) |
 | Models | `model_path`, `detector_model_path`, `backend`, `npu_device` |
 | Security | `guards.*`, `lockout.*`, `seal_embeddings`, `embeddings_dir`, `update_check` |
-| Just you | Your own file: stricter thresholds, scan timing, your IR camera, `tray_idle_minutes` |
+| Personal settings | Your own file: stricter thresholds, scan timing, your IR camera, `tray_idle_minutes` |
 
 Each key is described in [configuration.md](configuration.md) and
 [`config/face-auth.toml.example`](https://github.com/karanshukla/vinoAuthFace/blob/main/config/face-auth.toml.example).
 
 ## Saving
 
-**Just you** saves as you change it. A value looser than the computer's shows as "Ignored", as
+**Personal settings** saves as you change it. A value looser than the computer's shows as "Ignored", as
 authentication ignores it.
 
 **The other pages** apply to everyone, so changes wait for **Apply…**: one administrator
