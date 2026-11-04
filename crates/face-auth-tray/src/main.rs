@@ -484,7 +484,6 @@ impl ksni::Tray for Tray {
         menu.push(item("Open documentation", MenuIcon::Help.name(), true, |_| {
             let _ = Command::new("xdg-open").arg(DOCS).stdin(Stdio::null()).spawn();
         }));
-        menu.push(apps_menu());
         menu.push(item("Quit", MenuIcon::Quit.name(), true, |t| {
             let _ = t.tx.send(Msg::Quit);
         }));
@@ -493,8 +492,9 @@ impl ksni::Tray for Tray {
     }
 }
 
-/// vinopilot.ca and the other vinoPilot apps, the same submenu every
-/// vinoPilot tray ends with.
+/// vinopilot.ca and the other vinoPilot apps. The settings window lists them
+/// on its About page, so the tray only carries them in its own Settings
+/// submenu, for when that window isn't installed.
 fn apps_menu() -> MenuItem<Tray> {
     let link = |label: &str, url: &'static str, icon: &str| -> MenuItem<Tray> {
         item(label, icon, true, move |_| {
@@ -548,6 +548,8 @@ fn settings_menu(status: &Status, idle: bool, idle_minutes: u64) -> Vec<MenuItem
         menu.push(MenuItem::Separator);
     }
     menu.extend(idle_radio(idle_minutes));
+    menu.push(MenuItem::Separator);
+    menu.push(apps_menu());
     menu
 }
 
@@ -1091,14 +1093,40 @@ mod tests {
         all
     }
 
+    fn apps_submenu(items: &[MenuItem<Tray>]) -> Option<&SubMenu<Tray>> {
+        items.iter().find_map(|i| match i {
+            MenuItem::SubMenu(m) if m.label == APPS_MENU => Some(m),
+            _ => None,
+        })
+    }
+
     #[test]
-    fn the_menu_ends_with_the_other_apps_then_quit() {
+    fn the_menu_ends_with_quit_and_leaves_the_other_apps_to_settings() {
+        let mut s = status(Some("/dev/video2"), Some(true));
+        s.settings_window = true;
+        let menu = tray(s).menu();
+        let [.., MenuItem::Standard(quit)] = menu.as_slice() else {
+            panic!("the menu should end with Quit");
+        };
+        assert_eq!(quit.label, "Quit");
+        assert!(apps_submenu(&menu).is_none(), "the settings window's About page lists the other apps");
+    }
+
+    #[test]
+    fn the_settings_submenu_ends_with_the_other_apps() {
         let menu = tray(status(Some("/dev/video2"), Some(true))).menu();
-        let [.., MenuItem::SubMenu(apps), MenuItem::Standard(quit)] = menu.as_slice() else {
-            panic!("the menu should end with a submenu, then Quit");
+        assert!(apps_submenu(&menu).is_none(), "the other apps sit under Settings, not at the top");
+        let settings = menu
+            .iter()
+            .find_map(|i| match i {
+                MenuItem::SubMenu(m) if m.label == "Settings" => Some(m),
+                _ => None,
+            })
+            .expect("without the settings window, Settings is a submenu");
+        let Some(MenuItem::SubMenu(apps)) = settings.submenu.last() else {
+            panic!("the Settings submenu should end with the other apps");
         };
         assert_eq!(apps.label, APPS_MENU);
-        assert_eq!(quit.label, "Quit");
         let labels: Vec<&str> = apps
             .submenu
             .iter()
