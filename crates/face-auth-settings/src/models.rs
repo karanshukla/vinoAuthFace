@@ -44,9 +44,11 @@ fn check(kind: Kind, path: &str) -> anyhow::Result<String> {
         }
         Kind::Detector => {
             let detector = FaceDetector::new(path, 0.5, "tract", "CPU")?;
+            // Any kind but the slim one gives the five points; matched this way
+            // so a new detector format needs nothing here.
             Ok(match detector.kind() {
-                DetectorKind::Scrfd => "Loads as SCRFD: faces are aligned by their landmarks.".into(),
                 DetectorKind::Slim => "Loads as a box-only detector: faces are cropped, not aligned.".into(),
+                _with_points => "Loads, with five face points: faces are aligned by them.".into(),
             })
         }
     }
@@ -78,7 +80,10 @@ mod tests {
         }
         let detector = "/usr/local/share/face-auth/det_500m.onnx";
         if std::path::Path::new(detector).exists() {
-            assert!(check(Kind::Detector, detector).unwrap().starts_with("Loads as SCRFD"));
+            assert_eq!(
+                check(Kind::Detector, detector).unwrap(),
+                "Loads, with five face points: faces are aligned by them."
+            );
             // A detector in the recognition slot can load, but doesn't give 512.
             let wrong = check(Kind::Encoder, detector).unwrap_or_else(|e| e.to_string());
             assert!(!wrong.contains("gives 512 values"), "{wrong}");

@@ -91,7 +91,7 @@ Off-angle templates can raise impostor scores, so measure before and after with
 ## Your own models
 
 **Check**, beside each model path, loads the model with tract on the CPU and reports what it
-found: values per face (the shipped models give 512), or SCRFD vs box-only for a detector.
+found: values per face (the shipped models give 512), or whether a detector gives the five face points.
 
 Copy a model where only root can write before picking it:
 
