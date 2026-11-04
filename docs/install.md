@@ -263,6 +263,9 @@ sudo ./uninstall.sh           # binaries, models, config, PAM changes, camera pi
 sudo ./uninstall.sh --purge   # ...plus face templates and the face-auth group
 ```
 
+Without the repo (a release install), every deploy leaves a copy at
+`/usr/local/share/face-auth/uninstall.sh`.
+
 PAM goes first, before any binary is removed: it strips the vinoAuthFace line from each service
 and deletes the `.face-auth.bak` backups rather than restoring them, so edits made since the
 install (a distro update, your own) are kept. It removes a PAM override (`polkit-1`, KDE, COSMIC)

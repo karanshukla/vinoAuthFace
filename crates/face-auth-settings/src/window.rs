@@ -341,7 +341,8 @@ impl SettingsWindow {
     }
 
     /// A path typed in a field, set when the field loses focus. Empty means
-    /// the default. `check` adds a button that loads the model.
+    /// the default. `check` adds a button that loads the model. A path that
+    /// isn't `editable` is shown, not typed in: it stays as the file has it.
     #[allow(clippy::too_many_arguments)]
     fn path(
         &mut self,
@@ -352,6 +353,7 @@ impl SettingsWindow {
         default: &str,
         dir: bool,
         check: Option<models::Kind>,
+        editable: bool,
     ) {
         let current = self.system.raw(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
         let effective = if current.is_empty() { default.to_string() } else { current.clone() };
@@ -392,7 +394,7 @@ impl SettingsWindow {
                 run_check = a11y::for_what(button, title).clicked();
             }
             let width = ui.available_width().min(320.0);
-            let field = named(ui.add(widgets::field(&mut draft, default, width)));
+            let field = named(ui.add(widgets::field(&mut draft, default, width).interactive(editable)));
             commit = field.lost_focus();
             editing = field.has_focus();
             if !draft.is_empty() {
@@ -815,7 +817,7 @@ impl SettingsWindow {
         widgets::group_label(ui, "Recognition");
         widgets::group_help(
             ui,
-            "Only files root owns. To add one: sudo install -m 644 model.onnx /usr/local/share/face-auth/",
+            "Shown, not changed here: a new model means everyone enrols again. Edit /etc/face-auth.toml to switch.",
         );
         widgets::group(ui, |ui| {
             self.path(
@@ -826,6 +828,7 @@ impl SettingsWindow {
                 DEFAULT_MODEL,
                 false,
                 Some(models::Kind::Encoder),
+                false,
             );
             self.path(
                 ui,
@@ -835,6 +838,7 @@ impl SettingsWindow {
                 DEFAULT_DETECTOR,
                 false,
                 Some(models::Kind::Detector),
+                false,
             );
             let tag = c.model_tag();
             let old = was.as_ref().map(FaceAuthConfig::model_tag).unwrap_or_else(|| tag.clone());
@@ -1001,6 +1005,7 @@ impl SettingsWindow {
                 limits::DEFAULT_EMBEDDINGS_DIR,
                 true,
                 None,
+                true,
             );
         });
         ui.add_space(20.0);

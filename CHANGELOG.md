@@ -17,7 +17,12 @@ replayed on top:
   paths that anyone but root can write. Check loads a model before anyone
   re-enrols with it. Its Face page runs guided enrolment (`vinoauthface
   enroll --guided`, #19): six steps, poses measured from the detector's landmarks,
-  about ten templates. The tray is unchanged. See `docs/settings.md`.
+  about ten templates. See `docs/settings.md`. The model paths are shown
+  read-only for now; edit `/etc/face-auth.toml` to change them.
+- **A shorter tray menu.** Uninstall (and its helper verb and polkit action),
+  "Enrol again from scratch", and the update's "What's new" and "Installed"
+  lines are gone. With the settings window installed, Settings opens it
+  instead of the tray's submenu.
 - **SCRFD matches the face nearest the camera.** It took the most confident
   face in the frame, which can be someone standing behind you: on CBSR NIR it
   picked a person in the background in 11 of 3,940 images. It now takes the

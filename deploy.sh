@@ -825,7 +825,7 @@ fi
 # not be left behind, still runnable.
 rm -f "$BIN_DIR/face-auth" "$BIN_DIR/face-enroll" "$BIN_DIR/face-auth-tray" \
     /usr/local/libexec/face-auth-helper /usr/local/share/bash-completion/completions/face-enroll
-# The tray's uninstall entry runs this copy; the repo may be long gone.
+# So uninstalling works after the repo is long gone.
 install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"
 # The same for the tray's login-screen entries.
 install -D -o root -g root -m 0755 login-mode.sh "$SHARE_DIR/login-mode.sh"

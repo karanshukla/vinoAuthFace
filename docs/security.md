@@ -38,7 +38,7 @@ report a vulnerability, see [SECURITY.md](https://github.com/karanshukla/vinoAut
   desktop session; `guards.seat_check` below covers that for accounts other than the one at the
   seat.
 - **The tray acts only through a fixed root helper.** The optional tray runs as the user. For
-  enrol, retrain and uninstall it runs `vinoauthface-helper` through pkexec. The helper takes one verb,
+  enrol, retrain and upgrade it runs `vinoauthface-helper` through pkexec. The helper takes one verb,
   no flags, and acts only for `PKEXEC_UID`. A face match can approve those polkit prompts, the same
   as `sudo`. See [tray.md](tray.md#privileges).
 - **Only the user at the seat (opt-in).** With `guards.seat_check = true`, vinoAuthFace reads

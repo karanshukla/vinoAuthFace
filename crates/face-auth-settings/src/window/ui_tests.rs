@@ -280,6 +280,22 @@ fn a_new_model_says_everyone_enrols_again() {
 }
 
 #[test]
+fn the_model_paths_cannot_be_typed_in() {
+    let (w, _, _) = window(Page::Models, "locked", None, refuse);
+    let mut h = harness(w, WIDE, Theme::Light);
+    let before = h.state().system.values().model_tag();
+    for label in ["Recognition model", "Detector model"] {
+        h.get_by_role_and_label(Role::TextInput, label).click();
+        settle(&mut h);
+        h.get_by_role_and_label(Role::TextInput, label).type_text("/tmp/mine.onnx");
+        h.key_press(egui::Key::Enter);
+        settle(&mut h);
+    }
+    assert_eq!(h.state().system.values().model_tag(), before);
+    assert!(h.query_by_role_and_label(Role::Button, "Apply…").is_none(), "nothing changed");
+}
+
+#[test]
 fn a_model_path_users_can_write_is_flagged_before_apply() {
     let (w, _, _) = window(Page::Models, "untrusted", None, refuse);
     let mut h = harness(w, WIDE, Theme::Light);
