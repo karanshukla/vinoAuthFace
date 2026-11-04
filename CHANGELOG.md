@@ -10,6 +10,14 @@ replayed on top:
   names and shapes, not only their count, and a third format is supported: a
   BlazeFace-style detector with the five alignment points (896 anchors,
   128x128 input, two passes). SCRFD and the slim detector are unchanged.
+- **Settings window.** `vinoauthface-settings` (optional, `deploy.sh
+  --with-settings`) covers every config key on vino-ui. System changes wait
+  for one Apply and one admin prompt, through a new helper verb,
+  `write-config`, which validates the file and refuses model or template
+  paths that anyone but root can write. Check loads a model before anyone
+  re-enrols with it. Its Face page runs guided enrolment (`vinoauthface
+  enroll --guided`, #19): six steps, poses measured from SCRFD's landmarks,
+  about ten templates. The tray is unchanged. See `docs/settings.md`.
 - **SCRFD matches the face nearest the camera.** It took the most confident
   face in the frame, which can be someone standing behind you: on CBSR NIR it
   picked a person in the background in 11 of 3,940 images. It now takes the

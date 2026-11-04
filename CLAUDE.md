@@ -83,7 +83,7 @@ camera.
 
 ### Workspace layout
 
-Six crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/debug/tray shims:
+Seven crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/debug/tray/GUI shims:
 
 - **`crates/face-auth-core`**: The library. Camera I/O, detection, inference, preprocessing,
   storage, verification, config, lockout. Everything below refers to files here unless noted.
@@ -116,10 +116,19 @@ Six crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM/d
   which replaces upstream's GTK GUI. Two binaries: `vinoauthface-tray` (per-user, `ksni`
   StatusNotifierItem, never in the auth path; spots scans by `vinoauthface-auth` in `/proc`, reads
   enrolment via `vinoauthface-auth --enrolled`) and `vinoauthface-helper`, the only thing its polkit policy
-  lets pkexec run. The helper takes one verb (`enrol|retrain|uninstall|upgrade|login-off|login-both|login-face`), no flags, and the
-  target user from `PKEXEC_UID` only; keep it that way, and keep ksni/zbus out of it. `data/` holds the
+  lets pkexec run. The helper takes one verb (`enrol|retrain|enrol-guided|retrain-guided|uninstall|upgrade|login-off|login-both|login-face|set-*|write-config`), no flags, and the
+  target user from `PKEXEC_UID` only; keep it that way, and keep ksni/zbus out of it. `write-config` is
+  the one verb with caller-chosen content (a new `/etc/face-auth.toml` on stdin, from the settings
+  window); `face-auth-core/src/config_write.rs` checks it, and a new system-policy key that picks what
+  is compared (like `model_path`) needs a `trusted_path` check there. `data/` holds the
   policy, desktop files and the generated icon (`FACE_AUTH_BLESS_ICONS=1 cargo test -p
   face-auth-tray` after changing `icon.rs`).
+- **`crates/face-auth-settings`**: `vinoauthface-settings`, the egui settings window on the shared
+  vino-ui crate (vinoUserInterface, from crates.io), covering every key; see `docs/settings.md`.
+  Host (glibc) only, never in the musl builds: winit and glow dlopen the desktop's libraries.
+  `keys.rs` lists every `FaceAuthConfig` key (a test fails when one is missing) and edits the
+  file line by line; changes to `/etc` go through the helper's `write-config`. A new config key
+  needs a `Key` there and a row in `window.rs`.
 
 `with_ov_core` (inference.rs) preloads `/usr/local/lib/face-auth/npu` before the first Core:
 deploy.sh's root copy of the user's `ovfetch npu install` prefix (ovfetch 0.6.0), the compiler
@@ -129,7 +138,7 @@ dir exists only when `ovfetch detect` reported an `npu_prefix` on the last deplo
 is the NPU; deploy removes it otherwise. The linuxlab VM has no NPU, so this path only runs on the
 laptop.
 
-The `npu` Cargo feature (on `face-auth-core`, propagated through the other five crates) swaps
+The `npu` Cargo feature (on `face-auth-core`, propagated through the other crates but the settings window) swaps
 the inference backend from pure-Rust `tract-onnx` (CPU) to `openvino` (NPU/GPU/CPU via OpenVINO
 runtime); see `#[cfg(feature = "npu")]` in `inference.rs` and `detector.rs`. Backend selection
 at runtime is `config.backend()` (`"tract"` default or `"openvino"`) plus `config.npu_device()`

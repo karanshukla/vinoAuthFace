@@ -8,6 +8,7 @@ nav_order: 3
 Every key is documented in [`config/face-auth.toml.example`](https://github.com/karanshukla/vinoAuthFace/blob/main/config/face-auth.toml.example),
 which is grouped: everyday settings, liveness, lockout, guards, install/hardware, advanced. This
 page covers which config sources are trusted where, enrolment, and choosing a recognition model.
+The [settings window](settings.md) edits both files without opening either.
 
 ## Config sources
 
@@ -93,7 +94,11 @@ Face templates are root-owned, so enrolment needs root:
 ```bash
 sudo vinoauthface enroll --user $USER    # replace templates with a new capture (30 frames)
 sudo vinoauthface improve --user $USER   # append, for other lighting or angles
+sudo vinoauthface enroll --guided --user $USER   # six measured poses, about ten templates
 ```
+
+`--guided` (also for `improve`) keeps only frames that show the poses it asks for. See
+[settings.md](settings.md#guided-enrolment).
 
 30 frames gives enough pose and expression variation from one sitting. Running `improve` in
 different lighting is the biggest gain beyond that. A user can store at most 256 embeddings;

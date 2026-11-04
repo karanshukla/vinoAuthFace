@@ -593,7 +593,7 @@ pub fn name_suggests_ir(name: &str) -> bool {
 /// and its name is just a module parameter, so it is never auto-detected or
 /// accepted from a user's config, however IR-like its name. Root can still
 /// name one with `device` in the system config, e.g. for testing.
-fn is_physical(path: &str) -> bool {
+pub fn is_physical(path: &str) -> bool {
     device_bus_path(path).is_ok_and(|p| !p.contains("/virtual/"))
 }
 
