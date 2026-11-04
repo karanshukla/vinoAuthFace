@@ -71,7 +71,7 @@ The Face page enrols you in six steps instead of 30 frames of one pose: straight
 each way, a slight tilt up and down, then glasses off or on. It keeps about ten templates; matching
 takes the best one, so varied templates cover more of how you're seen.
 
-Poses are measured from SCRFD's five landmarks, relative to your own straight-on pose. A frame
+Poses are measured from the detector's five landmarks, relative to your own straight-on pose. A frame
 counts once the pose is held for two frames with the eyes at least 30 px apart, and near-copies of
 a kept frame are skipped. Your first turn sets which side is which, so a mirrored image works. A
 step not done in 20 s is skipped; only straight on is required.

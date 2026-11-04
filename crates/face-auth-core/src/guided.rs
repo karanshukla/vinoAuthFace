@@ -5,8 +5,8 @@
 //! that differ (a slight turn, a tilt, glasses on and off) cover more of how
 //! the user will be seen at unlock than many of one pose. Each step says what
 //! to do and only keeps frames whose pose shows it was done: the pose comes
-//! from SCRFD's five landmarks, so guided enrolment needs a detector that has
-//! them.
+//! from the detector's five landmarks (SCRFD's, or any other format's), so
+//! guided enrolment needs a detector that has them.
 //!
 //! Left and right, up and down are never assumed: an IR sensor's image may be
 //! mirrored, and which way a tilt moves the nose depends on the camera's
@@ -334,9 +334,10 @@ impl FaceAuth {
         progress: &mut dyn FnMut(GuidedProgress),
         control: &mut dyn FnMut() -> Option<Control>,
     ) -> Result<Vec<Vec<f32>>> {
-        if self.detector.kind() != DetectorKind::Scrfd {
+        // Any detector with the five points will do; only the slim one has none.
+        if self.detector.kind() == DetectorKind::Slim {
             bail!(
-                "guided enrolment needs a detector with landmarks (SCRFD, det_500m.onnx); \
+                "guided enrolment needs a detector with the five face points, such as SCRFD (det_500m.onnx); \
                  this one gives a box only"
             );
         }
