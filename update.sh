@@ -188,3 +188,6 @@ else
     [ "$TRAY" = 1 ] && echo "A running tray keeps the old binary until you log out or restart it."
 fi
 echo "Changed models, config, PAM or the SELinux policy still need sudo ./deploy.sh."
+if [ "$TRAY" = 1 ] && [ "$SETTINGS" = 0 ]; then
+    echo "The optional settings window isn't installed: sudo ./deploy.sh --with-settings adds it."
+fi
