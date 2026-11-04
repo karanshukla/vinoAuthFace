@@ -6,6 +6,7 @@ members = [
     "crates/face-camera-diag",
     "crates/face-similarity-check",
     "crates/face-auth-tray",
+    "crates/face-auth-settings",
 ]
 resolver = "2"
 

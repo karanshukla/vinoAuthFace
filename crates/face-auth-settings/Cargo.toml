@@ -1,0 +1,30 @@
+[package]
+name = "face-auth-settings"
+version = "0.1.0"
+edition = "2021"
+# egui 0.37, vino-ui's
+rust-version = "1.95"
+license.workspace = true
+publish.workspace = true
+autobins = false
+
+[[bin]]
+name = "vinoauthface-settings"
+path = "src/main.rs"
+
+# The settings window. Runs as the user: it reads /etc/face-auth.toml and
+# edits ~/.config/face-auth.toml itself, and hands a new /etc/face-auth.toml
+# to vinoauthface-helper through pkexec. Never in the auth path, and like the
+# tray never built for musl: winit and glow dlopen the desktop's libraries.
+[dependencies]
+face-auth-core = { path = "../face-auth-core" }
+anyhow = { workspace = true }
+dirs = { workspace = true }
+toml = "1.1"
+# Only to hand the model check an empty face.
+tract-onnx = { workspace = true }
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "persistence"] }
+vino-ui = { package = "vino-user-interface", version = "0.2.3" }
+
+[dev-dependencies]
+egui_kittest = { version = "0.37", default-features = false }

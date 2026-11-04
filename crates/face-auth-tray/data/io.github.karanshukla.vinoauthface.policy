@@ -9,6 +9,9 @@
   with caller-chosen flags. The helper acts only for PKEXEC_UID.
   auth_admin, never yes: every action changes who a face unlocks, what unlocks the login
   screen, how strict matching is, or (upgrade) runs a downloaded deploy.sh as root.
+  write-config is the one whose content the caller supplies (the settings window's new
+  /etc/face-auth.toml, on stdin); the helper validates it and refuses model or template
+  paths that anyone but root could write.
 -->
 <policyconfig>
   <vendor>vinoAuthFace</vendor>
@@ -228,5 +231,39 @@
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">set-updates-off</annotate>
+  </action>
+  <action id="io.github.karanshukla.vinoauthface.write-config">
+    <description>Change face unlock settings</description>
+    <message>Authentication is required to change face unlock settings for everyone on this computer</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">write-config</annotate>
+  </action>
+  <action id="io.github.karanshukla.vinoauthface.enrol-guided">
+    <description>Enrol your face, guided through a few poses</description>
+    <message>Authentication is required to enrol your face</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">enrol-guided</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.retrain-guided">
+    <description>Add guided poses to your enrolled face</description>
+    <message>Authentication is required to retrain your face</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">retrain-guided</annotate>
   </action>
 </policyconfig>

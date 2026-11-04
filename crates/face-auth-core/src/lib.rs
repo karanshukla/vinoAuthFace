@@ -1,9 +1,11 @@
 pub mod cameras;
 pub mod capture;
 pub mod config;
+pub mod config_write;
 pub mod detector;
 pub mod environment;
 pub mod error;
+pub mod guided;
 pub mod inference;
 pub mod lockout;
 pub mod preprocess;
@@ -574,6 +576,50 @@ impl FaceAuth {
         // needs no re-enrolment.
         cameras::record(user, &self.config.embeddings_dir(), cameras::camera_id(&device).as_deref(), true)?;
         Ok(saved)
+    }
+
+    /// Guided enrolment (see [`guided`]): replace the user's templates, or
+    /// add to them with `append`, from the poses its steps ask for. Returns
+    /// the templates added and the total. Nothing is saved if it fails or
+    /// `control` cancels.
+    pub fn enroll_guided(
+        &mut self,
+        user: &str,
+        append: bool,
+        progress: &mut dyn FnMut(guided::GuidedProgress),
+        control: &mut dyn FnMut() -> Option<guided::Control>,
+    ) -> Result<(usize, usize)> {
+        self.config.verify_pinned_camera()?;
+        let mut store = if append {
+            let store = match EmbeddingStore::load(user, &self.config.embeddings_dir()) {
+                Ok(s) => s,
+                Err(e) if matches!(e.downcast_ref::<FaceAuthError>(), Some(FaceAuthError::NoEmbeddings)) => {
+                    EmbeddingStore::default()
+                }
+                Err(e) => return Err(e.context("refusing to append: existing embeddings unreadable")),
+            };
+            self.check_model_tag(&store)?;
+            store
+        } else {
+            EmbeddingStore::default()
+        };
+        let existing = store.embeddings.len();
+        let most: usize = guided::Step::ALL.iter().map(|s| s.wanted()).sum();
+        crate::storage::check_room(existing, most)?;
+        let device = self.config.device()?;
+        let mut cam = Camera::open(&device)?;
+        for embedding in self.capture_guided(&mut cam, progress, control)? {
+            store.add_embedding(embedding);
+        }
+        let total = store.embeddings.len();
+        store.save_with(
+            user,
+            &self.config.embeddings_dir(),
+            &self.config.model_tag(),
+            self.config.seal_embeddings(),
+        )?;
+        cameras::record(user, &self.config.embeddings_dir(), cameras::camera_id(&device).as_deref(), !append)?;
+        Ok((total - existing, total))
     }
 
     /// Append to the user's enrolled embeddings, improving coverage across

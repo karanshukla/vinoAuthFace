@@ -109,12 +109,13 @@ rm -f "$ZSH_COMPLETION_DIR/_vinoauthface" "$FISH_COMPLETION_DIR/vinoauthface.fis
 # uninstall entry finishes; one started some other way keeps running until
 # logout, with nothing left for it to call.
 rm -f "$BIN_DIR/vinoauthface-tray" /usr/local/libexec/vinoauthface-helper \
-    "$BIN_DIR/face-auth-tray" /usr/local/libexec/face-auth-helper
+    "$BIN_DIR/face-auth-tray" /usr/local/libexec/face-auth-helper "$BIN_DIR/vinoauthface-settings"
 rm -f /usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
 rm -f /usr/local/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
 rm -f /etc/xdg/autostart/vinoauthface-tray.desktop
 rm -f /usr/local/share/applications/vinoauthface-tray.desktop
 rm -f /usr/local/share/applications/vinoauthface-enrol.desktop
+rm -f /usr/local/share/applications/vinoauthface-settings.desktop
 rm -f /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
 rm -f /usr/local/share/icons/hicolor/symbolic/apps/vinoauthface{,-scanning,-attention}-symbolic.svg
 rm -rf "$NPU_CACHE_DIR"
