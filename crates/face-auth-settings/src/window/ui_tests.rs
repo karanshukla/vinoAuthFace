@@ -27,8 +27,12 @@ fn window(page: Page, name: &str, user: Option<&str>, runner: apply::Runner) -> 
         std::fs::write(&mine, text).unwrap();
     }
     let mut w = SettingsWindow::with(Some(page), system.clone(), mine.clone(), runner, true);
-    w.cameras = vec![("/dev/video2".into(), "Integrated IR Camera".into())];
     w.ir_cameras = vec!["/dev/video2".into()];
+    w.cameras = vec![
+        Cam { path: "/dev/video2".into(), name: "Integrated IR Camera".into(), ir: true, virtual_: false },
+        Cam { path: "/dev/video0".into(), name: "Integrated Camera".into(), ir: false, virtual_: false },
+        Cam { path: "/dev/video10".into(), name: "Dummy video device".into(), ir: false, virtual_: true },
+    ];
     (w, system, mine)
 }
 
@@ -285,4 +289,32 @@ fn a_model_path_users_can_write_is_flagged_before_apply() {
     let flagged = h.query_all_by_label_contains("Apply will refuse this:");
     assert_eq!(flagged.count(), 1);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_camera_list_puts_ir_sensors_first_and_virtual_ones_last() {
+    let cam = |path: &str, ir, virtual_| Cam { path: path.into(), name: String::new(), ir, virtual_ };
+    // Numeric order, as list_video_devices gives it: the loopback is video0.
+    let mut list = vec![cam("/dev/video0", false, true), cam("/dev/video1", false, false), cam("/dev/video2", true, false)];
+    sort_cameras(&mut list, &["/dev/video2".into()]);
+    let order: Vec<_> = list.iter().map(|c| c.path.as_str()).collect();
+    assert_eq!(order, ["/dev/video2", "/dev/video1", "/dev/video0"]);
+}
+
+#[test]
+fn auto_detect_names_its_pick_and_a_virtual_camera_is_flagged() {
+    let (w, _, _) = window(Page::Camera, "camera", None, refuse);
+    let mut h = harness(w, WIDE, Theme::Light);
+    // The shipped example sets no device: auto-detect, and what it would pick.
+    let shown = |h: &Harness<'_, SettingsWindow>| {
+        h.get_by_role_and_label(Role::ComboBox, "IR camera").accesskit_node().value().map(|v| v.to_string())
+    };
+    assert_eq!(shown(&h).as_deref(), Some("Auto-detect: Integrated IR Camera (/dev/video2)"));
+    h.state_mut().set(false, keys::DEVICE, Some(keys::string("/dev/video10")));
+    settle(&mut h);
+    assert_eq!(shown(&h).as_deref(), Some("Dummy video device (/dev/video10), virtual"));
+    h.get_by_label("A virtual camera: any program can feed it frames, a photo included. For testing only.");
+    h.state_mut().set(false, keys::DEVICE, Some(keys::string("/dev/video0")));
+    settle(&mut h);
+    h.get_by_label("Not an IR sensor: face unlock needs greyscale IR frames.");
 }

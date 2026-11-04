@@ -45,7 +45,9 @@ impl Page {
 
     pub fn parse(name: &str) -> Option<Page> {
         let name = name.to_ascii_lowercase();
-        Page::ALL.into_iter().find(|page| page.title().to_ascii_lowercase() == name || page.slug() == name)
+        Page::ALL.into_iter().find(|page| {
+            page.title().to_ascii_lowercase() == name || page.slug() == name || (*page == Page::You && name == "personal")
+        })
     }
 
     fn slug(self) -> &'static str {
@@ -66,7 +68,7 @@ impl Page {
             Page::Camera => "Camera",
             Page::Models => "Models",
             Page::Security => "Security",
-            Page::You => "Just you",
+            Page::You => "Personal settings",
         }
     }
 
@@ -163,8 +165,11 @@ pub struct SettingsWindow {
     runner: apply::Runner,
     helper: bool,
     checks: Checks,
-    /// Every video node, with its sysfs name, and which pass as IR sensors.
-    cameras: Vec<(String, String)>,
+    /// Every video node: IR sensors first, in auto-detect's order, then
+    /// other cameras, then virtual ones.
+    cameras: Vec<Cam>,
+    /// The IR sensors alone, best first: what auto-detect would pick, and all
+    /// a user's own file may name.
     ir_cameras: Vec<String>,
     notice: Option<(Tone, String)>,
     /// Path fields being typed in, by file and key.
@@ -183,8 +188,8 @@ impl SettingsWindow {
             apply::pkexec,
             apply::helper_installed(),
         );
-        window.cameras = cameras();
         window.ir_cameras = capture::enumerate_ir_cameras().into_iter().map(|(path, _)| path).collect();
+        window.cameras = cameras(&window.ir_cameras);
         window.kde_header = theme::kde_header();
         window.follow_text_scale(ctx);
         window
@@ -386,28 +391,42 @@ impl SettingsWindow {
     fn camera(&mut self, ui: &mut egui::Ui, user: bool) {
         let file = if user { &self.user } else { &self.system };
         let current = file.raw(keys::DEVICE).and_then(|v| v.as_str()).map(str::to_string);
-        let name_of = |path: &str| self.cameras.iter().find(|(p, _)| p == path).map(|(_, n)| n.clone());
-        let label = |path: &str| match name_of(path) {
-            Some(name) => format!("{name} ({path})"),
+        let cam = |path: &str| self.cameras.iter().find(|c| c.path == path);
+        let label = |path: &str| match cam(path) {
+            Some(c) if c.ir => format!("{} ({path})", c.name),
+            Some(c) if c.virtual_ => format!("{} ({path}), virtual", c.name),
+            Some(c) => format!("{} ({path}), not IR", c.name),
             None => format!("{path} (not here)"),
         };
         let choices: Vec<String> = if user {
             self.ir_cameras.clone()
         } else {
-            self.cameras.iter().map(|(p, _)| p.clone()).collect()
+            self.cameras.iter().map(|c| c.path.clone()).collect()
         };
         let mut choices: Vec<Option<String>> = std::iter::once(None).chain(choices.into_iter().map(Some)).collect();
         if current.as_ref().is_some_and(|c| !choices.contains(&Some(c.clone()))) {
             choices.push(current.clone());
         }
-        let auto = if user { "This computer's camera" } else { "Auto-detect" };
-        let shown = current.as_deref().map_or_else(|| auto.to_string(), label);
+        // Auto-detect says what it would pick, so it isn't a mystery choice.
+        let auto = match (user, self.ir_cameras.first()) {
+            (true, _) => "This computer's camera".to_string(),
+            (false, Some(best)) => format!("Auto-detect: {}", label(best)),
+            (false, None) => "Auto-detect: no IR sensor found".to_string(),
+        };
+        let shown = current.as_deref().map_or_else(|| auto.clone(), label);
         let (help, tone) = match (&current, user) {
             (Some(path), true) if !self.ir_cameras.contains(path) => {
                 ("Ignored: not an IR sensor on this computer.".to_string(), Tone::Warn)
             }
-            (Some(path), false) if name_of(path).is_none() => {
+            (Some(path), false) if cam(path).is_none() => {
                 (format!("{path} isn't here, so face unlock finds no camera."), Tone::Warn)
+            }
+            (Some(path), false) if cam(path).is_some_and(|c| c.virtual_) => (
+                "A virtual camera: any program can feed it frames, a photo included. For testing only.".to_string(),
+                Tone::Warn,
+            ),
+            (Some(path), false) if cam(path).is_some_and(|c| !c.ir) => {
+                ("Not an IR sensor: face unlock needs greyscale IR frames.".to_string(), Tone::Warn)
             }
             (None, false) => (
                 "The first real IR sensor. Never a virtual camera.".to_string(),
@@ -421,7 +440,7 @@ impl SettingsWindow {
             let width = ui.available_width().min(320.0);
             let combo = widgets::combo(ui, if user { "user-camera" } else { "camera" }, shown, width).show_ui(ui, |ui| {
                 for choice in &choices {
-                    let text = choice.as_deref().map_or_else(|| auto.to_string(), label);
+                    let text = choice.as_deref().map_or_else(|| auto.clone(), label);
                     ui.selectable_value(&mut picked, choice.clone(), text);
                 }
             });
@@ -1085,6 +1104,14 @@ impl SettingsWindow {
                     ui.add_space(14.0);
                     a11y::tab_list(ui, "Pages");
                     for page in Page::ALL {
+                        // Your own settings stand apart from the computer's, under a hairline.
+                        if page == Page::You {
+                            ui.add_space(8.0);
+                            let rect = ui.available_rect_before_wrap();
+                            let y = rect.top() + 0.5;
+                            ui.painter().hline((rect.left() + 8.0)..=(rect.right() - 8.0), y, egui::Stroke::new(1.0, p.rule));
+                            ui.add_space(10.0);
+                        }
                         if widgets::nav_item(ui, page.icon(), page.title(), page.title(), self.page == page, None)
                             .clicked()
                         {
@@ -1194,16 +1221,40 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     }
 }
 
-/// Every video node with its sysfs name.
-fn cameras() -> Vec<(String, String)> {
-    capture::list_video_devices()
+/// A video node, as the camera list shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Cam {
+    pub path: String,
+    pub name: String,
+    /// One auto-detect would consider: real hardware, IR, opens for capture.
+    pub ir: bool,
+    /// A v4l2loopback node: anything can write frames into it.
+    pub virtual_: bool,
+}
+
+/// Every video node, IR sensors first in `ir`'s order (auto-detect's, best
+/// first), then the other real cameras, then virtual ones, each by number.
+fn cameras(ir: &[String]) -> Vec<Cam> {
+    let mut list: Vec<Cam> = capture::list_video_devices()
         .into_iter()
         .map(|path| {
             let node = path.trim_start_matches("/dev/");
             let name = std::fs::read_to_string(format!("/sys/class/video4linux/{node}/name")).unwrap_or_default();
-            (path, name.trim().to_string())
+            Cam {
+                ir: ir.contains(&path),
+                virtual_: !capture::is_physical(&path),
+                name: name.trim().to_string(),
+                path,
+            }
         })
-        .collect()
+        .collect();
+    sort_cameras(&mut list, ir);
+    list
+}
+
+fn sort_cameras(list: &mut [Cam], ir: &[String]) {
+    // Stable: list_video_devices already gives numeric order.
+    list.sort_by_key(|c| (ir.iter().position(|p| *p == c.path).unwrap_or(usize::MAX), c.virtual_));
 }
 
 /// A slider and its number box, both named by the row. Right to left: the
