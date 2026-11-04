@@ -62,7 +62,7 @@ jobs:
       # One at a time: bash -n parses only its first argument, the rest are its $@.
       - name: Syntax-check shell scripts
         run: |
-          for script in deploy.sh uninstall.sh pin-camera.sh update.sh upgrade.sh login-mode.sh setting-mode.sh \
+          for script in deploy.sh setup.sh uninstall.sh pin-camera.sh update.sh upgrade.sh login-mode.sh setting-mode.sh \
               install.sh scripts/*.sh; do
             bash -n "$script"
           done
@@ -72,7 +72,7 @@ jobs:
       - name: shellcheck
         run: |
           shellcheck --version
-          shellcheck -S warning deploy.sh uninstall.sh pin-camera.sh update.sh upgrade.sh login-mode.sh \
+          shellcheck -S warning deploy.sh setup.sh uninstall.sh pin-camera.sh update.sh upgrade.sh login-mode.sh \
             setting-mode.sh install.sh scripts/*.sh
 
       - name: Run unit tests
@@ -392,8 +392,25 @@ jobs:
           cmp /usr/local/libexec/vinoauthface-helper /tmp/fake-release/vinoauthface-helper-x86_64-unknown-linux-musl
           cmp /usr/local/libexec/vinoauthface-unseal /tmp/fake-release/vinoauthface-unseal-x86_64-unknown-linux-musl
 
+      # vinoauthface-setup re-applies PAM on its own, as after a distro update
+      # resets /etc/pam.d. It refuses with nothing installed (checked after
+      # the uninstall below).
+      - name: vinoauthface-setup restores PAM
+        run: |
+          test "$(readlink /usr/local/bin/vinoauthface-setup)" = /usr/local/share/face-auth/setup.sh
+          test -f /usr/local/share/face-auth/selinux/face-auth.te
+          test -x /usr/local/bin/vinoauthface-pin-camera
+          sudo sed -i '/pam_exec\.so.*face-auth/d' /etc/pam.d/sudo
+          sudo vinoauthface-setup
+          test "$(grep -c 'pam_exec\.so.*face-auth' /etc/pam.d/sudo)" = 1
+          # Idempotent: a second run doesn't add a second line.
+          sudo vinoauthface-setup
+          test "$(grep -c 'pam_exec\.so.*face-auth' /etc/pam.d/sudo)" = 1
+          if sudo vinoauthface-setup --login=nope; then exit 1; fi
+
       # The same fake release, plus a source bundle built the way release.yml builds it.
-      - name: vinoauthface-upgrade installs from the source bundle
+      # A CPU install's upgrade goes through install.sh: release binaries, no build.
+      - name: vinoauthface-upgrade installs the release binaries
         run: |
           git archive --format=tar.gz --prefix=vinoauthface-v999/ \
             --add-virtual-file="vinoauthface-v999/VERSION:v999" \
@@ -403,19 +420,45 @@ jobs:
             sudo env PATH="/usr/sbin:/usr/bin:/sbin:/bin" FACE_AUTH_DEPLOY_RELEASE_BASE="file:///tmp/fake-release" \
               /usr/local/bin/vinoauthface-upgrade "$@"
           }
-          upgrade v999
-          test "$(cat "$HOME/.cache/vinoauthface/src/v999/VERSION")" = v999
+          upgrade v999 | tee /tmp/upgrade.log
+          grep -q 'downloading release binaries' /tmp/upgrade.log
           test "$(readlink /usr/local/bin/vinoauthface-update)" = vinoauthface-upgrade
-          test "$(stat -c %U "$HOME/.cache/vinoauthface/src/v999/deploy.sh")" = "$(id -un)"
           cmp /usr/local/bin/vinoauthface-auth /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
+          test ! -e "$HOME/.cache/vinoauthface"
           # Asking for v998 fetches the v999 bundle from the override: refused.
           if upgrade v998; then echo "installed a bundle for the wrong release"; exit 1; fi
+
+      # The one-line installer, piped into bash the way the README has it. Rust is back on
+      # the PATH: --prebuilt must install the release binaries all the same.
+      - name: install.sh installs a release without building
+        run: |
+          mv "$HOME/.cargo/bin.hidden" "$HOME/.cargo/bin"
+          sudo ./uninstall.sh
+          install_sh() {
+            sudo env FACE_AUTH_DEPLOY_RELEASE_BASE="file:///tmp/fake-release" bash -s -- "$@" < install.sh
+          }
+          install_sh v999 --with-settings | tee /tmp/install.log
+          grep -q 'downloading release binaries' /tmp/install.log
+          if grep -q 'Compiling\|building' /tmp/install.log; then exit 1; fi
+          # The fake release has no settings window: warned about, not fatal.
+          grep -q 'No settings window' /tmp/install.log
+          cmp /usr/local/bin/vinoauthface-auth /tmp/fake-release/vinoauthface-auth-x86_64-unknown-linux-musl
+          cmp /usr/local/bin/vinoauthface-tray /tmp/fake-release/vinoauthface-tray-x86_64-unknown-linux-musl
+          test "$(stat -c %U:%G:%a /usr/local/bin/vinoauthface-auth)" = root:face-auth:2755
+          grep -q 'pam_exec\.so.*face-auth' /etc/pam.d/sudo
+          # An option deploy.sh doesn't know stops it before anything changes.
+          if install_sh v999 --nope; then exit 1; fi
           # A bundle SHA256SUMS doesn't match: refused before anything unpacks.
           echo tampered >> /tmp/fake-release/vinoauthface-source.tar.gz
-          if upgrade v999 --force; then echo "installed a tampered bundle"; exit 1; fi
+          if install_sh v999; then echo "installed a tampered bundle"; exit 1; fi
           sudo ./uninstall.sh
           test ! -e /usr/local/bin/vinoauthface-upgrade
           test ! -L /usr/local/bin/vinoauthface-update
+          test ! -e /usr/local/bin/vinoauthface-setup
+          test ! -e /usr/local/bin/vinoauthface-uninstall
+          test ! -e /usr/local/bin/vinoauthface-pin-camera
+          if sudo bash setup.sh; then echo "setup ran with nothing installed"; exit 1; fi
+          if grep -q face-auth /etc/pam.d/sudo; then exit 1; fi
 
       - name: Cleanup
         if: always()

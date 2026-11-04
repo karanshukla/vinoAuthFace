@@ -20,7 +20,7 @@ UDEV_RULE="/etc/udev/rules.d/99-face-auth-camera.rules"
 SYMLINK_NAME="face-auth-ir"
 
 if [ "$EUID" -ne 0 ]; then
-    echo "Must run as root: sudo ./pin-camera.sh [/dev/videoN]"
+    echo "Must run as root: sudo vinoauthface-pin-camera [/dev/videoN]"
     exit 1
 fi
 
@@ -29,7 +29,7 @@ if [ -z "$DEVICE" ] && [ -f "$CONFIG_FILE" ]; then
     DEVICE=$(grep -E '^device\s*=' "$CONFIG_FILE" | sed -E 's/^device\s*=\s*"(.*)"\s*$/\1/' || true)
 fi
 if [ -z "$DEVICE" ]; then
-    echo "Usage: sudo ./pin-camera.sh /dev/videoN"
+    echo "Usage: sudo vinoauthface-pin-camera /dev/videoN"
     echo "(no device given and none set in $CONFIG_FILE. vinoauthface enroll prints the"
     echo " exact command with the camera it used; face-camera-diag list shows them all.)"
     exit 1

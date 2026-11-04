@@ -804,7 +804,7 @@ impl SettingsWindow {
                 }
                 _ => {
                     Row::new("Pinned to a USB port")
-                        .help("No. sudo ./pin-camera.sh pins it.")
+                        .help("No. sudo vinoauthface-pin-camera pins it.")
                         .show(ui, |_, _| {});
                 }
             }

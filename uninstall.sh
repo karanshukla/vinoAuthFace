@@ -102,7 +102,7 @@ done
 echo "Removing binaries..."
 rm -f "$BIN_DIR/vinoauthface-auth" "$BIN_DIR/face-auth"
 rm -f /usr/local/libexec/vinoauthface-unseal
-rm -f "$BIN_DIR/vinoauthface" "$BIN_DIR/vinoauthface-upgrade" "$BIN_DIR/vinoauthface-update" "$COMPLETION_DIR/vinoauthface" "$BIN_DIR/face-enroll" "$COMPLETION_DIR/face-enroll"
+rm -f "$BIN_DIR/vinoauthface" "$BIN_DIR/vinoauthface-upgrade" "$BIN_DIR/vinoauthface-update" "$BIN_DIR/vinoauthface-setup" "$BIN_DIR/vinoauthface-uninstall" "$BIN_DIR/vinoauthface-pin-camera" "$COMPLETION_DIR/vinoauthface" "$BIN_DIR/face-enroll" "$COMPLETION_DIR/face-enroll"
 rm -f "$ZSH_COMPLETION_DIR/_vinoauthface" "$FISH_COMPLETION_DIR/vinoauthface.fish"
 
 # The tray (installed by deploy.sh unless --no-tray). A running tray exits on its own when its

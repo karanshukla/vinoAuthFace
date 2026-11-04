@@ -101,9 +101,13 @@ cargo_build() {
 # (login-mode.sh). Without it a re-deploy or upgrade keeps what's installed,
 # and a fresh install gets off.
 #
-# --with-settings (or FACE_AUTH_SETTINGS=1) also builds the optional settings
-# window (docs/settings.md), which needs the tray's helper and a Rust
-# toolchain. A re-deploy keeps it where it's installed; --no-settings removes it.
+# --with-settings (or FACE_AUTH_SETTINGS=1) also installs the optional settings
+# window (docs/settings.md), which needs the tray's helper. A re-deploy keeps it
+# where it's installed; --no-settings removes it.
+#
+# --prebuilt (or FACE_AUTH_PREBUILT=1) installs the release binaries even with
+# a Rust toolchain or OpenVINO present: no build at all. install.sh runs every
+# release install this way.
 #
 # --build-runtime is accepted and ignored: it compiled ONNX Runtime to get a
 # newer OpenVINO, and face-auth never uses ONNX Runtime. OpenVINO alone now
@@ -111,13 +115,15 @@ cargo_build() {
 WITH_TRAY="${FACE_AUTH_TRAY:-1}"
 LOGIN_MODE="${FACE_AUTH_LOGIN:-}"
 WITH_SETTINGS="${FACE_AUTH_SETTINGS:-}"
-USAGE="Usage: sudo ./deploy.sh [--no-tray] [--with-settings|--no-settings] [--login=off|both|face]"
+PREBUILT="${FACE_AUTH_PREBUILT:-0}"
+USAGE="Usage: sudo ./deploy.sh [--prebuilt] [--no-tray] [--with-settings|--no-settings] [--login=off|both|face]"
 for arg in "$@"; do
     case "$arg" in
         --with-tray) WITH_TRAY=1 ;;
         --no-tray) WITH_TRAY=0 ;;
         --with-settings) WITH_SETTINGS=1 ;;
         --no-settings) WITH_SETTINGS=0 ;;
+        --prebuilt) PREBUILT=1 ;;
         --build-runtime) warn Runtime "--build-runtime is no longer needed: OpenVINO now installs prebuilt, with no compile." ;;
         --login=off|--login=both|--login=face) LOGIN_MODE="${arg#--login=}" ;;
         *) fail "Unknown option '$arg'" "$USAGE"; exit 1 ;;
@@ -176,23 +182,16 @@ ZSH_COMPLETION_DIR="/usr/local/share/zsh/site-functions"
 FISH_COMPLETION_DIR="/usr/local/share/fish/vendor_completions.d"
 CONFIG_DIR="/etc"
 PAM_DIR="/etc/pam.d"
-# The KDE login screen's services are login-mode.sh's, not this list's.
+# Cleared before anything changes; setup.sh adds the lines back. Keep in step
+# with its list.
 PAM_SERVICES="sudo swaylock hyprlock gdm-password polkit-1 kde-fingerprint kde-smartcard cosmic-greeter"
 VAR_DIR="/var/lib/face-auth"
 NPU_CACHE_DIR="/var/cache/face-auth"
-SELINUX_DIR="/usr/local/share/face-auth/selinux"
 OPENVINO_INSTALL_DIR="/usr/local/lib/face-auth/openvino"
 # The NPU compiler (or driver) from the user's `ovfetch npu install` prefix,
 # copied here for PAM callers, which cannot read a home directory. Loaded by
 # vinoauthface-auth before it opens the NPU (face_auth_core::inference).
 NPU_INSTALL_DIR="/usr/local/lib/face-auth/npu"
-
-PAM_LINE="auth       sufficient  pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth"
-# For a KDE lock screen slot with nothing after us that can authenticate. A
-# miss falling through to the stub there (Fedora's authinfo_unavail
-# fingerprint-auth or smartcard-auth) makes KScreenLocker drop the slot until
-# the next lock; failing here instead lets a wrong password rescan.
-PAM_LINE_KDE_ONLY="auth       [success=done new_authtok_reqd=done default=die]  pam_exec.so quiet stdout /usr/local/bin/vinoauthface-auth"
 
 if [ "$(id -u)" -ne 0 ]; then
     fail "Run this with sudo" "It installs into /usr/local, /etc and /var/lib."
@@ -296,6 +295,7 @@ done
 
 # ---- Build ----
 MUSL_TARGET="x86_64-unknown-linux-musl"
+GNU_TARGET="x86_64-unknown-linux-gnu"
 ARTIFACT_DIR="$TARGET_DIR/$MUSL_TARGET/release"
 
 # Locate cargo. This script runs under sudo, and root's PATH normally does not
@@ -405,7 +405,10 @@ find_ovfetch() {
 
 # No config yet on a first install: sed fails, and pipefail must not end the script.
 CONF_NPU_DEVICE="$(sed -n 's/^npu_device *= *"\(.*\)"/\1/p' "$CONFIG_DIR/face-auth.toml" 2>/dev/null | head -1 || true)"
-if OVFETCH_BIN="$(find_ovfetch)"; then
+if [ "$PREBUILT" = 1 ]; then
+    # The release binaries are the CPU (tract) build.
+    OPENVINO_MODE="none"
+elif OVFETCH_BIN="$(find_ovfetch)"; then
     # Run as the user: resolving and downloading need no privileges. The plan
     # is reused below to install exactly what was checked here.
     step "asking ovfetch which OpenVINO this machine needs (takes a few seconds)"
@@ -531,7 +534,7 @@ stage_ovfetch() {
     ok OpenVINO "$(ov_version "$OVFETCH_PLAN") via ovfetch (downloaded, hashes verified)"
 }
 
-if [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(find_cargo)"; then
+if [ "$PREBUILT" = 0 ] && [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(find_cargo)"; then
     [ "$OPENVINO_MODE" = "ovfetch" ] || ok OpenVINO "$OPENVINO_MODE install"
     NPU_STEP="building with the NPU backend (a first build takes a few minutes)"
     NPU_UNITS=0
@@ -584,10 +587,10 @@ if [ -n "$OPENVINO_MODE" ] && [ "$OPENVINO_MODE" != "none" ] && CARGO_BIN="$(fin
     BIN_SRC="$TARGET_DIR/release"
     NPU_ACTIVE=1
     ok Build "NPU backend (OpenVINO, glibc)"
-elif [ -f "$ARTIFACT_DIR/vinoauthface-auth" ] && [ -f "$ARTIFACT_DIR/vinoauthface" ] \
+elif [ "$PREBUILT" = 0 ] && [ -f "$ARTIFACT_DIR/vinoauthface-auth" ] && [ -f "$ARTIFACT_DIR/vinoauthface" ] \
    && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ] && ! needs_rebuild "$ARTIFACT_DIR/vinoauthface-auth"; then
     skip Build "using $ARTIFACT_DIR/ (FACE_AUTH_FORCE_BUILD=1 to rebuild)"
-elif CARGO_BIN="$(find_cargo)"; then
+elif [ "$PREBUILT" = 0 ] && CARGO_BIN="$(find_cargo)"; then
     build_with_cargo "$CARGO_BIN" || exit 1
     ok Build "CPU backend (tract, static musl)"
 else
@@ -616,7 +619,11 @@ else
         DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$LATEST_TAG"
     fi
 
-    skip Build "no Rust toolchain; downloading release binaries"
+    if [ "$PREBUILT" = 1 ]; then
+        skip Build "downloading release binaries"
+    else
+        skip Build "no Rust toolchain; downloading release binaries"
+    fi
     printf '    %-10s %s%s%s\n' "" "$DIM" "$DOWNLOAD_BASE" "$RESET"
     DL_DIR="$(mktemp -d)"
     DOWNLOAD_OK=1
@@ -664,6 +671,20 @@ else
                 mv "$DL_DIR/vinoauthface-helper-$MUSL_TARGET" "$DL_DIR/bin/vinoauthface-helper"
             fi
         fi
+        # The settings window is the one glibc build (winit and glow load the
+        # desktop's libraries). Optional too: releases before it have none.
+        asset="vinoauthface-settings-$GNU_TARGET"
+        if [ "$WITH_SETTINGS" = 1 ] && [ "$WITH_TRAY" = 1 ] \
+           && curl "${CURL_FLAGS[@]}" --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+                -o "$DL_DIR/$asset" "$DOWNLOAD_BASE/$asset" \
+           && (cd "$DL_DIR" && grep -E "[ *]$asset\$" SHA256SUMS > want-settings \
+                && [ "$(wc -l < want-settings)" -eq 1 ] && sha256sum -c --strict --quiet want-settings); then
+            mv "$DL_DIR/$asset" "$DL_DIR/bin/vinoauthface-settings"
+        fi
+    elif [ "$PREBUILT" = 1 ]; then
+        rm -rf "$DL_DIR"
+        fail "Could not download the release binaries from $DOWNLOAD_BASE" "Nothing was installed."
+        exit 1
     else
         rm -rf "$DL_DIR"
         CONTAINER_ENGINE=""
@@ -738,12 +759,14 @@ if [ "$WITH_TRAY" = 1 ]; then
 fi
 
 # The optional settings window (docs/settings.md, --with-settings), beside the
-# tray: its Apply runs the tray's helper. Built from source only, for the host (glibc), never musl:
-# winit and glow load the desktop's libraries at run time. The release has no
-# glibc builds, so without a Rust toolchain there is no window.
+# tray: its Apply runs the tray's helper. Built for the host (glibc), never musl:
+# winit and glow load the desktop's libraries at run time. The release ships
+# it as its one glibc binary, downloaded above.
 SETTINGS_SRC=""
 if [ "$WITH_SETTINGS" = 1 ] && [ "$WITH_TRAY" = 1 ] && [ -n "$TRAY_SRC" ]; then
-    if [ -f "$TARGET_DIR/release/vinoauthface-settings" ] && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ] \
+    if [ -n "${DL_DIR:-}" ]; then
+        [ -f "$DL_DIR/bin/vinoauthface-settings" ] && SETTINGS_SRC="$DL_DIR/bin"
+    elif [ -f "$TARGET_DIR/release/vinoauthface-settings" ] && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ] \
          && ! needs_rebuild "$TARGET_DIR/release/vinoauthface-settings"; then
         SETTINGS_SRC="$TARGET_DIR/release"
     elif CARGO_BIN="$(find_cargo)"; then
@@ -827,6 +850,7 @@ rm -f "$BIN_DIR/face-auth" "$BIN_DIR/face-enroll" "$BIN_DIR/face-auth-tray" \
     /usr/local/libexec/face-auth-helper /usr/local/share/bash-completion/completions/face-enroll
 # So uninstalling works after the repo is long gone.
 install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"
+ln -sfn "$SHARE_DIR/uninstall.sh" "$BIN_DIR/vinoauthface-uninstall"
 # The same for the tray's login-screen entries.
 install -D -o root -g root -m 0755 login-mode.sh "$SHARE_DIR/login-mode.sh"
 # And its Settings menu.
@@ -834,6 +858,14 @@ install -D -o root -g root -m 0755 setting-mode.sh "$SHARE_DIR/setting-mode.sh"
 # Upgrades without a checkout (docs/install.md).
 install -D -o root -g root -m 0755 upgrade.sh "$BIN_DIR/vinoauthface-upgrade"
 ln -sfn vinoauthface-upgrade "$BIN_DIR/vinoauthface-update"
+install -D -o root -g root -m 0755 install.sh "$SHARE_DIR/install.sh"
+# PAM, login screen, Bitwarden and SELinux, re-runnable on their own. It reads
+# login-mode.sh and selinux/ from beside itself.
+install -D -o root -g root -m 0755 setup.sh "$SHARE_DIR/setup.sh"
+install -D -o root -g root -m 0644 selinux/face-auth.te "$SHARE_DIR/selinux/face-auth.te"
+install -D -o root -g root -m 0644 selinux/face-auth.fc "$SHARE_DIR/selinux/face-auth.fc"
+ln -sfn "$SHARE_DIR/setup.sh" "$BIN_DIR/vinoauthface-setup"
+install -D -o root -g root -m 0755 pin-camera.sh "$BIN_DIR/vinoauthface-pin-camera"
 
 # ---- Tray (default; skipped by --no-tray) ----
 # The helper is what polkit authorises: root-owned, fixed path, one verb, no
@@ -867,7 +899,11 @@ if [ -n "$TRAY_SRC" ]; then
         install -Dm644 crates/face-auth-settings/data/vinoauthface-settings.desktop \
             /usr/local/share/applications/vinoauthface-settings.desktop
     elif [ "$WITH_SETTINGS" = 1 ]; then
-        warn Settings "No settings window: it builds from source, and there is no Rust toolchain."
+        if [ -n "${DL_DIR:-}" ]; then
+            warn Settings "No settings window: this release doesn't ship one."
+        else
+            warn Settings "No settings window: it builds from source here, and there is no Rust toolchain."
+        fi
     else
         rm -f "$BIN_DIR/vinoauthface-settings" /usr/local/share/applications/vinoauthface-settings.desktop
     fi
@@ -1149,244 +1185,6 @@ else
     ok Config "$CONF $CONF_STATE"
 fi
 
-# ---- PAM setup ----
-PAM_DONE=() PAM_ABSENT=() PAM_COVERED=()
-
-# Stacks this file pulls its auth lines from, one level deep.
-pam_included_stacks() {
-    awk '$1 ~ /^-?auth$/ && ($2 == "include" || $2 == "substack") { print $3 }
-         $1 == "@include" { print $2 }' "$1"
-}
-
-# A service's file: the override, else the vendor default.
-pam_file() {
-    if [ -f "$PAM_DIR/$1" ]; then echo "$PAM_DIR/$1"
-    elif [ -f "/usr/lib/pam.d/$1" ]; then echo "/usr/lib/pam.d/$1"
-    else return 1
-    fi
-}
-
-# stack_uses SERVICE MODULE_REGEX: an auth line in the service, or in a stack
-# it includes, runs a matching module.
-stack_uses() {
-    local file stack
-    file=$(pam_file "$1") || return 1
-    for stack in "$file" $(pam_included_stacks "$file" | while read -r s; do pam_file "$s"; done); do
-        grep -qE "^[[:space:]]*-?auth[[:space:]].*$2" "$stack" && return 0
-    done
-    return 1
-}
-
-# Plasma 6.8 moved KScreenLocker's PAM calls into kscreenlocker_worker, and
-# from then on only kde-fingerprint runs beside the password field: smartcard
-# (and its own kde-face) run only when picked instead of the password.
-kscreenlocker_has_worker() {
-    local dir
-    for dir in /usr/libexec /usr/lib /usr/lib64 /usr/lib/*/libexec /usr/lib64/libexec; do
-        [ -x "$dir/kscreenlocker_worker" ] && return 0
-    done
-    return 1
-}
-
-# Before 6.8, KScreenLocker runs kde-fingerprint and kde-smartcard side by
-# side, next to the password field. Face takes the fingerprint slot, unless
-# fprintd owns it and the smartcard slot is free: then face and finger run at
-# once instead of one after the other (#81). Both taken, or 6.8 and later:
-# face goes first, then the finger.
-KDE_SLOT=kde-fingerprint KDE_SLOT_LINE="$PAM_LINE_KDE_ONLY"
-if stack_uses kde-fingerprint pam_fprintd; then
-    if ! kscreenlocker_has_worker && pam_file kde-smartcard >/dev/null \
-       && ! stack_uses kde-smartcard 'pam_(pkcs11|p11|sss)'; then
-        KDE_SLOT=kde-smartcard
-    else
-        KDE_SLOT_LINE="$PAM_LINE"
-    fi
-fi
-for service in kde-fingerprint kde-smartcard; do
-    [ "$service" = "$KDE_SLOT" ] && continue
-    # The slot a previous deploy used: drop its copy of the vendor file.
-    marker="$PAM_DIR/.face-auth-$service-created"
-    if [ -f "$marker" ] && cmp -s "$PAM_DIR/$service" "/usr/lib/pam.d/$service"; then
-        rm -f "$PAM_DIR/$service" "$PAM_DIR/$service.face-auth.bak" "$marker"
-    fi
-done
-
-# A service with no /etc/pam.d override falls back to the vendor file in
-# /usr/lib/pam.d. That's usual for polkit-1 (pkexec, GUI admin prompts,
-# Bitwarden's system unlock) and, on image-based distros, the KDE and COSMIC
-# lock screens and greeters. openSUSE ships every service that way, sudo
-# included. Materialise the vendor file as an override so there is something
-# to patch, and mark it so uninstall.sh deletes it rather than "restoring" a
-# file that never was.
-for service in $PAM_SERVICES; do
-    case "$service" in
-        kde-fingerprint | kde-smartcard) [ "$service" = "$KDE_SLOT" ] || continue ;;
-    esac
-    if [ ! -f "$PAM_DIR/$service" ] && [ -f "/usr/lib/pam.d/$service" ]; then
-        cp "/usr/lib/pam.d/$service" "$PAM_DIR/$service"
-        touch "$PAM_DIR/.face-auth-$service-created"
-    fi
-done
-
-# A face match ends the auth stack, so the line goes just above the first
-# module that actually authenticates. Gates above that (pam_nologin,
-# pam_faillock preauth, pam_selinux_permit) stay in front of it.
-PAM_AUTHENTICATOR='^[[:space:]]*-?auth[[:space:]]+(include|substack)[[:space:]]|^[[:space:]]*-?auth[[:space:]].*pam_(unix|sss|fprintd|u2f)|^[[:space:]]*@include[[:space:]]'
-
-for service in $PAM_SERVICES; do
-    case "$service" in
-        kde-fingerprint | kde-smartcard)
-            [ "$service" = "$KDE_SLOT" ] || continue
-            line="$KDE_SLOT_LINE" ;;
-        *) line="$PAM_LINE" ;;
-    esac
-    conf="$PAM_DIR/$service"
-    if [ ! -f "$conf" ]; then
-        PAM_ABSENT+=("$service")
-        continue
-    fi
-
-    # A face-auth line in an included stack (added by hand, an authselect
-    # profile, an older install) already covers this service. A second one
-    # would scan the camera twice per attempt.
-    covered_by=""
-    for stack in $(pam_included_stacks "$conf"); do
-        if [ -f "$PAM_DIR/$stack" ] && grep -q "pam_exec\.so.*face-auth" "$PAM_DIR/$stack"; then
-            covered_by="$PAM_DIR/$stack"
-            break
-        fi
-    done
-    if [ -n "$covered_by" ]; then
-        PAM_COVERED+=("$service (via $(basename "$covered_by"))")
-        continue
-    fi
-
-    line_no=$(grep -nE "$PAM_AUTHENTICATOR" "$conf" | head -n1 | cut -d: -f1)
-    if [ -z "$line_no" ]; then
-        warn PAM "$conf has no authenticating auth line. Add this above the password module:" \
-            "$line"
-        continue
-    fi
-
-    cp "$conf" "$conf.face-auth.bak"
-    sed -i "${line_no}i $line" "$conf"
-    PAM_DONE+=("$service")
-    # Record what we wrote so uninstall.sh can tell whether the user has
-    # edited the copy since. Legacy markers are empty.
-    if [ -f "$PAM_DIR/.face-auth-$service-created" ]; then
-        sha256sum "$conf" | cut -d' ' -f1 > "$PAM_DIR/.face-auth-$service-created"
-    fi
-done
-# Joined with ", " for the summary lines.
-join() { local IFS=,; echo "$*" | sed 's/,/, /g'; }
-[ "${#PAM_DONE[@]}" -gt 0 ] && ok PAM "$(join "${PAM_DONE[@]}") (backups: *.face-auth.bak)"
-[ "${#PAM_COVERED[@]}" -gt 0 ] && ok PAM "$(join "${PAM_COVERED[@]}")"
-[ "${#PAM_ABSENT[@]}" -gt 0 ] && skip PAM "not on this system: $(join "${PAM_ABSENT[@]}")"
-
-# The KDE login screen: off unless asked for, kept across re-deploys.
-LOGIN_NOW="$(bash login-mode.sh status)"
-if [ "$LOGIN_NOW" = none ]; then
-    if [ "${LOGIN_MODE:-off}" != off ]; then
-        warn PAM "--login=$LOGIN_MODE does nothing here: neither Plasma Login nor SDDM is installed."
-    fi
-else
-    LOGIN_MODE="${LOGIN_MODE:-$LOGIN_NOW}"
-    if LOGIN_OUT="$(bash login-mode.sh "$LOGIN_MODE" 2>&1)"; then
-        case "$LOGIN_MODE" in
-            off) ok PAM "KDE login screen: password only (--login=both or --login=face to change)" ;;
-            both) ok PAM "KDE login screen: password, then face" ;;
-            face) ok PAM "KDE login screen: face, or the password" ;;
-        esac
-    else
-        warn PAM "Could not set the KDE login screen to $LOGIN_MODE." "$LOGIN_OUT"
-    fi
-fi
-
-# ---- Bitwarden polkit action (only if Bitwarden is installed) ----
-# Bitwarden's "Unlock with system authentication" is a polkit action that
-# re-authenticates through the polkit-1 stack patched above. Flatpak and Snap
-# builds cannot install the action themselves (see
-# https://bitwarden.com/help/biometrics/#tab-linux). The policy below is
-# transcribed from Bitwarden's own source, the string its native builds write
-# via pkexec: apps/desktop/src/key-management/biometrics/native-v2/
-# os-biometrics-linux.service.ts in github.com/bitwarden/clients.
-if command -v bitwarden &>/dev/null || command -v bitwarden-desktop &>/dev/null \
-   || flatpak info com.bitwarden.desktop &>/dev/null \
-   || snap list bitwarden-desktop &>/dev/null; then
-    # Where the tray's policy went: /usr/share, or /usr/local/share on a
-    # read-only /usr (Fedora Atomic, Aeon), which polkit 124 and later read.
-    BW_POLICY="$POLKIT_ACTIONS_DIR/com.bitwarden.Bitwarden.policy"
-    if [ -f /usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy ] || [ -f "$BW_POLICY" ]; then
-        ok Bitwarden "polkit unlock action already present"
-    elif ! { mkdir -p "$POLKIT_ACTIONS_DIR" && touch "$BW_POLICY"; } 2>/dev/null; then
-        warn Bitwarden "Cannot write $BW_POLICY, so system unlock isn't wired."
-    else
-        cat > "$BW_POLICY" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE policyconfig PUBLIC
- "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
- "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
-
-<policyconfig>
-    <action id="com.bitwarden.Bitwarden.unlock">
-      <description>Unlock Bitwarden</description>
-      <message>Authenticate to unlock Bitwarden</message>
-      <defaults>
-        <allow_any>no</allow_any>
-        <allow_inactive>no</allow_inactive>
-        <allow_active>auth_self</allow_active>
-      </defaults>
-    </action>
-</policyconfig>
-EOF
-        chown root:root "$BW_POLICY"
-        chmod 644 "$BW_POLICY"
-        touch "$SHARE_DIR/.bitwarden-policy-installed"
-        command -v restorecon &>/dev/null && restorecon "$BW_POLICY" 2>/dev/null || true
-        ok Bitwarden "polkit action installed. Enable: Settings > Unlock with system authentication"
-    fi
-fi
-
-# ---- SELinux policy (for lock screen) ----
-# Decide on whether SELinux is enabled, not on whether the tools are installed:
-# Ubuntu/Debian use AppArmor and need no policy, and loading a module into a
-# kernel with SELinux off is pointless.
-selinux_enabled=0
-if command -v selinuxenabled &>/dev/null; then
-    selinuxenabled && selinux_enabled=1
-elif [[ -e /sys/fs/selinux/enforce ]]; then
-    selinux_enabled=1
-fi
-
-if [[ $selinux_enabled -eq 0 ]]; then
-    step "SELinux not enabled; lock-screen policy not needed"
-elif command -v checkmodule &>/dev/null && command -v semodule_package &>/dev/null; then
-    step "loading the SELinux policy (semodule can take 10-30 seconds)"
-    mkdir -p "$SELINUX_DIR"
-    cp selinux/face-auth.te "$SELINUX_DIR/face_auth.te"
-    cp selinux/face-auth.fc "$SELINUX_DIR/face_auth.fc"
-    # The policy is written against Fedora's types. Another distro's policy
-    # (openSUSE's, say) may lack one, and a failed load must not stop the
-    # deploy here, with PAM patched and the template store not yet set up:
-    # only the greeters need it.
-    if checkmodule -M -m -o "$SELINUX_DIR/face_auth.mod" "$SELINUX_DIR/face_auth.te" \
-       && semodule_package -o "$SELINUX_DIR/face_auth.pp" -m "$SELINUX_DIR/face_auth.mod" -f "$SELINUX_DIR/face_auth.fc" \
-       && semodule -i "$SELINUX_DIR/face_auth.pp"; then
-        # udev labels the NPU node from here on; this covers the one already there.
-        [ -d /dev/accel ] && restorecon -R /dev/accel 2>/dev/null || true
-        [ -f /usr/local/libexec/vinoauthface-unseal ] && restorecon /usr/local/libexec/vinoauthface-unseal
-        ok SELinux "greeter policy loaded"
-    else
-        warn SELinux "Could not load the greeter policy (errors above), so login screens can't reach the camera." \
-            "sudo, polkit and the lock screens are unaffected. Please open an issue with the error and your distro."
-    fi
-else
-    SELINUX_HINT="$(install_hint "policycoreutils checkpolicy" "policycoreutils checkpolicy" "" "policycoreutils checkpolicy")" \
-        || SELINUX_HINT="install policycoreutils and checkpolicy"
-    warn SELinux "Tools not found, so the login screens can't reach the camera." \
-        "$SELINUX_HINT, then re-run this script."
-fi
-
 # ---- Embeddings directory ----
 #
 # Face templates are authentication data. Anything that can write them can
@@ -1480,6 +1278,14 @@ fi
 command -v restorecon &>/dev/null && restorecon -R "$VAR_DIR" 2>/dev/null || true
 ok Store "$STORE_STATE"
 
+# ---- PAM, login screen, Bitwarden, SELinux ----
+# setup.sh, the same script installed as vinoauthface-setup, from this
+# checkout or release. Last, once every file it hooks up is in place; it
+# relabels the store and the NPU cache after loading the policy.
+SETUP_ARGS=()
+[ -n "$LOGIN_MODE" ] && SETUP_ARGS+=("--login=$LOGIN_MODE")
+bash setup.sh "${SETUP_ARGS[@]}"
+
 section "Done"
 if [ -f "$VAR_DIR/$ACTUAL_USER/embeddings.bin" ]; then
     printf '  %-10s %s\n' "Test" "sudo -k && sudo true, or lock the screen (Super+L)"
@@ -1492,12 +1298,13 @@ PINNED="$(sed -n 's/^pinned_camera_path *= *"\(.*\)"/\1/p' "$CONF" 2>/dev/null |
 if [ -n "$PINNED" ]; then
     printf '  %-10s %s%s%s\n' "Camera" "pinned to USB port " "${PINNED##*/}" " (re-pin only if you move it)"
 else
-    printf '  %-10s %s\n' "Camera" "once unlock works: sudo ./pin-camera.sh /dev/videoN (vinoauthface enroll prints it)"
+    printf '  %-10s %s\n' "Camera" "once unlock works: sudo vinoauthface-pin-camera /dev/videoN (vinoauthface enroll prints it)"
 fi
 if [ -x "$BIN_DIR/vinoauthface-settings" ]; then
     printf '  %-10s %s\n' "Settings" "vinoauthface-settings, or \"vinoAuthFace settings\" in the app launcher"
 elif [ -x "$BIN_DIR/vinoauthface-tray" ]; then
-    printf '  %-10s %s\n' "Settings" "optional window for every setting: sudo ./deploy.sh --with-settings"
+    printf '  %-10s %s\n' "Settings" "optional window for every setting: install again with --with-settings"
 fi
 printf '  %-10s %s\n' "Upgrade" "sudo vinoauthface-upgrade (when doctor or the tray says there's a new release)"
-printf '  %-10s %s\n' "Uninstall" "sudo ./uninstall.sh"
+printf '  %-10s %s\n' "Setup" "sudo vinoauthface-setup (if an update resets /etc/pam.d)"
+printf '  %-10s %s\n' "Uninstall" "sudo vinoauthface-uninstall"

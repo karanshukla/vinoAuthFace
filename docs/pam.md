@@ -99,7 +99,8 @@ both are installed, the one `display-manager.service` points at wins, else Plasm
 | `both` | `required` line below the greeter's password stack (`plasmalogin` or `sddm`) | Type your password, then look at the camera. Both must pass. The password still unlocks KWallet |
 | `face` | `sufficient` line above the password, in `plasmalogin-fingerprint` if the system has it, else `plasmalogin` or `sddm` | A match logs you in; anything else falls back to the password. KWallet stays locked (see [Keyrings](#keyrings)) |
 
-Set it with `sudo ./deploy.sh --login=off|both|face` (or `FACE_AUTH_LOGIN`), the tray's "Login
+Set it with `sudo vinoauthface-setup --login=off|both|face` (the installer and `deploy.sh` take the
+same option, or `FACE_AUTH_LOGIN`), the tray's "Login
 screen" submenu, or `sudo /usr/local/share/face-auth/login-mode.sh off|both|face` directly.
 `login-mode.sh status` prints the current one. A deploy or upgrade without `--login` keeps
 whatever is set.
@@ -122,7 +123,7 @@ The greeter runs face-auth in SELinux's `xdm_t`, which needs `deploy.sh`'s polic
 by `vinoauthface-unseal` in its own domain, so the greeter never gets the TPM or systemd's host
 key. An install without the helper (a release from before it) can't unseal at the greeter:
 `face` falls back to the password, and `login-mode.sh` refuses `both`, which nobody could get
-past. Re-run `deploy.sh` to fix that.
+past. Reinstall to fix that.
 
 Plasma before 6.7 has a bug where a biometric unlock counts against `pam_faillock`
 (kscreenlocker 29d01bf7), so repeated face unlocks can lock the password out until it expires.

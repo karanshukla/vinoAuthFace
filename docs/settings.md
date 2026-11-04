@@ -16,12 +16,14 @@ vinoauthface-settings    # or --page face|matching|liveness|camera|models|securi
 ## Install
 
 ```bash
-sudo ./deploy.sh --with-settings
+curl -fsSL https://github.com/karanshukla/vinoAuthFace/releases/latest/download/install.sh | sudo bash -s -- --with-settings
+sudo ./deploy.sh --with-settings   # or from a checkout, building it
 ```
 
-It needs the tray and a Rust toolchain, and builds for glibc, not musl: the window loads the
-desktop's Wayland and OpenGL libraries. Releases ship musl only, so without a toolchain there's
-no window. Later deploys and `update.sh` keep it; `--no-settings` and `uninstall.sh` remove it.
+It needs the tray. It's the one glibc binary, not musl: the window loads the desktop's Wayland
+and OpenGL libraries. The release's copy is built against glibc 2.35, so it runs on Ubuntu 22.04,
+Debian 12 and anything newer. Later installs, upgrades and `update.sh` keep it; `--no-settings`
+and `uninstall.sh` remove it.
 
 | File | What |
 |---|---|

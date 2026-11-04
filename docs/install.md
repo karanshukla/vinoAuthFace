@@ -5,8 +5,46 @@ nav_order: 2
 
 # Installing
 
-`sudo ./deploy.sh` (or `sudo ./install.sh`, which just runs it) is the only supported install path. This page covers what it does, how to
-build from source instead of using the release binaries, camera pinning, and removal.
+Two ways in, both ending in the same `deploy.sh`:
+
+```bash
+# A release: checksum-verified binaries, nothing to build
+curl -fsSL https://github.com/karanshukla/vinoAuthFace/releases/latest/download/install.sh | sudo bash
+
+# A checkout: builds from source (needed for the NPU backend)
+sudo ./deploy.sh
+```
+
+This page covers what they do, building from source, camera pinning, and removal.
+
+## The one-line installer
+
+`install.sh` asks GitHub for the newest release, downloads its source bundle
+(`vinoauthface-source.tar.gz`) and `SHA256SUMS`, refuses the bundle unless it's listed there and
+matches, and runs that release's own `deploy.sh --prebuilt` from a private temporary directory.
+`--prebuilt` installs the release's static binaries (checked against the same `SHA256SUMS`) even
+if Rust or OpenVINO is installed, so nothing compiles. Options go after `bash -s --`:
+
+| Option | |
+|---|---|
+| `vN` | That release instead of the newest |
+| `--with-settings` | The [settings window](settings.md), the release's one glibc binary |
+| `--no-tray` | No [tray](tray.md) |
+| `--login=off\|both\|face` | Face unlock at the KDE [login screen](pam.md#login-screen) |
+
+Running it again reinstalls, keeping your config, templates and PAM setup. Release binaries are the
+CPU (`tract`) build, so on a machine with the OpenVINO build it stops and points at
+`vinoauthface-upgrade`, which rebuilds that one. The checksums come from the same release as the
+files, so they catch a corrupted or truncated download, not a compromised GitHub account.
+
+Every install also leaves these commands, so the repo isn't needed afterwards:
+
+| Command | |
+|---|---|
+| `vinoauthface-upgrade` | [Updating](#updating) |
+| `vinoauthface-setup` | Re-applies PAM, the login screen, Bitwarden and SELinux (see below) |
+| `vinoauthface-pin-camera` | [Pinning the camera](#pinning-the-camera-recommended) |
+| `vinoauthface-uninstall` | [Uninstalling](#uninstalling) |
 
 ## Requirements
 
@@ -30,26 +68,32 @@ build from source instead of using the release binaries, camera pinning, and rem
 `deploy.sh` decides on what's on disk (PAM files, SELinux state, a writable `/usr`) rather than on
 the distro name; reports either way are welcome.
 
-No build toolchain is required. If `deploy.sh` finds no Rust toolchain and no local build, it
-downloads the static musl binaries from
-[GitHub Releases](https://github.com/karanshukla/vinoAuthFace/releases) and verifies them against
-the release's `SHA256SUMS`. Build from source for an unreleased change or the NPU backend.
+No build toolchain is required. `install.sh` never builds, and if `deploy.sh` finds no Rust
+toolchain and no local build, it downloads the static musl binaries from
+[GitHub Releases](https://github.com/karanshukla/vinoAuthFace/releases) too, verified against the
+release's `SHA256SUMS`. Build from source for an unreleased change or the NPU backend.
 
 ## What deploy.sh does
 
+It installs the files, then runs `setup.sh` for everything that hooks them into the system. That
+second half is also installed as `vinoauthface-setup`: run `sudo vinoauthface-setup` after a
+distro or authselect update resets `/etc/pam.d`, or after installing a lock screen that wasn't
+there before. It takes `--login=off|both|face` too, and refuses to run with nothing installed.
+
 | Step | What | Details |
 |------|------|---------|
-| Build | Picks the first that applies | OpenVINO + cargo: NPU build. Prebuilt binaries in `target/`: use them, unless cargo is available and the sources are newer than they are (`FACE_AUTH_FORCE_BUILD=1` rebuilds regardless; it covers the tray too). Cargo: static musl build. Otherwise: download and checksum-verify the release binaries |
+| Build | Picks the first that applies | `--prebuilt`: download the release binaries. OpenVINO + cargo: NPU build. Prebuilt binaries in `target/`: use them, unless cargo is available and the sources are newer than they are (`FACE_AUTH_FORCE_BUILD=1` rebuilds regardless; it covers the tray too). Cargo: static musl build. Otherwise: download and checksum-verify the release binaries |
 | Binaries | Installs to `/usr/local/bin` | `vinoauthface-auth` (set-group-ID `face-auth`, see [security.md](security.md#trust-model)) and `vinoauthface`, plus its bash, zsh and fish completions under `/usr/local/share` (regenerate with `vinoauthface completions bash`, `zsh` or `fish`) |
 | Models | Downloads and SHA-256 verifies | Recognition model (`w600k_r50.onnx` for an NPU build, `w600k_mbf.onnx` otherwise) and the `det_500m.onnx` (SCRFD) detector, to `/usr/local/share/face-auth/`. Installing the detector over an older install means re-enrolling; `deploy.sh` says so. A copy in `models/` is used first, and verified too |
 | Config | Installs default config | `/etc/face-auth.toml`, kept if it already exists; the deploy appends any settings from `config/face-auth.toml.example` it lacks, commented out at their defaults |
+| Tray | Unless `--no-tray` | Tray binary, root helper, polkit actions, autostart and launchers. See [tray.md](tray.md). Every deploy also installs the commands listed [above](#the-one-line-installer) |
+| NPU cache | Empties and refills it | `/var/cache/face-auth`, root-owned. Emptied because a new model or driver leaves stale entries, then refilled with `vinoauthface-auth --warm-cache` (NPU builds only) |
+| Storage | Secures the template store | `/var/lib/face-auth`, `root:face-auth` `2750`, templates `0640`, per-user `lockout/` `2770`. An existing store is re-secured in place |
+| **Setup** | `setup.sh` / `vinoauthface-setup` | |
 | PAM | Patches PAM service files | See [pam.md](pam.md). Each file is backed up with a `.face-auth.bak` suffix (for you; `uninstall.sh` strips the line instead of restoring it) |
+| Login screen | `--login=off\|both\|face` | The KDE login screen's mode (Plasma Login or SDDM), off on a fresh install and kept on re-deploy. See [pam.md](pam.md#login-screen) |
 | Bitwarden | Only if installed | Adds Bitwarden's polkit unlock action |
 | SELinux | Compiles and loads policy | Lets the greeters (`xdm_t`) use the camera, NPU, template store and lockout state. See [SELinux](#selinux) |
-| NPU cache | Empties and refills it | `/var/cache/face-auth`, root-owned. Emptied because a new model or driver leaves stale entries, then refilled with `vinoauthface-auth --warm-cache` (NPU builds only) |
-| Login screen | `--login=off\|both\|face` | The KDE login screen's mode (Plasma Login or SDDM), off on a fresh install and kept on re-deploy. See [pam.md](pam.md#login-screen) |
-| Tray | Unless `--no-tray` | Tray binary, root helper, polkit actions, autostart and launchers. See [tray.md](tray.md). Every deploy also installs `uninstall.sh` to `/usr/local/share/face-auth/` |
-| Storage | Secures the template store | `/var/lib/face-auth`, `root:face-auth` `2750`, templates `0640`, per-user `lockout/` `2770`. An existing store is re-secured in place |
 
 ## Building from source
 
@@ -155,7 +199,7 @@ sudo ./deploy.sh   # on the host
 ## Pinning the camera (recommended)
 
 ```bash
-sudo ./pin-camera.sh /dev/videoN
+sudo vinoauthface-pin-camera /dev/videoN   # ./pin-camera.sh in a checkout
 ```
 
 Run it after enrolment and a test unlock both work: it pins whatever device you give it, and
@@ -191,7 +235,8 @@ into its own domain, `face_auth_unseal_t`, the only one with `/dev/tpmrm0` and
 `systemd-creds decrypt` on them. `xdm_t` (and `local_login_t`, for a TTY login) gains nothing but
 the right to exec it.
 
-If `deploy.sh` reported missing SELinux tools, install the module by hand:
+If the install reported missing SELinux tools, install them and run `sudo vinoauthface-setup`
+again, or install the module by hand:
 
 ```bash
 sudo dnf install -y policycoreutils checkpolicy
@@ -220,20 +265,21 @@ sudo vinoauthface-upgrade --force  # reinstall the one you're on
 
 `vinoauthface-update` is the same command under another name.
 
-It downloads the release's source bundle (`vinoauthface-source.tar.gz`), checks it against the
-release's `SHA256SUMS`, unpacks it into `~/.cache/vinoauthface/src/<tag>` and runs that release's
-own `deploy.sh`. Every upgrade is a full reinstall by the release's deploy logic, so anything a
-release changes beyond the binaries (models, config, PAM, SELinux) comes with it. A `--no-tray`
-install stays one. Older releases' unpacked sources are deleted once it succeeds, but the build
-directory, `~/.cache/vinoauthface/target`, is kept and shared by every release, so an upgrade
-recompiles only vinoAuthFace's own crates, not its dependencies. It can take a few GB (more for
-an OpenVINO build); `uninstall.sh` removes it, and deleting it by hand is safe. Releases before
-the command existed have no bundle; use a checkout for those.
+On a CPU install it runs the [one-line installer](#the-one-line-installer) for that release:
+the release's binaries, nothing built. Every upgrade is a full reinstall by the release's own
+deploy logic, so anything a release changes beyond the binaries (models, config, PAM, SELinux)
+comes with it. A `--no-tray` install stays one, and so does one with the settings window.
 
-An OpenVINO install builds from the bundle as you, with your Rust and ovfetch, the same as a
-checkout. That's why the tray can't upgrade one: its helper runs as root only. The tray's
-"Update to vN" entry is for CPU installs, and runs the same command through pkexec (see
-[tray.md](tray.md)).
+An OpenVINO install has no release binaries, so it builds instead: the release's source bundle,
+checked against `SHA256SUMS`, unpacked into `~/.cache/vinoauthface/src/<tag>` and built by that
+release's `deploy.sh` as you, with your Rust and ovfetch, the same as a checkout. The build
+directory, `~/.cache/vinoauthface/target`, is kept and shared by every release, so an upgrade
+recompiles only vinoAuthFace's own crates. It can take a few GB; `uninstall.sh` removes it, and
+deleting it by hand is safe. That's also why the tray can't upgrade an OpenVINO install: its
+helper runs as root only. The tray's "Update to vN" entry is for CPU installs, and runs the same
+command through pkexec (see [tray.md](tray.md)).
+
+Releases before the one-line installer have no bundle; use a checkout for those.
 
 From a checkout, `git pull` then `sudo ./deploy.sh` still works. A checkout on a release tag
 installs that release's binaries (or builds them, with Rust installed).
@@ -259,12 +305,11 @@ those, run `sudo ./deploy.sh` instead.
 ## Uninstalling
 
 ```bash
-sudo ./uninstall.sh           # binaries, models, config, PAM changes, camera pin
-sudo ./uninstall.sh --purge   # ...plus face templates and the face-auth group
+sudo vinoauthface-uninstall           # binaries, models, config, PAM changes, camera pin
+sudo vinoauthface-uninstall --purge   # ...plus face templates and the face-auth group
 ```
 
-Without the repo (a release install), every deploy leaves a copy at
-`/usr/local/share/face-auth/uninstall.sh`.
+`./uninstall.sh` in a checkout is the same script.
 
 PAM goes first, before any binary is removed: it strips the vinoAuthFace line from each service
 and deletes the `.face-auth.bak` backups rather than restoring them, so edits made since the
