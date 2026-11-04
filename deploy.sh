@@ -1494,5 +1494,10 @@ if [ -n "$PINNED" ]; then
 else
     printf '  %-10s %s\n' "Camera" "once unlock works: sudo ./pin-camera.sh /dev/videoN (vinoauthface enroll prints it)"
 fi
+if [ -x "$BIN_DIR/vinoauthface-settings" ]; then
+    printf '  %-10s %s\n' "Settings" "vinoauthface-settings, or \"vinoAuthFace settings\" in the app launcher"
+elif [ -x "$BIN_DIR/vinoauthface-tray" ]; then
+    printf '  %-10s %s\n' "Settings" "optional window for every setting: sudo ./deploy.sh --with-settings"
+fi
 printf '  %-10s %s\n' "Upgrade" "sudo vinoauthface-upgrade (when doctor or the tray says there's a new release)"
 printf '  %-10s %s\n' "Uninstall" "sudo ./uninstall.sh"
