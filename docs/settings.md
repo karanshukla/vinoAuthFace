@@ -41,7 +41,7 @@ and `uninstall.sh` remove it.
 | Models | `model_path`, `detector_model_path`, `backend`, `npu_device` |
 | Security | `guards.*`, `lockout.*`, `seal_embeddings`, `embeddings_dir`, `update_check` |
 | Just you | Your own file: stricter thresholds, scan timing, your IR camera, `tray_idle_minutes` |
-| About | The version, and links to vinopilot.ca and the other vinoPilot apps |
+| About | The version, Check for updates, and links to vinopilot.ca and the other vinoPilot apps. Nothing goes online until you click it; Update to vN asks for your password and runs the tray helper's `upgrade`, as the tray's own entry does. A build from source (`dev`) is told the newest release but never offered it. `update_check = false` removes the row |
 
 Each key is described in [configuration.md](configuration.md) and
 [`config/face-auth.toml.example`](https://github.com/karanshukla/vinoAuthFace/blob/main/config/face-auth.toml.example).

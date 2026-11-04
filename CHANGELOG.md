@@ -6,6 +6,7 @@ This fork (karanshukla/vinoAuthFace) was rebuilt on top of upstream's security
 pass below instead of merging, so upstream's fixes all apply. Fork features
 replayed on top:
 
+- **Check for updates on the settings window's About page.** One click asks GitHub; a newer release gets an Update to vN button, which runs the tray helper's `upgrade` through polkit. A build from source is stamped `dev` and is never offered one: that's why the tray's "Update to vN" never shows on a source build. `update_check = false` hides the row.
 - **One-line install, no build.** `curl -fsSL
   https://github.com/karanshukla/vinoAuthFace/releases/latest/download/install.sh
   | sudo bash` verifies a release's source bundle and runs its `deploy.sh
