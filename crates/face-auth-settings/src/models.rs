@@ -48,7 +48,7 @@ fn check(kind: Kind, path: &str) -> anyhow::Result<String> {
             // so a new detector format needs nothing here.
             Ok(match detector.kind() {
                 DetectorKind::Slim => "Loads as a box-only detector: faces are cropped, not aligned.".into(),
-                kind => format!("Loads as {kind:?}, with five points: faces are aligned by them."),
+                _with_points => "Loads, with five face points: faces are aligned by them.".into(),
             })
         }
     }
@@ -82,7 +82,7 @@ mod tests {
         if std::path::Path::new(detector).exists() {
             assert_eq!(
                 check(Kind::Detector, detector).unwrap(),
-                "Loads as Scrfd, with five points: faces are aligned by them."
+                "Loads, with five face points: faces are aligned by them."
             );
             // A detector in the recognition slot can load, but doesn't give 512.
             let wrong = check(Kind::Encoder, detector).unwrap_or_else(|e| e.to_string());
