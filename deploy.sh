@@ -101,21 +101,32 @@ cargo_build() {
 # (login-mode.sh). Without it a re-deploy or upgrade keeps what's installed,
 # and a fresh install gets off.
 #
+# --with-settings (or FACE_AUTH_SETTINGS=1) also builds the optional settings
+# window (docs/settings.md), which needs the tray's helper and a Rust
+# toolchain. A re-deploy keeps it where it's installed; --no-settings removes it.
+#
 # --build-runtime is accepted and ignored: it compiled ONNX Runtime to get a
 # newer OpenVINO, and face-auth never uses ONNX Runtime. OpenVINO alone now
 # comes prebuilt (see the ovfetch section below).
 WITH_TRAY="${FACE_AUTH_TRAY:-1}"
 LOGIN_MODE="${FACE_AUTH_LOGIN:-}"
-USAGE="Usage: sudo ./deploy.sh [--no-tray] [--login=off|both|face]"
+WITH_SETTINGS="${FACE_AUTH_SETTINGS:-}"
+USAGE="Usage: sudo ./deploy.sh [--no-tray] [--with-settings|--no-settings] [--login=off|both|face]"
 for arg in "$@"; do
     case "$arg" in
         --with-tray) WITH_TRAY=1 ;;
         --no-tray) WITH_TRAY=0 ;;
+        --with-settings) WITH_SETTINGS=1 ;;
+        --no-settings) WITH_SETTINGS=0 ;;
         --build-runtime) warn Runtime "--build-runtime is no longer needed: OpenVINO now installs prebuilt, with no compile." ;;
         --login=off|--login=both|--login=face) LOGIN_MODE="${arg#--login=}" ;;
         *) fail "Unknown option '$arg'" "$USAGE"; exit 1 ;;
     esac
 done
+if [ -z "$WITH_SETTINGS" ]; then
+    WITH_SETTINGS=0
+    [ -f /usr/local/bin/vinoauthface-settings ] && WITH_SETTINGS=1
+fi
 case "$LOGIN_MODE" in
     ""|off|both|face) ;;
     *) fail "FACE_AUTH_LOGIN must be off, both or face" "$USAGE"; exit 1 ;;
@@ -726,6 +737,24 @@ if [ "$WITH_TRAY" = 1 ]; then
     fi
 fi
 
+# The optional settings window (docs/settings.md, --with-settings), beside the
+# tray: its Apply runs the tray's helper. Built from source only, for the host (glibc), never musl:
+# winit and glow load the desktop's libraries at run time. The release has no
+# glibc builds, so without a Rust toolchain there is no window.
+SETTINGS_SRC=""
+if [ "$WITH_SETTINGS" = 1 ] && [ "$WITH_TRAY" = 1 ] && [ -n "$TRAY_SRC" ]; then
+    if [ -f "$TARGET_DIR/release/vinoauthface-settings" ] && [ -z "${FACE_AUTH_FORCE_BUILD:-}" ] \
+         && ! needs_rebuild "$TARGET_DIR/release/vinoauthface-settings"; then
+        SETTINGS_SRC="$TARGET_DIR/release"
+    elif CARGO_BIN="$(find_cargo)"; then
+        step "building the settings window"
+        SETTINGS_UNITS=0
+        [ "$INTERACTIVE" = 1 ] && SETTINGS_UNITS="$(count_units "$CARGO_BIN" tree --locked -p face-auth-settings)"
+        cargo_build "Compiling" "$SETTINGS_UNITS" as_user "$CARGO_BIN" build --release --locked \
+            -p face-auth-settings && SETTINGS_SRC="$TARGET_DIR/release"
+    fi
+fi
+
 # A binary that does not match the backend written to the config fails at
 # unlock time with a confusing error, so check the linkage now.
 if [ "$NPU_ACTIVE" = 1 ] && ! ldd "$BIN_SRC/vinoauthface-auth" | grep -q libopenvino; then
@@ -833,9 +862,19 @@ if [ -n "$TRAY_SRC" ]; then
         install -Dm644 "$TRAY_DATA/$icon-symbolic.svg" \
             "/usr/local/share/icons/hicolor/symbolic/apps/$icon-symbolic.svg"
     done
+    if [ -n "$SETTINGS_SRC" ]; then
+        install -Dm755 "$SETTINGS_SRC/vinoauthface-settings" "$BIN_DIR/vinoauthface-settings"
+        install -Dm644 crates/face-auth-settings/data/vinoauthface-settings.desktop \
+            /usr/local/share/applications/vinoauthface-settings.desktop
+    elif [ "$WITH_SETTINGS" = 1 ]; then
+        warn Settings "No settings window: it builds from source, and there is no Rust toolchain."
+    else
+        rm -f "$BIN_DIR/vinoauthface-settings" /usr/local/share/applications/vinoauthface-settings.desktop
+    fi
     if command -v restorecon &>/dev/null; then
         restorecon "$BIN_DIR/vinoauthface-tray" /usr/local/libexec/vinoauthface-helper \
             "$POLKIT_ACTIONS_DIR/io.github.karanshukla.vinoauthface.policy" 2>/dev/null || true
+        [ -n "$SETTINGS_SRC" ] && restorecon "$BIN_DIR/vinoauthface-settings" 2>/dev/null || true
     fi
 elif [ "$WITH_TRAY" = 1 ]; then
     warn Tray "No tray binaries to install (no Rust toolchain, and the release has none)."
@@ -1454,6 +1493,11 @@ if [ -n "$PINNED" ]; then
     printf '  %-10s %s%s%s\n' "Camera" "pinned to USB port " "${PINNED##*/}" " (re-pin only if you move it)"
 else
     printf '  %-10s %s\n' "Camera" "once unlock works: sudo ./pin-camera.sh /dev/videoN (vinoauthface enroll prints it)"
+fi
+if [ -x "$BIN_DIR/vinoauthface-settings" ]; then
+    printf '  %-10s %s\n' "Settings" "vinoauthface-settings, or \"vinoAuthFace settings\" in the app launcher"
+elif [ -x "$BIN_DIR/vinoauthface-tray" ]; then
+    printf '  %-10s %s\n' "Settings" "optional window for every setting: sudo ./deploy.sh --with-settings"
 fi
 printf '  %-10s %s\n' "Upgrade" "sudo vinoauthface-upgrade (when doctor or the tray says there's a new release)"
 printf '  %-10s %s\n' "Uninstall" "sudo ./uninstall.sh"

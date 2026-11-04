@@ -279,9 +279,9 @@ jobs:
           test -x /usr/local/bin/vinoauthface-tray
           test "$(stat -c %U:%a /usr/local/libexec/vinoauthface-helper)" = root:755
           policy=/usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
-          # 7 fixed verbs plus one per Settings choice (helper.rs checks the policy against its table).
-          test "$(grep -c 'exec.argv1' "$policy")" = 18
-          test "$(grep -c '<allow_active>auth_admin</allow_active>' "$policy")" = 18
+          # 10 fixed verbs plus one per Settings choice (helper.rs checks the policy against its table).
+          test "$(grep -c 'exec.argv1' "$policy")" = 21
+          test "$(grep -c '<allow_active>auth_admin</allow_active>' "$policy")" = 21
           test -f /etc/xdg/autostart/vinoauthface-tray.desktop
           test -f /usr/local/share/applications/vinoauthface-enrol.desktop
           test -f /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
@@ -294,6 +294,10 @@ jobs:
           refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper upgrade v1
           refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper login-face off
           refuses /usr/local/libexec/vinoauthface-helper enrol
+          # write-config: no settings-window header, or one for a file that isn't there.
+          refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper write-config </dev/null
+          printf 'vinoauthface-settings base=0000000000000000\nthreshold = 0.7\n' \
+            | refuses sudo env PKEXEC_UID="$(id -u)" /usr/local/libexec/vinoauthface-helper write-config
           # Not enrolled: --enrolled answers 1 (no), not 2 (error).
           set +e; /usr/local/bin/vinoauthface-auth --enrolled; rc=$?; set -e
           test "$rc" = 1

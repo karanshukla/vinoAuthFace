@@ -30,6 +30,11 @@ exceptions = [
     # Public-domain dedication. The tray's StatusNotifierItem; never linked
     # into face-auth.
     { crate = "ksni", allow = ["Unlicense"] },
+    # The fonts the settings window draws with (egui's fallbacks, and vino-ui's
+    # Inter and JetBrains Mono), under their font licenses. Never linked into
+    # face-auth.
+    { crate = "epaint_default_fonts", allow = ["OFL-1.1", "Ubuntu-font-1.0"] },
+    { crate = "vino-user-interface", allow = ["OFL-1.1"] },
 ]
 
 [bans]
