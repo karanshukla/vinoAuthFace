@@ -48,9 +48,7 @@ impl Page {
 
     pub fn parse(name: &str) -> Option<Page> {
         let name = name.to_ascii_lowercase();
-        Page::ALL.into_iter().find(|page| {
-            page.title().to_ascii_lowercase() == name || page.slug() == name || (*page == Page::You && name == "personal")
-        })
+        Page::ALL.into_iter().find(|page| page.title().to_ascii_lowercase() == name || page.slug() == name)
     }
 
     fn slug(self) -> &'static str {
@@ -73,7 +71,7 @@ impl Page {
             Page::Camera => "Camera",
             Page::Models => "Models",
             Page::Security => "Security",
-            Page::You => "Personal settings",
+            Page::You => "Just you",
         }
     }
 
