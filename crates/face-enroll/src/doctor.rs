@@ -142,16 +142,23 @@ pub fn model_tag_verdict(current: &str, stored: &[(String, Option<String>)]) -> 
 }
 
 /// Auth builds the encoder with `config.backend()` before any scan; one this
-/// binary can't run fails every attempt before the camera opens.
-pub fn backend_verdict(backend: &str, npu_device: &str, npu_built: bool) -> Check {
-    match backend {
-        "openvino" if !npu_built => check(
+/// binary can't run fails every attempt before the camera opens. An npu build
+/// loads OpenVINO at run time (`openvino`: the library it would load), and
+/// without one runs the same models on tract.
+pub fn backend_verdict(backend: &str, npu_device: &str, npu_built: bool, openvino: Option<&std::path::Path>) -> Check {
+    match (backend, openvino) {
+        ("openvino", _) if !npu_built => check(
             Status::Fail,
             "backend",
             "openvino configured, but this build has no `npu` feature; every scan falls to the password",
         ),
-        "openvino" => check(Status::Ok, "backend", format!("openvino on {npu_device}")),
-        other => check(Status::Ok, "backend", format!("{other} (CPU)")),
+        ("openvino", None) => check(
+            Status::Warn,
+            "backend",
+            "openvino configured, but OpenVINO isn't installed; scans run on tract (CPU) instead",
+        ),
+        ("openvino", Some(lib)) => check(Status::Ok, "backend", format!("openvino on {npu_device} ({})", lib.display())),
+        (other, _) => check(Status::Ok, "backend", format!("{other} (CPU)")),
     }
 }
 
@@ -417,7 +424,11 @@ pub fn run(pam_dir: &Path, etc: &Path) -> Vec<Check> {
 
     out.push(model_check("recognition model", &config.model_path()));
     out.push(model_check("detector model", &config.detector_model_path()));
-    out.push(backend_verdict(&config.backend(), &config.npu_device(), cfg!(feature = "npu")));
+    #[cfg(feature = "npu")]
+    let openvino = face_auth_core::inference::find_openvino();
+    #[cfg(not(feature = "npu"))]
+    let openvino: Option<std::path::PathBuf> = None;
+    out.push(backend_verdict(&config.backend(), &config.npu_device(), cfg!(feature = "npu"), openvino.as_deref()));
     if cfg!(feature = "npu") && config.backend() == "openvino" && config.npu_device() == "NPU" {
         out.push(npu_check());
     }
@@ -673,9 +684,11 @@ mod tests {
 
     #[test]
     fn openvino_without_npu_build_fails() {
-        assert_eq!(backend_verdict("openvino", "NPU", false).status, Status::Fail);
-        assert_eq!(backend_verdict("openvino", "NPU", true).status, Status::Ok);
-        assert_eq!(backend_verdict("tract", "NPU", false).status, Status::Ok);
+        let lib = std::path::Path::new("/usr/local/lib/face-auth/openvino/libopenvino_c.so");
+        assert_eq!(backend_verdict("openvino", "NPU", false, None).status, Status::Fail);
+        assert_eq!(backend_verdict("openvino", "NPU", true, Some(lib)).status, Status::Ok);
+        assert_eq!(backend_verdict("openvino", "NPU", true, None).status, Status::Warn);
+        assert_eq!(backend_verdict("tract", "NPU", false, None).status, Status::Ok);
     }
 
     #[test]

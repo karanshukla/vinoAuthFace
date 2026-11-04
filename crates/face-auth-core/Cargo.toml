@@ -22,6 +22,10 @@ toml = "1.1"
 nix = { version = "0.31", features = ["fs"] }
 libc = "0.2"
 openvino = { workspace = true, optional = true }
+openvino-sys = { workspace = true, optional = true }
 
 [features]
-npu = ["dep:openvino"]
+# runtime-linking: OpenVINO is loaded when the backend starts, not linked, so
+# one build runs against whichever release ovfetch installed (its sonames carry
+# the version) and CI can build it with no OpenVINO present.
+npu = ["dep:openvino", "dep:openvino-sys", "openvino/runtime-linking"]

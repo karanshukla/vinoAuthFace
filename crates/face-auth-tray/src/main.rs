@@ -159,12 +159,6 @@ impl Status {
         self.camera.is_some() && self.enrolled == Some(true)
     }
 
-    /// An OpenVINO install compiles as the user on upgrade, which the root
-    /// helper can't do, so the tray only points at the command.
-    fn openvino(&self) -> bool {
-        self.backend.starts_with("OpenVINO")
-    }
-
     /// The Status submenu's read-only lines.
     fn lines(&self) -> Vec<String> {
         vec![
@@ -410,13 +404,9 @@ impl ksni::Tray for Tray {
         let enrolled = s.enrolled == Some(true);
         let mut menu = Vec::new();
         if let Some(tag) = &self.update {
-            if s.openvino() {
-                menu.push(info(format!("Update available: {tag}. Run sudo vinoauthface-upgrade")));
-            } else {
-                menu.push(item(&format!("Update to {tag}…"), MenuIcon::Update.name(), idle, |t| {
-                    t.run(Action::Upgrade)
-                }));
-            }
+            menu.push(item(&format!("Update to {tag}…"), MenuIcon::Update.name(), idle, |t| {
+                t.run(Action::Upgrade)
+            }));
             menu.push(MenuItem::Separator);
         }
 

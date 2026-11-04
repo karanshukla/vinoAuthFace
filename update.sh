@@ -96,32 +96,25 @@ TRAY=0
 [ "$WITH_TRAY" = 1 ] && [ -f "$BIN_DIR/vinoauthface-tray" ] && TRAY=1
 
 # ---- Build, matching the installed backend ----
-# An NPU build links OpenVINO dynamically; the CPU build is static musl, which
-# ldd rejects. Building the other one would swap backends under a config
-# written for this one.
-OV_LIB="$(ldd "$BIN_DIR/vinoauthface-auth" 2>/dev/null | awk '/libopenvino_c/ {print $3; exit}' || true)"
-if [ -n "$OV_LIB" ]; then
-    OV_LIB_DIR="$(dirname "$OV_LIB")"
+# Building the other one would swap backends under a config written for this
+# one. The npu build loads OpenVINO at run time, so ask the binary; builds from
+# before --build linked it, which ldd shows.
+INSTALLED_BUILD="$("$BIN_DIR/vinoauthface-auth" --build 2>/dev/null || true)"
+if [ -z "$INSTALLED_BUILD" ] && ldd "$BIN_DIR/vinoauthface-auth" 2>/dev/null | grep -q libopenvino_c; then
+    INSTALLED_BUILD=openvino
+fi
+if [ "$INSTALLED_BUILD" = openvino ]; then
     BIN_SRC="$TARGET_DIR/release"
-    # An ovfetch deploy finds OpenVINO through an rpath (see deploy.sh for why
-    # DT_RPATH and GNU ld); system and archive installs through the loader's
-    # normal search.
-    RUSTFLAGS_NPU=""
-    if [ "$OV_LIB_DIR" = "$OPENVINO_INSTALL_DIR" ]; then
-        RUSTFLAGS_NPU="-C link-arg=-Wl,--disable-new-dtags,-rpath,$OPENVINO_INSTALL_DIR"
-        command -v ld.bfd >/dev/null 2>&1 && RUSTFLAGS_NPU="$RUSTFLAGS_NPU -C link-arg=-fuse-ld=bfd"
-    fi
-    # openvino-sys caches the library directory it found and never rechecks.
-    if grep -hs '^cargo:rustc-link-search=native=' "$TARGET_DIR"/release/build/openvino-sys-*/output \
-            | grep -qvxF "cargo:rustc-link-search=native=$OV_LIB_DIR"; then
-        as_user "$CARGO" clean --quiet --release -p openvino-sys
-    fi
-    step "building with the NPU backend against $OV_LIB_DIR"
-    as_user env LD_LIBRARY_PATH="$OV_LIB_DIR" RUSTFLAGS="$RUSTFLAGS_NPU" \
+    # The rpath finds OpenVINO's own libraries at unlock time; see deploy.sh
+    # for why DT_RPATH and GNU ld.
+    RUSTFLAGS_NPU="-C link-arg=-Wl,--disable-new-dtags,-rpath,$OPENVINO_INSTALL_DIR"
+    command -v ld.bfd >/dev/null 2>&1 && RUSTFLAGS_NPU="$RUSTFLAGS_NPU -C link-arg=-fuse-ld=bfd"
+    step "building the NPU backend"
+    as_user env RUSTFLAGS="$RUSTFLAGS_NPU" \
         "$CARGO" build --release --locked --features "$NPU_FEATURES" -p face-auth -p face-enroll \
         || { fail "Build failed"; exit 1; }
-    if ! ldd "$BIN_SRC/vinoauthface-auth" | grep -q libopenvino; then
-        fail "NPU build has no OpenVINO linkage" "Nothing was installed."
+    if [ "$("$BIN_SRC/vinoauthface-auth" --build 2>/dev/null)" != openvino ]; then
+        fail "The NPU build has no OpenVINO backend" "Nothing was installed."
         exit 1
     fi
     ok Build "NPU backend (OpenVINO, glibc)"

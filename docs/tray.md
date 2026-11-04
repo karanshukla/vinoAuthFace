@@ -48,7 +48,7 @@ It starts at the next login, or run `vinoauthface-tray` now (it detaches from th
 
 | Entry | Does | Runs as |
 |---|---|---|
-| Update to vN | Shown at the top only when a newer release exists (checked a minute after start, then daily; `update_check = false` disables it). Runs `vinoauthface-upgrade` (see [install.md](install.md#updating)), then restarts the tray on the new version. On an OpenVINO install it only shows the command, since that build compiles as you. A notification appears once per new release | root, via pkexec |
+| Update to vN | Shown at the top only when a newer release exists (checked a minute after start, then daily; `update_check = false` disables it). Runs `vinoauthface-upgrade` (see [install.md](install.md#updating)), then restarts the tray on the new version. A notification appears once per new release | root, via pkexec |
 | Status | A submenu: the camera it would use, whether you're enrolled, the backend, the recognition and detector models and the installed version. When something is wrong, or an action or scan is running, its label says what ("Status: No IR camera found", "Status: Enrolling your face: Captured 3/30"), with a warning icon when something is wrong. For the full picture, run `sudo vinoauthface doctor` | you |
 | Enrol face | `vinoauthface enroll --user <you>`. Shown only until you're enrolled. To start over, use the [settings window](settings.md)'s Face page or `sudo vinoauthface enroll --user $USER` | root, via pkexec |
 | Retrain face | `vinoauthface improve --user <you>`: captures more frames (new lighting, glasses) and keeps the old ones | root, via pkexec |

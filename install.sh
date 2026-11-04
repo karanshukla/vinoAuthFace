@@ -12,8 +12,10 @@
 #
 # It downloads the release's source bundle and SHA256SUMS, checks the one
 # against the other, and runs that release's own deploy.sh with --prebuilt:
-# the release's static binaries (also checksum-verified), its models, config,
-# PAM and SELinux setup. Re-running it reinstalls, keeping config, templates
+# the release's binaries (also checksum-verified), its models, config, PAM and
+# SELinux setup. With ovfetch on the PATH (or OpenVINO installed some other
+# way), that's the NPU (OpenVINO) build and the runtime ovfetch picks for this
+# machine; otherwise the static CPU build. Re-running it reinstalls, keeping config, templates
 # and PAM setup the way a re-run of deploy.sh does.
 #
 # From a checkout, sudo ./deploy.sh builds from source instead.
@@ -70,15 +72,6 @@ main() {
             exit 1
         fi
     done
-
-    # The release binaries are the CPU build. Installing them over an
-    # OpenVINO build would quietly swap the backend; vinoauthface-upgrade
-    # rebuilds that one instead.
-    if ldd /usr/local/bin/vinoauthface-auth 2>/dev/null | grep -q libopenvino; then
-        fail "This machine has the OpenVINO (NPU) build, and release binaries are CPU only" \
-            "To upgrade it, run: sudo vinoauthface-upgrade"
-        exit 1
-    fi
 
     printf '%svinoAuthFace install%s\n' "$BOLD" "$RESET"
 
