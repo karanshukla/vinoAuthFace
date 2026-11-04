@@ -12,7 +12,7 @@ use std::process::ExitCode;
 const USAGE: &str = "\
 vinoauthface-settings: the vinoAuthFace settings window
 
-Usage: vinoauthface-settings [--page matching|liveness|camera|models|security|personal]
+Usage: vinoauthface-settings [--page matching|liveness|camera|models|security|you]
 ";
 
 fn main() -> ExitCode {
