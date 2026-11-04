@@ -150,6 +150,12 @@ capture (V4L2, GREY/YUYV/Y16, brighter of a frame pair) → assess_frame (mean +
   → cosine similarity vs stored embeddings
 ```
 
+The detector is one of three formats, one module each, chosen by `DetectorKind::identify` from the
+model's outputs (count, then names and shapes): the slim box-only one (`detector.rs`), SCRFD
+(`scrfd.rs`) and a BlazeFace-style five-point detector (`blazeface.rs`, two passes, not shipped).
+A new format is a variant, an `identify` case and its preprocess/decode pair in `FaceDetector::detect`;
+any five points in `scrfd::TEMPLATE` order align the same way.
+
 `authenticate_scan` polls this in a loop until `scan_duration_ms` elapses (plus, once,
 `liveness_grace_ms` if a frame matched but was held back for liveness). The loop is paced by
 the camera itself; `scan_interval_ms` is an extra delay that defaults to 0. It additionally

@@ -209,6 +209,12 @@ fn fix_empty_resize_scales(model: &mut InferenceModel) -> anyhow::Result<usize> 
 use openvino::{DeviceType, ElementType, InferRequest, PartialShape, Shape, Tensor as OvTensor};
 
 /// Which detector a model file is, told apart by its outputs.
+///
+/// Each kind is one module: how a frame becomes its input and how its
+/// outputs become a face (this file for `Slim`, `scrfd`, `blazeface`). A new
+/// format is a variant here, a case in [`DetectorKind::identify`], and its
+/// two functions in [`FaceDetector::detect`]. Whatever gives five points in
+/// `scrfd::TEMPLATE`'s order is aligned the same way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetectorKind {
     /// `version-slim-320.onnx`: scores and boxes, 320x240 input.
@@ -216,14 +222,43 @@ pub enum DetectorKind {
     /// SCRFD (`det_500m.onnx`): scores, boxes and five landmarks at three
     /// strides, square input. See `scrfd`.
     Scrfd,
+    /// A BlazeFace-style detector with the five alignment points: 896
+    /// anchors, 128x128 input, two passes. See `blazeface`.
+    BlazeFace,
+}
+
+/// One model output, as far as the file says: its name and, when fixed,
+/// its shape.
+#[derive(Debug, Clone, Default)]
+pub struct OutputInfo {
+    pub name: String,
+    pub shape: Option<Vec<usize>>,
 }
 
 impl DetectorKind {
-    fn from_outputs(n: usize) -> anyhow::Result<Self> {
-        match n {
+    /// From the model's outputs. Nine is SCRFD. Two is BlazeFace when they
+    /// carry its names (`regressors`, `classificators`) or its shape (896
+    /// anchors of 16 values), and otherwise the original slim detector, the
+    /// only two-output model before BlazeFace.
+    pub fn identify(outputs: &[OutputInfo]) -> anyhow::Result<Self> {
+        let blazeface = outputs.iter().any(|o| {
+            let name = o.name.to_ascii_lowercase();
+            name.contains("regressors")
+                || name.contains("classificators")
+                || o.shape.as_ref().is_some_and(|s| {
+                    s.len() >= 2
+                        && s[s.len() - 2] == crate::blazeface::ANCHORS
+                        && matches!(s[s.len() - 1], crate::blazeface::REGRESSORS | 1)
+                })
+        });
+        match outputs.len() {
+            2 if blazeface => Ok(Self::BlazeFace),
             2 => Ok(Self::Slim),
             crate::scrfd::OUTPUTS => Ok(Self::Scrfd),
-            _ => anyhow::bail!("unrecognised face detector: {n} outputs (expected 2 or {})", crate::scrfd::OUTPUTS),
+            n => anyhow::bail!(
+                "unrecognised face detector: {n} outputs (expected 2 for the slim detector or BlazeFace, or {} for SCRFD)",
+                crate::scrfd::OUTPUTS
+            ),
         }
     }
 
@@ -232,6 +267,30 @@ impl DetectorKind {
         match self {
             Self::Slim => [DETECTOR_HEIGHT, DETECTOR_WIDTH],
             Self::Scrfd => [crate::scrfd::INPUT_SIZE; 2],
+            Self::BlazeFace => [crate::blazeface::INPUT_SIZE; 2],
+        }
+    }
+
+    /// Whether its faces carry the five points, and so are aligned before
+    /// encoding rather than cropped.
+    pub fn has_landmarks(self) -> bool {
+        !matches!(self, Self::Slim)
+    }
+
+    /// Its outputs in the order its decoder reads them, by index into the
+    /// model's. BlazeFace's decoder wants the regressors first; a model that
+    /// lists the scores first is reordered by shape or name.
+    fn output_order(self, outputs: &[OutputInfo]) -> Vec<usize> {
+        let identity: Vec<usize> = (0..outputs.len()).collect();
+        if self != Self::BlazeFace || outputs.len() != 2 {
+            return identity;
+        }
+        let scores_first = outputs[0].name.to_ascii_lowercase().contains("classificators")
+            || outputs[0].shape.as_ref().and_then(|s| s.last()).is_some_and(|&d| d == 1);
+        if scores_first {
+            vec![1, 0]
+        } else {
+            identity
         }
     }
 }
@@ -241,6 +300,7 @@ pub enum FaceDetector {
     Tract {
         model: Arc<TypedRunnableModel>,
         kind: DetectorKind,
+        order: Vec<usize>,
         threshold: f32,
     },
     #[cfg(feature = "npu")]
@@ -268,7 +328,19 @@ impl FaceDetector {
 
     fn new_tract(model_path: &str, threshold: f32) -> anyhow::Result<Self> {
         let mut model = onnx().model_for_path(model_path)?;
-        let kind = DetectorKind::from_outputs(model.output_outlets()?.len())?;
+        let outputs = model
+            .output_outlets()?
+            .iter()
+            .map(|&outlet| {
+                let name = model.outlet_label(outlet).unwrap_or_default().to_string();
+                let shape = model.outlet_fact(outlet).ok().and_then(|f| f.shape.concretize()).and_then(|dims| {
+                    dims.iter().map(|d| d.to_i64().ok().and_then(|v| usize::try_from(v).ok())).collect()
+                });
+                OutputInfo { name, shape }
+            })
+            .collect::<Vec<_>>();
+        let kind = DetectorKind::identify(&outputs)?;
+        let order = kind.output_order(&outputs);
         if kind == DetectorKind::Scrfd {
             let patched = fix_empty_resize_scales(&mut model)?;
             tracing::debug!(patched, "SCRFD: upsample scales made explicit for tract");
@@ -280,7 +352,7 @@ impl FaceDetector {
             .with_input_fact(0, InferenceFact::dt_shape(f32::datum_type(), tvec!(1, 3, h, w)))?
             .into_optimized()?
             .into_runnable()?;
-        Ok(Self::Tract { model, kind, threshold })
+        Ok(Self::Tract { model, kind, order, threshold })
     }
 
     #[cfg(feature = "npu")]
@@ -289,10 +361,15 @@ impl FaceDetector {
         let (request, input_name, output_names, kind) = crate::inference::with_ov_core(|core| {
             let mut model = core.read_model_from_file(model_path, "")?;
             let input_name = model.get_input_by_index(0)?.get_name()?;
-            let kind = DetectorKind::from_outputs(model.get_outputs_len()?)?;
             let output_names = (0..model.get_outputs_len()?)
                 .map(|i| Ok(model.get_output_by_index(i)?.get_name()?))
                 .collect::<anyhow::Result<Vec<String>>>()?;
+            // By name only here: the names are what OpenVINO keeps from the file.
+            let outputs: Vec<OutputInfo> =
+                output_names.iter().map(|name| OutputInfo { name: name.clone(), shape: None }).collect();
+            let kind = DetectorKind::identify(&outputs)?;
+            let output_names: Vec<String> =
+                kind.output_order(&outputs).into_iter().map(|i| output_names[i].clone()).collect();
             let [h, w] = kind.input_hw();
             model.reshape_single_input(&PartialShape::new_static(4, &[1, 3, h as i64, w as i64])?)?;
             let mut compiled = core.compile_model(&model, DeviceType::from(device))?;
@@ -307,8 +384,8 @@ impl FaceDetector {
         anyhow::bail!("backend = \"openvino\" but this build was compiled without the `npu` feature")
     }
 
-    /// Which detector this is. SCRFD faces carry landmarks and are aligned
-    /// before encoding, which changes what an embedding means.
+    /// Which detector this is. SCRFD and BlazeFace faces carry landmarks and
+    /// are aligned before encoding, which changes what an embedding means.
     pub fn kind(&self) -> DetectorKind {
         match self {
             Self::Tract { kind, .. } => *kind,
@@ -325,6 +402,10 @@ impl FaceDetector {
                 let (input, lb) = crate::scrfd::preprocess(frame)?;
                 (input, Some(lb))
             }
+            DetectorKind::BlazeFace => {
+                let threshold = self.threshold();
+                return crate::blazeface::detect(frame, threshold, |input| Ok(self.run(input)?.0));
+            }
         };
         let (outputs, threshold) = self.run(input)?;
         match letterbox {
@@ -336,17 +417,28 @@ impl FaceDetector {
         }
     }
 
+    fn threshold(&self) -> f32 {
+        match self {
+            Self::Tract { threshold, .. } => *threshold,
+            #[cfg(feature = "npu")]
+            Self::OpenVino { threshold, .. } => *threshold,
+        }
+    }
+
     /// Run the model; every output as a contiguous copy (the optimised plan
-    /// may hand back strided views).
+    /// may hand back strided views), in the order its decoder reads them.
     fn run(&mut self, input: tract_ndarray::Array3<f32>) -> anyhow::Result<(Vec<Vec<f32>>, f32)> {
         match self {
-            Self::Tract { model, threshold, .. } => {
+            Self::Tract { model, order, threshold, .. } => {
                 let mut input = input.into_dyn();
                 input.insert_axis_inplace(tract_ndarray::Axis(0));
                 let result = model.run(tvec!(Tensor::from(input).into_tvalue()))?;
-                let outputs = result
+                let outputs = order
                     .iter()
-                    .map(|t| Ok(t.to_plain_array_view::<f32>()?.iter().copied().collect()))
+                    .map(|&i| {
+                        let t = result.get(i).ok_or_else(|| anyhow::anyhow!("detector output {i} missing"))?;
+                        Ok(t.to_plain_array_view::<f32>()?.iter().copied().collect())
+                    })
                     .collect::<anyhow::Result<_>>()?;
                 Ok((outputs, *threshold))
             }
@@ -572,5 +664,40 @@ mod tests {
     fn brightness_alone_does_not_pass() {
         let q = assess_frame(&frame8(vec![200; 1024], 32, 32));
         assert!(matches!(q, FrameQuality::TooFlat { .. }), "got {q:?}");
+    }
+
+    fn out(name: &str, shape: Option<&[usize]>) -> OutputInfo {
+        OutputInfo { name: name.into(), shape: shape.map(<[usize]>::to_vec) }
+    }
+
+    #[test]
+    fn detectors_are_told_apart_by_their_outputs() {
+        let slim = [out("scores", Some(&[1, 4420, 2])), out("boxes", Some(&[1, 4420, 4]))];
+        assert_eq!(DetectorKind::identify(&slim).unwrap(), DetectorKind::Slim);
+        let unnamed = [out("", None), out("", None)];
+        assert_eq!(DetectorKind::identify(&unnamed).unwrap(), DetectorKind::Slim, "the old default stands");
+        let scrfd: Vec<_> = (0..9).map(|i| out(&format!("{i}"), None)).collect();
+        assert_eq!(DetectorKind::identify(&scrfd).unwrap(), DetectorKind::Scrfd);
+        let named = [out("regressors", None), out("classificators", None)];
+        assert_eq!(DetectorKind::identify(&named).unwrap(), DetectorKind::BlazeFace);
+        let shaped = [out("a", Some(&[1, 896, 16])), out("b", Some(&[1, 896, 1]))];
+        assert_eq!(DetectorKind::identify(&shaped).unwrap(), DetectorKind::BlazeFace);
+        assert!(DetectorKind::identify(&[out("x", None)]).is_err());
+    }
+
+    #[test]
+    fn blazeface_outputs_are_read_regressors_first() {
+        let k = DetectorKind::BlazeFace;
+        assert_eq!(k.output_order(&[out("regressors", None), out("classificators", None)]), [0, 1]);
+        assert_eq!(k.output_order(&[out("classificators", None), out("regressors", None)]), [1, 0]);
+        assert_eq!(k.output_order(&[out("b", Some(&[1, 896, 1])), out("a", Some(&[1, 896, 16]))]), [1, 0]);
+        assert_eq!(DetectorKind::Slim.output_order(&[out("x", None), out("y", None)]), [0, 1]);
+    }
+
+    #[test]
+    fn only_the_slim_detector_lacks_landmarks() {
+        assert!(!DetectorKind::Slim.has_landmarks());
+        assert!(DetectorKind::Scrfd.has_landmarks());
+        assert!(DetectorKind::BlazeFace.has_landmarks());
     }
 }
