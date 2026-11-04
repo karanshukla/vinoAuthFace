@@ -641,6 +641,8 @@ else
         mkdir -p "$DL_DIR/bin"
         mv "$DL_DIR/vinoauthface-auth-$ASSET_SUFFIX" "$DL_DIR/bin/vinoauthface-auth"
         mv "$DL_DIR/vinoauthface-$ASSET_SUFFIX" "$DL_DIR/bin/vinoauthface"
+        # Run below to check the backend; installed with their own modes.
+        chmod 755 "$DL_DIR/bin/vinoauthface-auth" "$DL_DIR/bin/vinoauthface"
         BIN_SRC="$DL_DIR/bin"
         if [ "$OV_FOUND" = 1 ]; then
             NPU_ACTIVE=1
