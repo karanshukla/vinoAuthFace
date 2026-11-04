@@ -42,18 +42,6 @@
     <annotate key="org.freedesktop.policykit.exec.argv1">retrain</annotate>
   </action>
 
-  <action id="io.github.karanshukla.vinoauthface.uninstall">
-    <description>Uninstall vinoAuthFace</description>
-    <message>Authentication is required to uninstall vinoAuthFace</message>
-    <defaults>
-      <allow_any>no</allow_any>
-      <allow_inactive>no</allow_inactive>
-      <allow_active>auth_admin</allow_active>
-    </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
-    <annotate key="org.freedesktop.policykit.exec.argv1">uninstall</annotate>
-  </action>
-
   <action id="io.github.karanshukla.vinoauthface.upgrade">
     <description>Upgrade vinoAuthFace to the newest release</description>
     <message>Authentication is required to upgrade vinoAuthFace</message>

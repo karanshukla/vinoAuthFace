@@ -1,5 +1,5 @@
 //! vinoAuthFace's tray icon: status, enrol, retrain, test, the login screen,
-//! upgrade, uninstall.
+//! settings and upgrade.
 //!
 //! A per-user session app, never in the authentication path. It runs
 //! unprivileged and elevates each action that touches the template store
@@ -27,6 +27,9 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 const TRAY: &str = "/usr/local/bin/vinoauthface-tray";
+/// The optional settings window (`deploy.sh --with-settings`). When it is
+/// installed, Settings opens it instead of the tray's own submenu.
+const SETTINGS_WINDOW: &str = "/usr/local/bin/vinoauthface-settings";
 const DOCS: &str = "https://vinoauthface.vinopilot.ca/";
 /// How often `/proc` is checked for a running scan.
 const SCAN_POLL: Duration = Duration::from_millis(200);
@@ -43,7 +46,6 @@ enum Action {
     Enrol,
     Retrain,
     Test,
-    Uninstall,
     Upgrade,
     Login(LoginMode),
     Set(&'static Setting, &'static Choice),
@@ -89,7 +91,6 @@ impl LoginMode {
 /// What the tray does once an action has finished.
 enum After {
     Stay,
-    Quit,
     /// Re-exec the tray, which an upgrade just replaced.
     Restart,
 }
@@ -123,6 +124,8 @@ struct Status {
     /// Each setting's current choice id, from `setting-mode.sh status`; empty
     /// when it is missing (an install from before it), which hides the menu.
     settings: HashMap<String, String>,
+    /// `SETTINGS_WINDOW` is installed.
+    settings_window: bool,
 }
 
 impl Status {
@@ -141,7 +144,15 @@ impl Status {
             None => "unknown (cannot read /etc/face-auth.toml)".into(),
         };
         let model = config.as_ref().map_or("unknown".into(), |c| model_names(&c.model_path(), &c.detector_model_path()));
-        Status { camera, enrolled: enrolled(), backend, model, login: login_mode(), settings: settings() }
+        Status {
+            camera,
+            enrolled: enrolled(),
+            backend,
+            model,
+            login: login_mode(),
+            settings: settings(),
+            settings_window: Path::new(SETTINGS_WINDOW).exists(),
+        }
     }
 
     fn ready(&self) -> bool {
@@ -265,13 +276,6 @@ impl Notifier {
     }
 }
 
-/// A destructive entry clicked once, waiting for the second click.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Confirm {
-    Enrol,
-    Uninstall,
-}
-
 struct Tray {
     tx: Sender<Msg>,
     status: Status,
@@ -279,7 +283,6 @@ struct Tray {
     /// What a running action is doing, for the tooltip. Actions are refused
     /// while one runs.
     busy: Option<String>,
-    confirm: Option<Confirm>,
     /// A newer release than the one running, from the daily update check.
     update: Option<String>,
     /// Idle long enough to tuck the icon away (see `idle.rs`).
@@ -315,7 +318,6 @@ impl Tray {
     }
 
     fn run(&mut self, action: Action) {
-        self.confirm = None;
         if self.busy.is_none() {
             let _ = self.tx.send(Msg::Run(action));
         }
@@ -408,7 +410,6 @@ impl ksni::Tray for Tray {
         let enrolled = s.enrolled == Some(true);
         let mut menu = Vec::new();
         if let Some(tag) = &self.update {
-            let url = format!("{}/tag/{tag}", update::RELEASES_URL);
             if s.openvino() {
                 menu.push(info(format!("Update available: {tag}. Run sudo vinoauthface-upgrade")));
             } else {
@@ -416,10 +417,6 @@ impl ksni::Tray for Tray {
                     t.run(Action::Upgrade)
                 }));
             }
-            menu.push(item(&format!("What's new in {tag}"), MenuIcon::About.name(), true, move |_| {
-                let _ = Command::new("xdg-open").arg(&url).stdin(Stdio::null()).spawn();
-            }));
-            menu.push(info(format!("Installed: {}", update::CURRENT)));
             menu.push(MenuItem::Separator);
         }
 
@@ -449,17 +446,6 @@ impl ksni::Tray for Tray {
             if enrolled {
                 menu.push(item("Test scan", MenuIcon::Camera.name(), idle, |t| t.run(Action::Test)));
             }
-            // Re-enrolling throws the existing templates away, so it takes a
-            // second click.
-            if self.confirm == Some(Confirm::Enrol) {
-                menu.push(item("Replace your enrolled face? Click to confirm", MenuIcon::Warning.name(), idle, |t| {
-                    t.run(Action::Enrol)
-                }));
-            } else {
-                menu.push(item("Enrol again from scratch…", MenuIcon::Add.name(), idle, |t| {
-                    t.confirm = Some(Confirm::Enrol)
-                }));
-            }
         }
 
         if let Some(mode) = s.login {
@@ -485,29 +471,25 @@ impl ksni::Tray for Tray {
             );
         }
 
-        menu.push(
-            SubMenu {
-                label: "Settings".into(),
-                icon_name: MenuIcon::Settings.name().into(),
-                submenu: settings_menu(s, idle, self.idle_minutes),
-                ..Default::default()
-            }
-            .into(),
-        );
-
-        menu.push(MenuItem::Separator);
-        if self.confirm == Some(Confirm::Uninstall) {
-            menu.push(item("Uninstall vinoAuthFace? Click to confirm", MenuIcon::Warning.name(), idle, |t| {
-                t.run(Action::Uninstall)
+        if s.settings_window {
+            // The window does its own pkexec, so it opens while an action runs.
+            menu.push(item("Settings…", MenuIcon::Settings.name(), true, |_| {
+                if let Err(e) = Command::new(SETTINGS_WINDOW).stdin(Stdio::null()).spawn() {
+                    eprintln!("vinoauthface-tray: cannot start {SETTINGS_WINDOW}: {e}");
+                }
             }));
         } else {
-            menu.push(item("Uninstall vinoAuthFace…", MenuIcon::Remove.name(), idle, |t| {
-                t.confirm = Some(Confirm::Uninstall)
-            }));
+            menu.push(
+                SubMenu {
+                    label: "Settings".into(),
+                    icon_name: MenuIcon::Settings.name().into(),
+                    submenu: settings_menu(s, idle, self.idle_minutes),
+                    ..Default::default()
+                }
+                .into(),
+            );
         }
-        if self.confirm.is_some() {
-            menu.push(item("Cancel", MenuIcon::Cancel.name(), true, |t| t.confirm = None));
-        }
+
         menu.push(MenuItem::Separator);
         menu.push(item("Open documentation", MenuIcon::Help.name(), true, |_| {
             let _ = Command::new("xdg-open").arg(DOCS).stdin(Stdio::null()).spawn();
@@ -763,26 +745,6 @@ fn perform(action: Action, handle: &Handle<Tray>, notifier: &Notifier, user: &st
                 }
             }
         }
-        Action::Uninstall => {
-            set_busy(Some("Uninstalling: waiting for authentication".into()));
-            match run_helper(Verb::Uninstall, |_| {}) {
-                Ok(None) => {}
-                Ok(Some((true, _))) => {
-                    notifier.send(
-                        0,
-                        "vinoAuthFace uninstalled",
-                        "Your enrolled face was kept in /var/lib/face-auth. Remove it with sudo rm -rf /var/lib/face-auth.",
-                    );
-                    return After::Quit;
-                }
-                Ok(Some((false, err))) => {
-                    notifier.send(0, "Uninstall failed", &err);
-                }
-                Err(e) => {
-                    notifier.send(0, "Cannot run pkexec", &e.to_string());
-                }
-            }
-        }
         Action::Login(mode) => {
             set_busy(Some("Login screen: waiting for authentication".into()));
             match run_helper(mode.verb(), |_| {}) {
@@ -902,7 +864,6 @@ fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user: St
                 std::thread::spawn(move || {
                     let _ = tx.send(match perform(action, &handle, &Notifier::new(), &user) {
                         After::Stay => Msg::Done,
-                        After::Quit => Msg::Quit,
                         After::Restart => Msg::Restart,
                     });
                 });
@@ -1000,7 +961,6 @@ fn main() -> anyhow::Result<()> {
         status: Status::read(),
         scanning: false,
         busy: None,
-        confirm: None,
         update: None,
         hidden: false,
         idle_minutes: FaceAuthConfig::load().map_or(30, |c| c.tray_idle_minutes()),
@@ -1019,7 +979,7 @@ mod tests {
 
     #[test]
     fn status_lines_name_what_is_missing() {
-        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into(), model: "unknown".into(), login: None, settings: HashMap::new() };
+        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into(), model: "unknown".into(), login: None, settings: HashMap::new(), settings_window: false };
         let lines = s.lines();
         assert_eq!(lines[0], "Camera: no IR camera found");
         assert_eq!(lines[1], "Face: unknown (is vinoauthface installed?)");
@@ -1035,6 +995,7 @@ mod tests {
             model: "w600k_r50 (detector det_500m)".into(),
             login: Some(LoginMode::Face),
             settings: HashMap::new(),
+            settings_window: false,
         };
         assert!(s.ready());
         assert_eq!(s.lines()[..2], ["Camera: /dev/video2", "Face: enrolled"]);
@@ -1080,6 +1041,7 @@ mod tests {
             model: "w600k_mbf (detector det_500m)".into(),
             login: None,
             settings: HashMap::new(),
+            settings_window: false,
         }
     }
 
@@ -1097,7 +1059,6 @@ mod tests {
             status,
             scanning: false,
             busy: None,
-            confirm: None,
             update: None,
             hidden: false,
             idle_minutes: 30,
@@ -1119,16 +1080,15 @@ mod tests {
         let mut t = tray(ready());
         t.busy = Some("Enrolling your face: Captured 3/30".into());
         all.push(("busy", t));
-        let mut t = tray(ready());
-        t.confirm = Some(Confirm::Uninstall);
-        all.push(("confirming", t));
+        let mut s = ready();
+        s.settings_window = true;
+        all.push(("settings window", tray(s)));
         // Every setting on each of its choices, plus a hand-set value.
         let mut s = ready();
         s.login = Some(LoginMode::Both);
         s.settings = SETTINGS.iter().map(|x| (x.key.to_string(), x.choices[0].id.to_string())).collect();
         let mut t = tray(s.clone());
         t.update = Some("v99".into());
-        t.confirm = Some(Confirm::Enrol);
         all.push(("settings, update", t));
         s.settings = SETTINGS.iter().map(|x| (x.key.to_string(), x.choices[x.choices.len() - 1].id.to_string())).collect();
         s.backend = "OpenVINO (NPU)".into();
@@ -1201,6 +1161,18 @@ mod tests {
         let mut out = Vec::new();
         walk(&t.menu(), &mut out);
         out
+    }
+
+    #[test]
+    fn settings_opens_the_window_when_it_is_installed() {
+        let mut s = status(Some("/dev/video2"), Some(true));
+        s.settings_window = true;
+        let labels = labels(&tray(s.clone()));
+        assert!(labels.contains(&"Settings…".to_string()), "{labels:?}");
+        assert!(!labels.iter().any(|l| l.starts_with("Hide icon when idle")), "{labels:?}");
+        s.settings_window = false;
+        let labels = super::tests::labels(&tray(s));
+        assert!(labels.contains(&"Settings".to_string()) && labels.iter().any(|l| l.starts_with("Hide icon when idle")), "{labels:?}");
     }
 
     #[test]

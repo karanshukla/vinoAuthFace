@@ -5,7 +5,7 @@ nav_order: 7
 
 # Tray icon
 
-An optional tray icon for the session: an icon that shows scan state, and enrol, retrain, test and uninstall
+An optional tray icon for the session: an icon that shows scan state, and enrol, retrain and test
 without remembering CLI flags. It replaces upstream's GTK settings GUI. It is a separate
 per-user app and is never part of authentication: `vinoauthface-auth` doesn't know it exists.
 
@@ -41,23 +41,24 @@ It starts at the next login, or run `vinoauthface-tray` now (it detaches from th
 | `/etc/xdg/autostart/vinoauthface-tray.desktop` | Starts it at login |
 | `/usr/local/share/applications/vinoauthface-{tray,enrol}.desktop` | Launchers. "Enrol face" works without the tray running |
 | `/usr/local/share/face-auth/{login,setting}-mode.sh` | What the login-screen and Settings entries run |
-| `/usr/local/share/face-auth/uninstall.sh` | Installed by every deploy, so the uninstall entry works after the repo is gone |
+| `/usr/local/share/face-auth/uninstall.sh` | Installed by every deploy, so `sudo /usr/local/share/face-auth/uninstall.sh` works after the repo is gone |
 | `/usr/local/bin/vinoauthface-upgrade` | Installed by every deploy (not only with the tray). The upgrade entry runs it |
 
 ## Menu
 
 | Entry | Does | Runs as |
 |---|---|---|
-| Update to vN | Shown at the top only when a newer release exists (checked a minute after start, then daily; `update_check = false` disables it). Runs `vinoauthface-upgrade` (see [install.md](install.md#updating)), then restarts the tray on the new version. On an OpenVINO install it only shows the command, since that build compiles as you. "What's new" next to it opens the release page. A notification appears once per new release | root, via pkexec |
+| Update to vN | Shown at the top only when a newer release exists (checked a minute after start, then daily; `update_check = false` disables it). Runs `vinoauthface-upgrade` (see [install.md](install.md#updating)), then restarts the tray on the new version. On an OpenVINO install it only shows the command, since that build compiles as you. A notification appears once per new release | root, via pkexec |
 | Status | A submenu: the camera it would use, whether you're enrolled, the backend, the recognition and detector models and the installed version. When something is wrong, or an action or scan is running, its label says what ("Status: No IR camera found", "Status: Enrolling your face: Captured 3/30"), with a warning icon when something is wrong. For the full picture, run `sudo vinoauthface doctor` | you |
-| Enrol face | `vinoauthface enroll --user <you>`. Once you're enrolled it becomes "Enrol again from scratch" and takes a second click, since it replaces your templates | root, via pkexec |
+| Enrol face | `vinoauthface enroll --user <you>`. Shown only until you're enrolled. To start over, use the [settings window](settings.md)'s Face page or `sudo vinoauthface enroll --user $USER` | root, via pkexec |
 | Retrain face | `vinoauthface improve --user <you>`: captures more frames (new lighting, glasses) and keeps the old ones | root, via pkexec |
 | Test scan | One live scan, the same way the lock screen runs it. The result is a notification | you |
 | Login screen | Only with Plasma Login or SDDM. Password only, password then face, or face: see [pam.md](pam.md#login-screen). Runs `login-mode.sh` | root, via pkexec |
-| Settings | One submenu: a Security preset and the scan time as radio lists, and the two on/off settings as checkmarks. Changes `/etc/face-auth.toml` through `setting-mode.sh` (see the table below). A value you set by hand that the menu doesn't offer shows as "custom" with nothing selected. Hide icon when idle is the exception: it writes your own `~/.config/face-auth.toml` | root, via pkexec; you, for Hide icon when idle |
-| Uninstall | Runs `uninstall.sh` after a second click. Your templates are kept, as with `sudo ./uninstall.sh`. The tray exits when it finishes | root, via pkexec |
+| Settings | With the [settings window](settings.md) installed, opens it. Otherwise one submenu: a Security preset and the scan time as radio lists, and the two on/off settings as checkmarks. Changes `/etc/face-auth.toml` through `setting-mode.sh` (see the table below). A value you set by hand that the menu doesn't offer shows as "custom" with nothing selected. Hide icon when idle is the exception: it writes your own `~/.config/face-auth.toml` | root, via pkexec; you, for Hide icon when idle |
 
 ### Settings
+
+This submenu shows only without the settings window, which covers every key instead.
 
 Each choice is one polkit action (`set-<setting>-<choice>`), so there is no value the caller can
 pass. A flat key already in the file (`start_delay_ms`) is replaced too, since it would win over the
@@ -120,12 +121,12 @@ changing it. Other trays may ignore Passive and keep showing the icon.
   elsewhere with a symlink. That approach isn't used here.
 - **pkexec runs a fixed helper, never `vinoauthface enroll`.** polkit's `exec.path` pins a binary but not
   its arguments, so `pkexec vinoauthface enroll --embeddings-dir …` would let the caller choose where
-  root writes. `vinoauthface-helper` takes exactly one verb (`enrol`, `retrain`, `uninstall`,
+  root writes. `vinoauthface-helper` takes exactly one verb (`enrol`, `retrain`,
   `upgrade`, `login-off`, `login-both`, `login-face`, or `set-<setting>-<choice>`, one per choice in the Settings table) and no flags. The policy pins each verb
   with `exec.argv1`, so the login-screen mode is one action per mode rather than an argument. The
   target user comes from `PKEXEC_UID`, which pkexec sets, so there's no way to name another
-  account. All 18 actions are `auth_admin`.
-- **Upgrade and uninstall never touch your home.** They run as plain root with no `SUDO_USER`, so
+  account. All 17 actions are `auth_admin`.
+- **Upgrade never touches your home.** It runs as plain root with no `SUDO_USER`, so
   the upgrade downloads and unpacks the release under root's home, where nothing you run can swap
   it between the checksum check and `deploy.sh` running it. Upgrade only installs the newest
   release: no version can be named.
@@ -138,7 +139,7 @@ changing it. Other trays may ignore Passive and keep showing the icon.
 ### A face can approve enrol and retrain
 
 The polkit password prompt goes through the `polkit-1` PAM stack, and `deploy.sh` adds
-vinoAuthFace to that stack. So a face match can approve the tray's enrol, retrain, uninstall and
+vinoAuthFace to that stack. So a face match can approve the tray's enrol, retrain and
 upgrade actions, the same way it can approve `sudo`. polkit can't send one action through a different PAM
 service. Someone who spoofs your face (see [security.md](security.md#presentation-attacks-something-held-up-to-the-real-camera))
 could add their own frames with Retrain. They could do that anyway through

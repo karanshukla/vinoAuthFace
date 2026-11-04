@@ -91,14 +91,15 @@ Off-angle templates can raise impostor scores, so measure before and after with
 
 ## Your own models
 
-**Check**, beside each model path, loads the model with tract on the CPU and reports what it
+The model paths are shown but can't be changed here for now: set `model_path` or
+`detector_model_path` in `/etc/face-auth.toml` by hand. **Check**, beside each, loads the model with tract on the CPU and reports what it
 found: values per face (the shipped models give 512), or whether a detector gives the five face points.
 
-Copy a model where only root can write before picking it:
+Copy a model where only root can write before pointing at it:
 
 ```bash
 sudo install -m 644 my-model.onnx /usr/local/share/face-auth/
 ```
 
 Templates are tagged with their models (see [configuration.md](configuration.md)), so a new
-model means everyone enrols again. The Templates row warns before Apply.
+model means everyone enrols again. The Templates row says which models made yours.

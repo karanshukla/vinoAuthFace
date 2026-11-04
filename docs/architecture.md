@@ -78,7 +78,7 @@ with upstream. On top of upstream it adds:
 | YUYV and Y16 sensors, auto-detect for IR nodes not named "IR" | [hardware.md](hardware.md) |
 | Prebuilt release binaries; CI running real deploy/uninstall cycles | [install.md](install.md) |
 | `vinoauthface-camera-diag` and `vinoauthface-similarity-check` | [hardware.md](hardware.md#vinoauthface-camera-diag) |
-| Tray icon: status, enrol, retrain, test scan, uninstall | [tray.md](tray.md) |
+| Tray icon: status, enrol, retrain, test scan, settings | [tray.md](tray.md) |
 
 Upstream's GTK settings GUI and GNOME scan-indicator extension aren't included. The optional
 tray icon ([tray.md](tray.md)) replaces both, without a root-to-user status channel. The full history, including the upstream security pass, is in

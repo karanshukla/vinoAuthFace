@@ -1,4 +1,4 @@
-//! Root side of the tray's enrol, retrain, uninstall, upgrade and login-screen entries, and of the
+//! Root side of the tray's enrol, retrain, upgrade, login-screen and settings entries, and of the
 //! settings window's Apply, run through pkexec. See `face_auth_tray::helper` for why this exists
 //! instead of pkexec running `vinoauthface` directly.
 

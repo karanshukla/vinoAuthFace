@@ -9,7 +9,6 @@
 pub const HELPER: &str = "/usr/local/libexec/vinoauthface-helper";
 pub const FACE_ENROLL: &str = "/usr/local/bin/vinoauthface";
 pub const FACE_AUTH: &str = "/usr/local/bin/vinoauthface-auth";
-pub const UNINSTALLER: &str = "/usr/local/share/face-auth/uninstall.sh";
 pub const UPGRADER: &str = "/usr/local/bin/vinoauthface-upgrade";
 pub const LOGIN_MODE: &str = "/usr/local/share/face-auth/login-mode.sh";
 pub const SETTING_MODE: &str = "/usr/local/share/face-auth/setting-mode.sh";
@@ -104,7 +103,6 @@ pub enum Verb {
     /// stops). Fixed arguments, like the two above.
     EnrolGuided,
     RetrainGuided,
-    Uninstall,
     /// `vinoauthface-upgrade` to the newest release.
     Upgrade,
     /// `login-mode.sh`: face unlock at the KDE login screen. One verb per
@@ -129,7 +127,6 @@ impl Verb {
             Verb::Retrain => "retrain".into(),
             Verb::EnrolGuided => "enrol-guided".into(),
             Verb::RetrainGuided => "retrain-guided".into(),
-            Verb::Uninstall => "uninstall".into(),
             Verb::Upgrade => "upgrade".into(),
             Verb::LoginOff => "login-off".into(),
             Verb::LoginBoth => "login-both".into(),
@@ -139,12 +136,11 @@ impl Verb {
         }
     }
 
-    const FIXED: [Verb; 10] = [
+    const FIXED: [Verb; 9] = [
         Verb::Enrol,
         Verb::Retrain,
         Verb::EnrolGuided,
         Verb::RetrainGuided,
-        Verb::Uninstall,
         Verb::Upgrade,
         Verb::LoginOff,
         Verb::LoginBoth,
@@ -188,10 +184,7 @@ pub fn command(verb: Verb, user: &str) -> Option<(&'static str, Vec<String>)> {
         Verb::Retrain => (FACE_ENROLL, vec!["improve".into(), "--user".into(), user.into()]),
         Verb::EnrolGuided => (FACE_ENROLL, vec!["enroll".into(), "--guided".into(), "--user".into(), user.into()]),
         Verb::RetrainGuided => (FACE_ENROLL, vec!["improve".into(), "--guided".into(), "--user".into(), user.into()]),
-        // Run as root with no SUDO_USER, so its per-user cleanup looks in
-        // root's home, not in one the caller controls.
-        Verb::Uninstall => ("/bin/bash", vec![UNINSTALLER.into()]),
-        // The same: no SUDO_USER, so the release is downloaded and unpacked
+        // Run as root with no SUDO_USER, so the release is downloaded and unpacked
         // under root's home, never somewhere the caller could swap it between
         // the checksum and deploy.sh running it.
         Verb::Upgrade => ("/bin/bash", vec![UPGRADER.into()]),
@@ -217,7 +210,6 @@ mod tests {
     fn accepts_each_verb_for_the_pkexec_caller() {
         assert_eq!(parse_request(&args(&["enrol"]), Some("1000")), Ok((Verb::Enrol, 1000)));
         assert_eq!(parse_request(&args(&["retrain"]), Some("1000")), Ok((Verb::Retrain, 1000)));
-        assert_eq!(parse_request(&args(&["uninstall"]), Some("0")), Ok((Verb::Uninstall, 0)));
         assert_eq!(parse_request(&args(&["upgrade"]), Some("1000")), Ok((Verb::Upgrade, 1000)));
         assert_eq!(parse_request(&args(&["login-both"]), Some("1000")), Ok((Verb::LoginBoth, 1000)));
         assert_eq!(parse_request(&args(&["write-config"]), Some("1000")), Ok((Verb::WriteConfig, 1000)));
@@ -226,7 +218,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_verbs_and_flags() {
-        for list in [&["enroll"][..], &["ENROL"], &["--improve"], &[""], &["enrol ", ], &["login"], &["login-status"]] {
+        for list in [&["enroll"][..], &["ENROL"], &["--improve"], &[""], &["enrol ", ], &["login"], &["login-status"], &["uninstall"]] {
             assert!(parse_request(&args(list), Some("1000")).is_err(), "{list:?}");
         }
     }
@@ -261,7 +253,6 @@ mod tests {
         assert_eq!(command(Verb::RetrainGuided, "alice").unwrap().1, ["improve", "--guided", "--user", "alice"]);
         assert_eq!(command(Verb::Enrol, "alice").unwrap().1[0], "enroll");
         assert_eq!(command(Verb::Retrain, "alice").unwrap().1[0], "improve");
-        assert_eq!(command(Verb::Uninstall, "alice").unwrap().1, [UNINSTALLER]);
         assert_eq!(command(Verb::Upgrade, "alice").unwrap().1, [UPGRADER]);
         assert_eq!(command(Verb::LoginOff, "alice").unwrap().1, [LOGIN_MODE, "off"]);
         assert_eq!(command(Verb::LoginBoth, "alice").unwrap().1, [LOGIN_MODE, "both"]);
