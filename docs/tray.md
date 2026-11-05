@@ -15,7 +15,7 @@ needs a polkit agent in the session:
 | Desktop | Tray | polkit agent |
 |---|---|---|
 | KDE Plasma | Native | Built in |
-| GNOME | Needs the AppIndicator extension (Ubuntu ships it on; on Fedora install `gnome-shell-extension-appindicator`) | Built in |
+| GNOME | Needs the AppIndicator extension (Ubuntu ships it on; on Fedora install `gnome-shell-extension-appindicator`; on Fedora Atomic, `rpm-ostree install gnome-shell-extension-appindicator` or get it from extensions.gnome.org) | Built in |
 | COSMIC | The panel's status area applet | Built in |
 | sway, Hyprland and other wlroots compositors | A bar with a tray, such as waybar's `tray` module | Not built in: start one, such as `hyprpolkitagent`, `polkit-gnome` or `lxqt-policykit` |
 

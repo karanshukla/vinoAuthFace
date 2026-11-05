@@ -8,7 +8,7 @@
 //! know the tray exists.
 
 use face_auth_core::{capture, update, user, Camera, FaceAuthConfig};
-use face_auth_tray::helper::{Verb, FACE_AUTH, Choice, Setting, HELPER, LOGIN_MODE, SAFE_PATH, SETTING_MODE, SETTINGS};
+use face_auth_tray::helper::{bash, Verb, FACE_AUTH, Choice, Setting, HELPER, LOGIN_MODE, SAFE_PATH, SETTING_MODE, SETTINGS};
 use face_auth_tray::icon::{self, State};
 use face_auth_tray::idle::{self, Idle};
 use face_auth_tray::{progress, scanning, single_instance};
@@ -210,7 +210,7 @@ fn enrolled() -> Option<bool> {
 
 /// Reads /etc/pam.d, which needs no privileges.
 fn login_mode() -> Option<LoginMode> {
-    let out = Command::new("/bin/bash")
+    let out = Command::new(bash())
         .args([LOGIN_MODE, "status"])
         .env_clear()
         .env("PATH", SAFE_PATH)
@@ -224,7 +224,7 @@ fn login_mode() -> Option<LoginMode> {
 /// Reads /etc/face-auth.toml, which needs no privileges. "custom" is a value
 /// the menu doesn't offer, set by hand.
 fn settings() -> HashMap<String, String> {
-    let out = Command::new("/bin/bash")
+    let out = Command::new(bash())
         .args([SETTING_MODE, "status"])
         .env_clear()
         .env("PATH", SAFE_PATH)

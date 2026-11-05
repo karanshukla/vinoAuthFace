@@ -114,6 +114,18 @@ if [ "$DISTRO_FAMILY" = suse ] && command -v transactional-update &>/dev/null \
    && findmnt -no OPTIONS / 2>/dev/null | tr ',' '\n' | grep -qx ro; then
     TRANSACTIONAL=1
 fi
+# NixOS builds /etc/pam.d from configuration.nix, as links into the store.
+NIXOS=0
+{ [ -e /etc/NIXOS ] || [ "$(os_release_field ID)" = nixos ]; } && NIXOS=1
+# Read-only images outside those two, where apt or pacman would print but not
+# work: SteamOS (Arch-based), Vanilla OS (ABRoot), Endless OS (ostree on
+# Debian). Only the hints change.
+READONLY_IMAGE=0
+case "$DISTRO_FAMILY" in
+    debian|arch)
+        case "$(os_release_field ID)" in steamos|vanilla) READONLY_IMAGE=1 ;; esac
+        [ -e /run/ostree-booted ] && READONLY_IMAGE=1 ;;
+esac
 
 # install_hint <fedora> <debian> <arch> <suse>: the command that installs
 # those packages here. Fails (prints nothing) for an unknown distro, or an
@@ -124,6 +136,10 @@ install_hint() {
         fedora) pkgs="$1" ;; debian) pkgs="$2" ;; arch) pkgs="$3" ;; suse) pkgs="$4" ;; *) return 1 ;;
     esac
     [ -n "$pkgs" ] || return 1
+    if [ "$READONLY_IMAGE" = 1 ]; then
+        echo "This system's image is read-only; add $pkgs with its own tool"
+        return
+    fi
     case "$DISTRO_FAMILY" in
         fedora)
             if [ -e /run/ostree-booted ]; then echo "sudo rpm-ostree install $pkgs, then reboot"
@@ -137,6 +153,13 @@ install_hint() {
 }
 
 printf '\n%sSetup%s\n' "$BOLD" "$RESET"
+
+# An edit to /etc/pam.d on NixOS lasts only until the next nixos-rebuild.
+if [ "$NIXOS" = 1 ]; then
+    warn PAM "Skipped: NixOS manages PAM in configuration.nix, and nixos-rebuild would undo an edit here." \
+        "Add the module through security.pam.services.<name> instead; see docs/pam.md, \"NixOS\"."
+    PAM_SERVICES=""
+fi
 
 # Start from a clean stack: every line this script adds is added again below.
 for service in $PAM_SERVICES; do
@@ -281,7 +304,9 @@ join() { local IFS=,; echo "$*" | sed 's/,/, /g'; }
 
 # The KDE login screen: off unless asked for, kept across re-deploys.
 LOGIN_NOW="$(bash login-mode.sh status)"
-if [ "$LOGIN_NOW" = none ]; then
+if [ "$NIXOS" = 1 ]; then
+    : # PAM is skipped above, the login screen's included.
+elif [ "$LOGIN_NOW" = none ]; then
     if [ "${LOGIN_MODE:-off}" != off ]; then
         warn PAM "--login=$LOGIN_MODE does nothing here: neither Plasma Login nor SDDM is installed."
     fi
