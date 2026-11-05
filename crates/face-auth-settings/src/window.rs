@@ -200,6 +200,20 @@ pub struct SettingsWindow {
     focused: bool,
     kde_header: Option<theme::KdeHeader>,
     text_scale: f32,
+    /// About's Updates row.
+    updater: vino_ui::update::Updater,
+}
+
+/// About's Updates row: "Update to vN" asks polkit to run the tray helper's `upgrade` verb,
+/// as the tray's own entry does (an install is root's). Without the helper it links to the
+/// release instead. A local build is "dev", and is told the newest release but never offered it.
+fn updater(helper: bool) -> vino_ui::update::Updater {
+    let updater = vino_ui::update::Updater::new(vino_ui::App::AuthFace, update::CURRENT);
+    if helper {
+        updater.with_command(["pkexec", apply::HELPER, "upgrade"])
+    } else {
+        updater
+    }
 }
 
 impl SettingsWindow {
@@ -247,6 +261,7 @@ impl SettingsWindow {
             focused: false,
             kde_header: None,
             text_scale: 1.0,
+            updater: updater(helper),
         }
     }
 
@@ -1343,7 +1358,11 @@ impl SettingsWindow {
                         Page::Models => self.models(ui),
                         Page::Security => self.security(ui),
                         Page::You => self.you(ui),
-                        // The release tag ("v3"), or "dev" for a local build.
+                        // The release tag ("v3"), or "dev" for a local build. update_check = false
+                        // drops the Updates row with the tray's and doctor's checks.
+                        Page::About if self.system.values().update_check() => {
+                            vino_ui::about::page_with_updates(ui, &mut self.updater)
+                        }
                         Page::About => vino_ui::about::page(ui, vino_ui::App::AuthFace, update::CURRENT),
                     }
                 });
