@@ -198,6 +198,16 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Binaries, models and helpers all go under /usr/local, so find out now, not
+# halfway through, if it can't be written (a read-only image that doesn't
+# map /usr/local somewhere writable, as Fedora Atomic does).
+if ! { mkdir -p /usr/local && WRITE_TEST="$(mktemp -p /usr/local .face-auth-write-test.XXXXXX)"; } 2>/dev/null; then
+    fail "/usr/local isn't writable" "deploy.sh installs its binaries, models and helpers there, so nothing was changed." \
+        "See docs/install.md, \"Distros\"."
+    exit 1
+fi
+rm -f "$WRITE_TEST"
+
 ACTUAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 
 # ---- Distro ----
@@ -224,6 +234,15 @@ if [ "$DISTRO_FAMILY" = suse ] && command -v transactional-update &>/dev/null \
    && findmnt -no OPTIONS / 2>/dev/null | tr ',' '\n' | grep -qx ro; then
     TRANSACTIONAL=1
 fi
+# Read-only images outside those two, where apt or pacman would print but not
+# work: SteamOS (Arch-based), Vanilla OS (ABRoot), Endless OS (ostree on
+# Debian). Only the hints change.
+READONLY_IMAGE=0
+case "$DISTRO_FAMILY" in
+    debian|arch)
+        case "$(os_release_field ID)" in steamos|vanilla) READONLY_IMAGE=1 ;; esac
+        [ -e /run/ostree-booted ] && READONLY_IMAGE=1 ;;
+esac
 
 # install_hint <fedora> <debian> <arch> <suse>: the command that installs
 # those packages here. Fails (prints nothing) for an unknown distro, or an
@@ -234,6 +253,10 @@ install_hint() {
         fedora) pkgs="$1" ;; debian) pkgs="$2" ;; arch) pkgs="$3" ;; suse) pkgs="$4" ;; *) return 1 ;;
     esac
     [ -n "$pkgs" ] || return 1
+    if [ "$READONLY_IMAGE" = 1 ]; then
+        echo "This system's image is read-only; add $pkgs with its own tool"
+        return
+    fi
     case "$DISTRO_FAMILY" in
         fedora)
             if [ -e /run/ostree-booted ]; then echo "sudo rpm-ostree install $pkgs, then reboot"
@@ -278,7 +301,8 @@ if ! command -v unzip &>/dev/null; then
 fi
 if [ "${#MISSING_TOOLS[@]}" -gt 0 ]; then
     if HINT="$(install_hint "${MISSING_TOOLS[*]}" "${MISSING_TOOLS[*]}" "${MISSING_TOOLS[*]}" "${MISSING_TOOLS[*]}")"; then
-        fail "Missing ${MISSING_TOOLS[*]}" "Install with: $HINT" "Then re-run sudo ./deploy.sh."
+        [ "$READONLY_IMAGE" = 1 ] || HINT="Install with: $HINT"
+        fail "Missing ${MISSING_TOOLS[*]}" "$HINT" "Then re-run sudo ./deploy.sh."
     else
         fail "Missing ${MISSING_TOOLS[*]}" "Install it with your package manager, then re-run sudo ./deploy.sh."
     fi
@@ -350,7 +374,8 @@ build_with_cargo() {
             local hint
             hint="$(install_hint "musl-gcc gcc" "musl-tools" "musl" "")" \
                 || hint="your distro's musl C compiler (musl-gcc), or the container build in docs/install.md"
-            printf '  %s\n' "musl-gcc isn't installed, and the build needs it. Install: $hint" >&2
+            [ "$READONLY_IMAGE" = 1 ] || hint="Install: $hint"
+            printf '  %s\n' "musl-gcc isn't installed, and the build needs it. $hint" >&2
         fi
         return 1
     fi
@@ -720,7 +745,7 @@ else
         # rustup rather than the distro's rust: the build is static musl, and
         # not every distro packages Rust's musl std. musl-gcc assembles
         # tract-linalg's kernels.
-        if [ -e /run/ostree-booted ] || [ "$TRANSACTIONAL" = 1 ]; then
+        if [ -e /run/ostree-booted ] || [ "$TRANSACTIONAL" = 1 ] || [ "$READONLY_IMAGE" = 1 ]; then
             echo "  Image-based system: build in a toolbox or distrobox instead of layering"
             echo "  packages (docs/install.md, \"Immutable distros\"), or use the container above."
         elif TOOLS_HINT="$(install_hint "rustup gcc musl-gcc" "rustup musl-tools" "rustup musl" "")"; then
