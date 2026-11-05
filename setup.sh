@@ -374,12 +374,18 @@ elif command -v checkmodule &>/dev/null && command -v semodule_package &>/dev/nu
         ok SELinux "greeter policy loaded"
     else
         warn SELinux "Could not load the greeter policy (errors above), so login screens can't reach the camera." \
-            "sudo, polkit and the lock screens are unaffected. Please open an issue with the error and your distro."
+            "sudo, polkit and the KDE, Sway and Hyprland lock screens are unaffected; GNOME's lock screen runs through GDM, so it loses the camera too. Please open an issue with the error and your distro."
     fi
 else
-    SELINUX_HINT="$(install_hint "policycoreutils checkpolicy" "policycoreutils checkpolicy" "" "policycoreutils checkpolicy")" \
+    # Name only the missing packages on Fedora: rpm-ostree refuses one that's
+    # already in the base image, and Atomic ships policycoreutils
+    # (semodule_package) but not checkpolicy (checkmodule).
+    SELINUX_PKGS=""
+    command -v checkmodule &>/dev/null || SELINUX_PKGS="checkpolicy"
+    command -v semodule_package &>/dev/null || SELINUX_PKGS="${SELINUX_PKGS:+$SELINUX_PKGS }policycoreutils"
+    SELINUX_HINT="$(install_hint "$SELINUX_PKGS" "policycoreutils checkpolicy" "" "policycoreutils checkpolicy")" \
         || SELINUX_HINT="install policycoreutils and checkpolicy"
-    warn SELinux "Tools not found, so the login screens can't reach the camera." \
+    warn SELinux "Tools not found, so the login screens and GNOME's lock screen can't reach the camera." \
         "$SELINUX_HINT, then re-run this script."
 fi
 
