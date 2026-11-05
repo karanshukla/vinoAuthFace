@@ -151,6 +151,13 @@ first to have something to patch (as it does for `polkit-1`), and `uninstall.sh`
 rather than "restoring" a file that never existed. While the copy exists it shadows the vendor
 file, so a distro update to that service's PAM file doesn't apply until you uninstall.
 
+## NixOS
+
+NixOS builds `/etc/pam.d` from `configuration.nix`, and `nixos-rebuild` would undo any edit made
+there, so `vinoauthface-setup` (and `deploy.sh`, which runs it) leaves PAM alone on NixOS and says
+so. Add the line from the top of this page to each service you want through that service's
+`security.pam.services.<name>` options instead. NixOS isn't a tested target.
+
 ## polkit
 
 `polkit-1` covers every polkit `auth_self` prompt: `pkexec`, package-manager GUIs, settings

@@ -65,6 +65,7 @@ Every install also leaves these commands, so the repo isn't needed afterwards:
 | Debian, Ubuntu, Mint | Ubuntu 24.04 (VM, no IR camera) | `/etc/pam.d`, `@include common-auth` | AppArmor, nothing needed | |
 | Arch, CachyOS, EndeavourOS | No | `/etc/pam.d`, `include system-auth` | None | |
 | openSUSE Tumbleweed, Leap 16, Aeon, MicroOS | No | Vendor files in `/usr/lib/pam.d`, `include common-auth` | SELinux on new installs | `deploy.sh` loads the Fedora-derived policy; if a type is missing it warns and carries on, and only the login screens lose the camera |
+| SteamOS | No, and not a supported target | `/etc/pam.d` | None | No IR camera on Steam Deck hardware. Give `deck` a password (`passwd`) first. An OS update resets `/etc`, which removes the PAM lines and `/etc/face-auth.toml`: re-run `sudo ./deploy.sh` after each one (`vinoauthface-setup` alone puts back PAM but not the config) |
 
 "Tested" means someone has run `deploy.sh` there and unlocked with it. The rest should work, since
 `deploy.sh` decides on what's on disk (PAM files, SELinux state, a writable `/usr`) rather than on
