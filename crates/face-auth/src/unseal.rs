@@ -10,8 +10,9 @@
 use std::os::unix::process::CommandExt;
 use std::process::{Command, ExitCode};
 
-/// Absolute, so a caller's PATH never picks the binary.
-const SYSTEMD_CREDS: &str = "/usr/bin/systemd-creds";
+/// Absolute, so a caller's PATH never picks the binary. NixOS has no
+/// `/usr/bin`, so its system profile is tried after.
+const SYSTEMD_CREDS_PATHS: [&str; 2] = ["/usr/bin/systemd-creds", "/run/current-system/sw/bin/systemd-creds"];
 /// Every name `storage::seal_name` builds starts with this.
 const NAME_PREFIX: &str = "vinoauthface.";
 
@@ -33,11 +34,15 @@ fn main() -> ExitCode {
         eprintln!("usage: vinoauthface-unseal UID vinoauthface.NAME < sealed > payload");
         return ExitCode::from(2);
     };
-    let err = Command::new(SYSTEMD_CREDS)
+    let creds = SYSTEMD_CREDS_PATHS
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .unwrap_or(SYSTEMD_CREDS_PATHS[0]);
+    let err = Command::new(creds)
         .args(["decrypt", &format!("--uid={uid}"), &format!("--name={name}"), "-", "-"])
         .env_clear()
         .exec();
-    eprintln!("vinoauthface-unseal: {SYSTEMD_CREDS}: {err}");
+    eprintln!("vinoauthface-unseal: {creds}: {err}");
     ExitCode::from(1)
 }
 

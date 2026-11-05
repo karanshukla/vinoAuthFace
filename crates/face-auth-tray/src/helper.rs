@@ -13,6 +13,14 @@ pub const UPGRADER: &str = "/usr/local/bin/vinoauthface-upgrade";
 pub const LOGIN_MODE: &str = "/usr/local/share/face-auth/login-mode.sh";
 pub const SETTING_MODE: &str = "/usr/local/share/face-auth/setting-mode.sh";
 pub const SAFE_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
+/// Absolute, never looked up on `PATH`. NixOS has no `/bin/bash`, so its
+/// system profile is tried after.
+const BASH_PATHS: [&str; 2] = ["/bin/bash", "/run/current-system/sw/bin/bash"];
+
+/// The first of [`BASH_PATHS`] that exists, `/bin/bash` if none does.
+pub fn bash() -> &'static str {
+    BASH_PATHS.into_iter().find(|p| std::path::Path::new(p).is_file()).unwrap_or(BASH_PATHS[0])
+}
 
 /// One choice in a setting's menu. `id` is `setting-mode.sh`'s word for it.
 #[derive(Debug, PartialEq, Eq)]
@@ -187,12 +195,12 @@ pub fn command(verb: Verb, user: &str) -> Option<(&'static str, Vec<String>)> {
         // Run as root with no SUDO_USER, so the release is downloaded and unpacked
         // under root's home, never somewhere the caller could swap it between
         // the checksum and deploy.sh running it.
-        Verb::Upgrade => ("/bin/bash", vec![UPGRADER.into()]),
-        Verb::LoginOff => ("/bin/bash", vec![LOGIN_MODE.into(), "off".into()]),
-        Verb::LoginBoth => ("/bin/bash", vec![LOGIN_MODE.into(), "both".into()]),
-        Verb::LoginFace => ("/bin/bash", vec![LOGIN_MODE.into(), "face".into()]),
+        Verb::Upgrade => (bash(), vec![UPGRADER.into()]),
+        Verb::LoginOff => (bash(), vec![LOGIN_MODE.into(), "off".into()]),
+        Verb::LoginBoth => (bash(), vec![LOGIN_MODE.into(), "both".into()]),
+        Verb::LoginFace => (bash(), vec![LOGIN_MODE.into(), "face".into()]),
         Verb::Set(setting, choice) => {
-            ("/bin/bash", vec![SETTING_MODE.into(), "set".into(), setting.key.into(), choice.id.into()])
+            (bash(), vec![SETTING_MODE.into(), "set".into(), setting.key.into(), choice.id.into()])
         }
         Verb::WriteConfig => return None,
     })
@@ -239,6 +247,13 @@ mod tests {
         for bad in ["", "alice", "-1", "1000 ", "4294967296"] {
             assert!(parse_request(&args(&["enrol"]), Some(bad)).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn bash_runs_by_absolute_path() {
+        assert!(BASH_PATHS.iter().all(|p| std::path::Path::new(p).is_absolute()));
+        assert_eq!(BASH_PATHS[0], "/bin/bash", "the NixOS path must not come first");
+        assert_eq!(command(Verb::LoginOff, "alice").unwrap().0, bash());
     }
 
     #[test]

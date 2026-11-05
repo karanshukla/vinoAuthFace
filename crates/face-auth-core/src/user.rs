@@ -12,8 +12,9 @@ use std::process::Command;
 
 /// Run by absolute path, never through `PATH`, which the caller of a
 /// set-group-ID or root process may control. `/usr/bin` on every merged-`/usr`
-/// distro (Fedora, Ubuntu, Arch, the Atomic desktops); `/bin` for the rest.
-const GETENT: [&str; 2] = ["/usr/bin/getent", "/bin/getent"];
+/// distro (Fedora, Ubuntu, Arch, the Atomic desktops); `/bin` for the rest;
+/// NixOS's system profile last, since NixOS has neither.
+const GETENT: [&str; 3] = ["/usr/bin/getent", "/bin/getent", "/run/current-system/sw/bin/getent"];
 
 fn getent() -> Command {
     let path = GETENT.into_iter().find(|p| Path::new(p).is_file()).unwrap_or(GETENT[0]);
@@ -172,6 +173,8 @@ mod tests {
     fn getent_runs_by_absolute_path() {
         let cmd = getent();
         assert!(Path::new(cmd.get_program()).is_absolute(), "PATH must not pick getent");
+        assert!(GETENT.iter().all(|p| Path::new(p).is_absolute()));
+        assert_eq!(GETENT[0], "/usr/bin/getent", "the NixOS path must not come first");
     }
 
     #[test]

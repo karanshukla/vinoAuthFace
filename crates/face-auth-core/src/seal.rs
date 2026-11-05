@@ -12,8 +12,9 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-/// Absolute, so a caller's PATH never picks the binary.
-const SYSTEMD_CREDS: &str = "/usr/bin/systemd-creds";
+/// Absolute, so a caller's PATH never picks the binary. NixOS has no
+/// `/usr/bin`, so its system profile is tried after.
+const SYSTEMD_CREDS_PATHS: [&str; 2] = ["/usr/bin/systemd-creds", "/run/current-system/sw/bin/systemd-creds"];
 const TPM_DEVICE: &str = "/dev/tpmrm0";
 /// Where deploy.sh installs the unseal helper (crates/face-auth/src/unseal.rs).
 /// SELinux gives it the only domain allowed the TPM and the host key, so the
@@ -21,15 +22,19 @@ const TPM_DEVICE: &str = "/dev/tpmrm0";
 /// `systemd-creds` directly, which works everywhere but a confined greeter.
 const UNSEAL_HELPER: &str = "/usr/local/libexec/vinoauthface-unseal";
 
+fn systemd_creds() -> &'static str {
+    SYSTEMD_CREDS_PATHS.into_iter().find(|p| Path::new(p).exists()).unwrap_or(SYSTEMD_CREDS_PATHS[0])
+}
+
 pub fn available() -> bool {
-    Path::new(SYSTEMD_CREDS).exists() && Path::new(TPM_DEVICE).exists()
+    Path::new(systemd_creds()).exists() && Path::new(TPM_DEVICE).exists()
 }
 
 /// `host+tpm2` because scoped mode refuses `tpm2` alone. The key still needs
 /// this machine's TPM. No PCR policy, signed or not, so firmware and image
 /// updates keep the templates readable.
 pub fn seal(user: &str, name: &str, payload: &[u8]) -> Result<Vec<u8>> {
-    seal_with(SYSTEMD_CREDS, user, name, payload)
+    seal_with(systemd_creds(), user, name, payload)
 }
 
 fn seal_with(creds: &str, user: &str, name: &str, payload: &[u8]) -> Result<Vec<u8>> {
@@ -54,7 +59,7 @@ fn encrypt_args(user: &str, name: &str) -> Vec<String> {
 /// Any failure is `SealUnavailable`: the blob is unreadable here, whatever
 /// the reason, and the caller must not fall back to anything.
 pub fn unseal(user: &str, name: &str, blob: &[u8]) -> Result<Vec<u8>> {
-    unseal_with(SYSTEMD_CREDS, Path::new(UNSEAL_HELPER), user, name, blob)
+    unseal_with(systemd_creds(), Path::new(UNSEAL_HELPER), user, name, blob)
 }
 
 fn unseal_with(creds: &str, helper: &Path, user: &str, name: &str, blob: &[u8]) -> Result<Vec<u8>> {
@@ -269,6 +274,13 @@ mod tests {
         let err = retry(|| unseal_with(&creds, &helper, "no-such-user-face-auth", "n", b"blob")).unwrap_err();
         assert!(matches!(err.downcast_ref::<FaceAuthError>(), Some(FaceAuthError::SealUnavailable)));
         assert!(!fake.ran("vinoauthface-unseal"));
+    }
+
+    #[test]
+    fn systemd_creds_runs_by_absolute_path() {
+        assert!(SYSTEMD_CREDS_PATHS.iter().all(|p| Path::new(p).is_absolute()));
+        assert_eq!(SYSTEMD_CREDS_PATHS[0], "/usr/bin/systemd-creds", "the NixOS path must not come first");
+        assert!(Path::new(systemd_creds()).is_absolute());
     }
 
     #[test]
