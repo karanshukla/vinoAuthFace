@@ -261,6 +261,15 @@ sudo semodule -i face_auth.pp
 sudo restorecon -R /dev/accel /var/lib/face-auth /var/cache/face-auth /usr/local/lib/face-auth
 ```
 
+On Fedora Atomic (Silverblue, Kinoite, Bazzite) there's no `dnf install`, and `policycoreutils` is
+already in the image. Layer `checkpolicy` and reboot, then run `sudo vinoauthface-setup` (or the
+commands above, without the first line):
+
+```bash
+sudo rpm-ostree install checkpolicy
+systemctl reboot
+```
+
 Remove it with `sudo semodule -r face_auth`.
 
 ## Updating
