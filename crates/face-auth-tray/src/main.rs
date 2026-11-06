@@ -14,8 +14,7 @@ use face_auth_tray::idle::{self, Idle};
 use face_auth_tray::{progress, scanning, single_instance};
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{CheckmarkItem, RadioGroup, RadioItem, StandardItem, SubMenu};
-use vino_ui::family::{self, App};
-use vino_ui::tray::{MenuIcon, APPS_MENU};
+use vino_ui::tray::MenuIcon;
 use ksni::{Category, MenuItem, ToolTip};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
@@ -492,22 +491,6 @@ impl ksni::Tray for Tray {
     }
 }
 
-/// vinopilot.ca and the other vinoPilot apps. The settings window lists them
-/// on its About page, so the tray only carries them in its own Settings
-/// submenu, for when that window isn't installed.
-fn apps_menu() -> MenuItem<Tray> {
-    let link = |label: &str, url: &'static str, icon: &str| -> MenuItem<Tray> {
-        item(label, icon, true, move |_| {
-            if let Err(e) = family::open(url) {
-                eprintln!("vinoauthface-tray: couldn't open {url}: {e}");
-            }
-        })
-    };
-    let mut submenu = vec![link(family::SITE_LABEL, family::SITE, MenuIcon::Website.name()), MenuItem::Separator];
-    submenu.extend(App::AuthFace.others().map(|app| link(app.name(), app.page(), "")));
-    SubMenu { label: APPS_MENU.into(), icon_name: MenuIcon::Apps.name().into(), submenu, ..Default::default() }.into()
-}
-
 /// ksni hands labels to dbusmenu as they are, where "_" marks an access key
 /// and is hidden; "__" shows one. The fixed labels avoid it, but the camera
 /// path (a /dev/v4l/by-id name is full of them), a release tag or a value set
@@ -548,8 +531,6 @@ fn settings_menu(status: &Status, idle: bool, idle_minutes: u64) -> Vec<MenuItem
         menu.push(MenuItem::Separator);
     }
     menu.extend(idle_radio(idle_minutes));
-    menu.push(MenuItem::Separator);
-    menu.push(apps_menu());
     menu
 }
 
@@ -1093,29 +1074,46 @@ mod tests {
         all
     }
 
-    fn apps_submenu(items: &[MenuItem<Tray>]) -> Option<&SubMenu<Tray>> {
-        items.iter().find_map(|i| match i {
-            MenuItem::SubMenu(m) if m.label == APPS_MENU => Some(m),
-            _ => None,
-        })
+    /// Every label a screen reader could land on, submenus included.
+    fn all_labels(items: &[MenuItem<Tray>], out: &mut Vec<String>) {
+        for item in items {
+            match item {
+                MenuItem::Standard(i) => out.push(i.label.clone()),
+                MenuItem::Checkmark(i) => out.push(i.label.clone()),
+                MenuItem::SubMenu(m) => {
+                    out.push(m.label.clone());
+                    all_labels(&m.submenu, out);
+                }
+                MenuItem::RadioGroup(g) => out.extend(g.options.iter().map(|o| o.label.clone())),
+                MenuItem::Separator => {}
+            }
+        }
     }
 
     #[test]
-    fn the_menu_ends_with_quit_and_leaves_the_other_apps_to_settings() {
-        let mut s = status(Some("/dev/video2"), Some(true));
-        s.settings_window = true;
-        let menu = tray(s).menu();
-        let [.., MenuItem::Standard(quit)] = menu.as_slice() else {
-            panic!("the menu should end with Quit");
-        };
-        assert_eq!(quit.label, "Quit");
-        assert!(apps_submenu(&menu).is_none(), "the settings window's About page lists the other apps");
+    fn the_menu_ends_with_quit_and_leaves_the_other_apps_to_the_settings_window() {
+        for settings_window in [true, false] {
+            let mut s = status(Some("/dev/video2"), Some(true));
+            s.settings_window = settings_window;
+            let menu = tray(s).menu();
+            let [.., MenuItem::Standard(quit)] = menu.as_slice() else {
+                panic!("the menu should end with Quit");
+            };
+            assert_eq!(quit.label, "Quit");
+            // The settings window's About page links to vinopilot.ca and the
+            // other vinoPilot apps; the tray doesn't, at any level.
+            let mut labels = Vec::new();
+            all_labels(&menu, &mut labels);
+            assert!(
+                !labels.iter().any(|l| l.contains("vinoPilot") || l.contains("vinopilot.ca") || l == "vinoWhisper"),
+                "{labels:?}"
+            );
+        }
     }
 
     #[test]
-    fn the_settings_submenu_ends_with_the_other_apps() {
+    fn the_settings_submenu_ends_with_the_idle_delay() {
         let menu = tray(status(Some("/dev/video2"), Some(true))).menu();
-        assert!(apps_submenu(&menu).is_none(), "the other apps sit under Settings, not at the top");
         let settings = menu
             .iter()
             .find_map(|i| match i {
@@ -1123,21 +1121,10 @@ mod tests {
                 _ => None,
             })
             .expect("without the settings window, Settings is a submenu");
-        let Some(MenuItem::SubMenu(apps)) = settings.submenu.last() else {
-            panic!("the Settings submenu should end with the other apps");
-        };
-        assert_eq!(apps.label, APPS_MENU);
-        let labels: Vec<&str> = apps
-            .submenu
-            .iter()
-            .filter_map(|i| match i {
-                MenuItem::Standard(i) => Some(i.label.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(labels[0], family::SITE_LABEL);
-        assert_eq!(labels.len(), App::ALL.len());
-        assert!(!labels.contains(&"vinoAuthFace"));
+        assert!(
+            matches!(settings.submenu.last(), Some(MenuItem::RadioGroup(_))),
+            "the Settings submenu should end with the idle delay's choices"
+        );
     }
 
     /// What a screen reader would read for one item: its label with
