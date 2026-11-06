@@ -35,6 +35,9 @@ replayed on top:
   names and shapes, not only their count, and a third format is supported: a
   BlazeFace-style detector with the five alignment points (896 anchors,
   128x128 input, two passes). SCRFD and the slim detector are unchanged.
+- **The tray doesn't list the other vinoPilot apps.** The settings window's About
+  page links to vinopilot.ca and the rest of the family; the tray menu is for
+  this app alone, whether or not that window is installed.
 - **Settings window.** `vinoauthface-settings` (optional, `deploy.sh
   --with-settings`) covers every config key on vino-ui. System changes wait
   for one Apply and one admin prompt, through a new helper verb,
