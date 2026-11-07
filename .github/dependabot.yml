@@ -10,10 +10,17 @@ updates:
       day: monday
     cooldown:
       default-days: 7
+      # Our own crate, released from karanshukla/vinoUserInterface.
+      exclude: ["vino-user-interface"]
     # Minor and patch bumps travel together; a major bump gets its own PR, so
     # one breaking crate cannot hold every routine update hostage (#40 bundled
     # thiserror 2, dirs 7 and toml 1 with patch releases).
     groups:
+      # A dependency takes the first group it matches: the vino theme gets a
+      # PR of its own on the next Monday run, with no week's wait, whatever
+      # the version step (its 0.x minors are its breaking releases).
+      vino-user-interface:
+        patterns: ["vino-user-interface"]
       cargo:
         patterns: ["*"]
         update-types: ["minor", "patch"]
