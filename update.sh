@@ -34,6 +34,7 @@ done
 
 # Keep in step with deploy.sh.
 BIN_DIR="/usr/local/bin"
+SHARE_DIR="/usr/local/share/face-auth"
 HELPER="/usr/local/libexec/vinoauthface-helper"
 OPENVINO_INSTALL_DIR="/usr/local/lib/face-auth/openvino"
 MUSL_TARGET="x86_64-unknown-linux-musl"
@@ -172,6 +173,10 @@ fi
 if [ "$SETTINGS" = 1 ]; then
     put "$TARGET_DIR/release/vinoauthface-settings" "$BIN_DIR/vinoauthface-settings" root:root 0755
 fi
+
+# As deploy.sh records it.
+if [ -e .git ]; then echo source; else echo release; fi > "$SHARE_DIR/installed-from"
+chmod 0644 "$SHARE_DIR/installed-from"
 
 printf '\n'
 if [ "$CHANGED" = 0 ]; then

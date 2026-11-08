@@ -879,6 +879,11 @@ rm -f "$BIN_DIR/face-auth" "$BIN_DIR/face-enroll" "$BIN_DIR/face-auth-tray" \
     /usr/local/libexec/face-auth-helper /usr/local/share/bash-completion/completions/face-enroll
 # So uninstalling works after the repo is long gone.
 install -D -o root -g root -m 0755 uninstall.sh "$SHARE_DIR/uninstall.sh"
+# How this was installed, for vinoPilot: a checkout is "source", the
+# release's bundle (install.sh, vinoauthface-upgrade) has no .git. The
+# version can't tell them apart: a checkout on a tag is stamped with it.
+if [ -e .git ]; then echo source; else echo release; fi > "$SHARE_DIR/installed-from"
+chmod 0644 "$SHARE_DIR/installed-from"
 ln -sfn "$SHARE_DIR/uninstall.sh" "$BIN_DIR/vinoauthface-uninstall"
 # The same for the tray's login-screen entries.
 install -D -o root -g root -m 0755 login-mode.sh "$SHARE_DIR/login-mode.sh"
