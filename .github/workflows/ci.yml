@@ -194,6 +194,8 @@ jobs:
           test "$(stat -c %a /var/lib/face-auth)" = 2750
           test "$(stat -c %U:%a /var/cache/face-auth)" = root:755
           test "$(stat -c %U:%a /usr/local/share/face-auth/uninstall.sh)" = root:755
+          # Deployed from a checkout, so vinoPilot reads it as a source install.
+          test "$(cat /usr/local/share/face-auth/installed-from)" = source
           # The login screen is opt-in: a fresh install leaves it alone.
           grep -q 'KDE login screen: password only' /tmp/deploy.log
           test ! -e /etc/pam.d/plasmalogin
