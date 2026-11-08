@@ -24,7 +24,7 @@ toml = "1.1"
 # Only to hand the model check an empty face.
 tract-onnx = { workspace = true }
 eframe = { version = "0.37", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "persistence"] }
-vino-ui = { package = "vino-user-interface", version = "0.3.1" }
+vino-ui = { package = "vino-user-interface", version = "0.4.0" }
 
 [dev-dependencies]
 egui_kittest = { version = "0.37", default-features = false }
