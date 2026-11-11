@@ -38,7 +38,7 @@ and `uninstall.sh` remove it.
 | Matching | `threshold`, `detector_threshold`, `min_face_size_ratio`, `scan_duration_ms`, `liveness.grace_ms`, `capture_timeout_ms`, `scan_interval_ms` |
 | Liveness | `liveness.preset`, `liveness.motion_threshold`, `liveness.residual_motion_threshold`, `liveness.window_ms` |
 | Camera | `device`, `bind_camera`, the camera pin (remove only) |
-| Models | `model_path`, `detector_model_path`, `backend`, `npu_device` |
+| Models | `model_path`, `detector_model_path`, `backend`, `npu_device`; deleting unused models and the compiled cache, below |
 | Security | `guards.*`, `lockout.*`, `seal_embeddings`, `embeddings_dir`, `update_check` |
 | Just you | Your own file: stricter thresholds, scan timing, your IR camera, `tray_idle_minutes` |
 | About | The version, Check for updates, and links to vinopilot.ca and the other vinoPilot apps. Nothing goes online until you click it; Update to vN asks for your password and runs the tray helper's `upgrade`, as the tray's own entry does. A build from source (`dev`) is told the newest release but never offered it. `update_check = false` removes the row |
@@ -105,3 +105,23 @@ sudo install -m 644 my-model.onnx /usr/local/share/face-auth/
 
 Templates are tagged with their models (see [configuration.md](configuration.md)), so a new
 model means everyone enrols again. The Templates row says which models made yours.
+
+## Disk space
+
+The Models page's last group shows what the models take on disk:
+
+- **Unused models**: the `.onnx` files in `/usr/local/share/face-auth` that are neither the
+  recognition nor the detector model `/etc/face-auth.toml` uses, with their size. One is left
+  behind when you switch between the shipped models (deploy.sh never deletes the old one), or
+  when you copy in a model of your own to try. **Delete…** asks again in place; **Delete** runs
+  `pkexec /usr/local/libexec/vinoauthface-helper delete-unused-models` (`auth_admin`). The helper
+  takes no paths: it works out the unused set itself from `/etc/face-auth.toml` as authentication
+  reads it, deletes only regular files directly in that directory (a symlink is left alone, and a
+  configured model is kept wherever its path leads), and deletes nothing if the file doesn't load.
+  `deploy.sh` downloads a shipped model again if you switch back to it.
+- **Compiled cache**: `/var/cache/face-auth`, OpenVINO's compiled models. **Clear** runs the
+  helper's `clear-cache`, which empties it and keeps the directory. The next unlock rebuilds it
+  and is slower once; `sudo vinoauthface-auth --warm-cache` rebuilds it straight away.
+
+The models in use, and the cache, are removed by `sudo vinoauthface-uninstall`. Face templates in
+`/var/lib/face-auth` are never touched here; `--purge` is what removes those.

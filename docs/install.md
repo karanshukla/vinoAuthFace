@@ -327,7 +327,7 @@ those, run `sudo ./deploy.sh` instead.
 ## Uninstalling
 
 ```bash
-sudo vinoauthface-uninstall           # binaries, models, config, PAM changes, camera pin
+sudo vinoauthface-uninstall           # binaries, models, compiled cache, config, PAM changes, camera pin
 sudo vinoauthface-uninstall --purge   # ...plus face templates and the face-auth group
 ```
 

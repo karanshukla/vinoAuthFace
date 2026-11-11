@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 pub const SYSTEM_CONFIG_PATH: &str = "/etc/face-auth.toml";
 
-const MODEL_DIR: &str = "/usr/local/share/face-auth";
+const MODEL_DIR: &str = crate::model_files::SHARE_DIR;
 /// SCRFD with landmarks, from InsightFace's buffalo_sc pack (#27).
 pub const DEFAULT_DETECTOR: &str = "det_500m.onnx";
 /// The box-only detector installs had before SCRFD.

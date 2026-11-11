@@ -122,11 +122,13 @@ Seven crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM
   which replaces upstream's GTK GUI. Two binaries: `vinoauthface-tray` (per-user, `ksni`
   StatusNotifierItem, never in the auth path; spots scans by `vinoauthface-auth` in `/proc`, reads
   enrolment via `vinoauthface-auth --enrolled`) and `vinoauthface-helper`, the only thing its polkit policy
-  lets pkexec run. The helper takes one verb (`enrol|retrain|enrol-guided|retrain-guided|uninstall|upgrade|login-off|login-both|login-face|set-*|write-config`), no flags, and the
+  lets pkexec run. The helper takes one verb (`enrol|retrain|enrol-guided|retrain-guided|upgrade|login-off|login-both|login-face|set-*|write-config|delete-unused-models|clear-cache`), no flags, and the
   target user from `PKEXEC_UID` only; keep it that way, and keep ksni/zbus out of it. `write-config` is
   the one verb with caller-chosen content (a new `/etc/face-auth.toml` on stdin, from the settings
   window); `face-auth-core/src/config_write.rs` checks it, and a new system-policy key that picks what
-  is compared (like `model_path`) needs a `trusted_path` check there. `data/` holds the
+  is compared (like `model_path`) needs a `trusted_path` check there. `delete-unused-models` and `clear-cache` take no path:
+  the helper works out what goes (`face-auth-core/src/model_files.rs`) and never leaves
+  `/usr/local/share/face-auth` or `/var/cache/face-auth`. `data/` holds the
   policy, desktop files and the generated icon (`FACE_AUTH_BLESS_ICONS=1 cargo test -p
   face-auth-tray` after changing `icon.rs`).
 - **`crates/face-auth-settings`**: `vinoauthface-settings`, the egui settings window on the shared

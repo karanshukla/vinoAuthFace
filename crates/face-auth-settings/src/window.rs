@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui::{self, Align, Layout, RichText};
 use face_auth_core::config::{self as limits, SYSTEM_CONFIG_PATH};
+use face_auth_core::model_files::{self, human_size, ModelFile};
 use face_auth_core::{capture, config_write, update, FaceAuthConfig};
 use vino_ui::a11y;
 use vino_ui::icons::Icon;
@@ -24,7 +25,7 @@ use crate::apply;
 use crate::enrol;
 use crate::files::{self, ConfigFile};
 use crate::keys::{self, Key};
-use crate::models::{self, Check, Checks};
+use crate::models::{self, Check, Checks, Disk};
 
 const TITLE: &str = "vinoAuthFace settings";
 pub const APP_ID: &str = "io.github.karanshukla.vinoauthface.Settings";
@@ -197,6 +198,16 @@ pub struct SettingsWindow {
     pub(crate) check_enrolled: fn() -> Option<bool>,
     /// "Enrol again" waiting for its confirmation.
     confirm_replace: bool,
+    /// The Models page's clean-up: what is on disk, read when needed and
+    /// dropped to be read again (`None`).
+    disk: Option<Disk>,
+    /// The model directory and the compiled cache; tests point them elsewhere.
+    pub(crate) disk_dirs: (PathBuf, PathBuf),
+    /// A clean-up verb running through pkexec, and what it said.
+    pub(crate) clean_up: Arc<Mutex<apply::State>>,
+    pub(crate) clean_up_runner: apply::Runner,
+    /// "Delete unused models" waiting for its confirmation.
+    confirm_delete_models: bool,
     focused: bool,
     kde_header: Option<theme::KdeHeader>,
     text_scale: f32,
@@ -258,6 +269,11 @@ impl SettingsWindow {
             enrolled: None,
             check_enrolled: enrol::enrolled,
             confirm_replace: false,
+            disk: None,
+            disk_dirs: (PathBuf::from(model_files::SHARE_DIR), PathBuf::from(model_files::CACHE_DIR)),
+            clean_up: Arc::default(),
+            clean_up_runner: apply::pkexec_verb,
+            confirm_delete_models: false,
             focused: false,
             kde_header: None,
             text_scale: 1.0,
@@ -899,6 +915,88 @@ impl SettingsWindow {
         });
         ui.add_space(8.0);
         widgets::small(ui, "Check always uses tract on the CPU.");
+        ui.add_space(20.0);
+        self.clean_up(ui);
+    }
+
+    /// Spare models and the compiled cache, each removed by a helper verb
+    /// that works out for itself what goes. The models in use are
+    /// uninstall's to remove.
+    fn clean_up(&mut self, ui: &mut egui::Ui) {
+        if self.disk.is_none() {
+            let config = match (&self.system.unreadable, &self.system.read) {
+                (Some(_), _) => None,
+                (None, Some(text)) => FaceAuthConfig::from_toml(text).ok(),
+                (None, None) => FaceAuthConfig::from_toml("").ok(),
+            };
+            self.disk = Some(Disk::read(&self.disk_dirs.0, &self.disk_dirs.1, config.as_ref()));
+        }
+        let Some(disk) = self.disk.clone() else { return };
+        let running = self.clean_up.lock().unwrap().running;
+        let can = self.helper && !running;
+        let mut run = None;
+        widgets::group_label(ui, "Disk space");
+        widgets::group_help(
+            ui,
+            "The models in use stay until you uninstall: sudo vinoauthface-uninstall removes them and the cache.",
+        );
+        widgets::group(ui, |ui| {
+            match &disk.unused {
+                Err(e) => {
+                    Row::new("Unused models").help(&format!("Can't tell: {e}.")).show(ui, |_, _| {});
+                }
+                Ok(unused) if unused.is_empty() => {
+                    self.confirm_delete_models = false;
+                    Row::new("Unused models").help("None: every model here is in use.").show(ui, |_, _| {});
+                }
+                Ok(unused) if self.confirm_delete_models => {
+                    let p = theme::palette(ui.ctx());
+                    let help = format!(
+                        "Deletes {}. The shipped ones download again with deploy.sh.",
+                        listed(unused)
+                    );
+                    Row::new("Unused models").help(&help).tone(Tone::Error).tint(p.error_tint).show(ui, |ui, _| {
+                        if ui.add(Button::ghost("Cancel")).clicked() {
+                            self.confirm_delete_models = false;
+                        }
+                        if ui.add_enabled(can, Button::destructive("Delete")).clicked() {
+                            self.confirm_delete_models = false;
+                            run = Some(apply::DELETE_UNUSED_MODELS);
+                        }
+                    });
+                }
+                Ok(unused) => {
+                    let help = format!("{}. Not the recognition or detector model above.", listed(unused));
+                    Row::new("Unused models").help(&help).show(ui, |ui, _| {
+                        if a11y::for_what(ui.add_enabled(can, Button::secondary("Delete…")), "the unused models").clicked() {
+                            self.confirm_delete_models = true;
+                        }
+                    });
+                }
+            }
+            let help = match &disk.cache {
+                Err(e) => format!("Can't read {}: {e}.", self.disk_dirs.1.display()),
+                Ok(0) => "Empty. OpenVINO fills it the first time it runs the models.".into(),
+                Ok(bytes) => format!(
+                    "{} of OpenVINO's compiled models. The next unlock rebuilds it and is slower once; sudo vinoauthface-auth --warm-cache rebuilds it now.",
+                    human_size(*bytes)
+                ),
+            };
+            Row::new("Compiled cache").help(&help).show(ui, |ui, _| {
+                let full = matches!(disk.cache, Ok(bytes) if bytes > 0);
+                if a11y::for_what(ui.add_enabled(can && full, Button::secondary("Clear")), "the compiled cache").clicked() {
+                    run = Some(apply::CLEAR_CACHE);
+                }
+            });
+        });
+        if !self.helper {
+            ui.add_space(8.0);
+            widgets::small(ui, "Can't delete from here: vinoauthface-helper isn't installed.");
+        }
+        if let Some(verb) = run {
+            self.notice = None;
+            apply::start(&self.clean_up, self.clean_up_runner, verb.to_string(), ui.ctx());
+        }
     }
 
     fn security(&mut self, ui: &mut egui::Ui) {
@@ -1143,6 +1241,7 @@ impl SettingsWindow {
                     was.map(|w| w.model_tag()) != self.system.config.as_ref().ok().map(FaceAuthConfig::model_tag)
                 };
                 self.system.reload();
+                self.disk = None;
                 self.notice = Some(if tag_changed {
                     (Tone::Warn, "Saved. The models changed: enrol again before face unlock works.".into())
                 } else {
@@ -1226,8 +1325,19 @@ impl SettingsWindow {
                 self.user.reload();
             }
         }
+        if focused && !self.focused {
+            self.disk = None;
+        }
         self.focused = focused;
         self.take_apply_result();
+        let cleaned = self.clean_up.lock().unwrap().result.take();
+        if let Some(result) = cleaned {
+            self.notice = Some(match result {
+                Ok(said) => (Tone::Info, said),
+                Err(e) => (Tone::Error, e),
+            });
+            self.disk = None;
+        }
         let enrolled = self.enrol.lock().unwrap().done.take();
         if let Some(result) = enrolled {
             self.notice = Some(match result {
@@ -1376,6 +1486,17 @@ impl SettingsWindow {
             }
         }
     }
+}
+
+/// `a.onnx and b.onnx, 180 MB`: the files, then their total.
+fn listed(models: &[ModelFile]) -> String {
+    let names: Vec<_> = models.iter().map(ModelFile::name).collect();
+    let names = match names.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    format!("{names}, {}", human_size(models.iter().map(|m| m.bytes).sum()))
 }
 
 fn plural(n: usize, one: &str, many: &str) -> String {

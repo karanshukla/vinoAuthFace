@@ -1,9 +1,10 @@
 //! Root side of the tray's enrol, retrain, upgrade, login-screen and settings entries, and of the
-//! settings window's Apply, run through pkexec. See `face_auth_tray::helper` for why this exists
+//! settings window's Apply and model clean-up, run through pkexec. See `face_auth_tray::helper` for why this exists
 //! instead of pkexec running `vinoauthface` directly.
 
 use face_auth_core::config::SYSTEM_CONFIG_PATH;
-use face_auth_core::{config_write, user};
+use face_auth_core::model_files::{self, human_size, CACHE_DIR, SHARE_DIR};
+use face_auth_core::{config_write, user, FaceAuthConfig};
 use face_auth_tray::helper::{self, Verb, SAFE_PATH};
 use std::io::Read;
 use std::os::unix::process::CommandExt;
@@ -36,8 +37,14 @@ fn main() {
     }
 
     let Some((program, argv)) = helper::command(verb, &info.name) else {
-        debug_assert_eq!(verb, Verb::WriteConfig);
-        write_config();
+        match verb {
+            Verb::DeleteUnusedModels => delete_unused_models(),
+            Verb::ClearCache => clear_cache(),
+            _ => {
+                debug_assert_eq!(verb, Verb::WriteConfig);
+                write_config();
+            }
+        }
     };
     let err = Command::new(program)
         .args(&argv)
@@ -69,5 +76,32 @@ fn write_config() -> ! {
         die(&format!("cannot write {SYSTEM_CONFIG_PATH}: {e:#}"));
     }
     println!("Saved {SYSTEM_CONFIG_PATH}");
+    std::process::exit(0)
+}
+
+/// `delete-unused-models`: the `.onnx` files directly in the model directory
+/// that `/etc/face-auth.toml` (as authentication reads it) doesn't name,
+/// worked out here. A config that doesn't load deletes nothing: which models
+/// are in use can't be told.
+fn delete_unused_models() -> ! {
+    let config = FaceAuthConfig::load_system()
+        .unwrap_or_else(|e| die(&format!("nothing deleted: {SYSTEM_CONFIG_PATH} doesn't load: {e:#}")));
+    let deleted = model_files::delete_unused_models(std::path::Path::new(SHARE_DIR), &config)
+        .unwrap_or_else(|e| die(&format!("cannot delete from {SHARE_DIR}: {e}")));
+    if deleted.is_empty() {
+        println!("No unused models.");
+    } else {
+        let bytes: u64 = deleted.iter().map(|m| m.bytes).sum();
+        let names: Vec<_> = deleted.iter().map(|m| m.name()).collect();
+        println!("Deleted {}, {}.", names.join(", "), human_size(bytes));
+    }
+    std::process::exit(0)
+}
+
+/// `clear-cache`: empty the compiled model cache, keeping the directory.
+fn clear_cache() -> ! {
+    let freed = model_files::clear_dir(std::path::Path::new(CACHE_DIR))
+        .unwrap_or_else(|e| die(&format!("cannot clear {CACHE_DIR}: {e}")));
+    println!("Cleared the compiled cache, {}.", human_size(freed));
     std::process::exit(0)
 }

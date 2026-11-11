@@ -27,6 +27,14 @@ fn window(page: Page, name: &str, user: Option<&str>, runner: apply::Runner) -> 
         std::fs::write(&mine, text).unwrap();
     }
     let mut w = SettingsWindow::with(Some(page), system.clone(), mine.clone(), runner, true);
+    // A spare model and a filled cache, never the real ones.
+    std::fs::create_dir_all(dir.join("share")).unwrap();
+    std::fs::create_dir_all(dir.join("cache")).unwrap();
+    std::fs::write(dir.join("share").join("spare.onnx"), [0u8; 1500]).unwrap();
+    std::fs::write(dir.join("share").join("setup.sh"), b"#!/bin/bash\n").unwrap();
+    std::fs::write(dir.join("cache").join("blob"), [0u8; 2500]).unwrap();
+    w.disk_dirs = (dir.join("share"), dir.join("cache"));
+    w.clean_up_runner = fake_clean_up;
     w.spawner = fake_enrolment;
     w.check_enrolled = || Some(true);
     w.enrolled = Some(true);
@@ -400,4 +408,62 @@ fn auto_detect_names_its_pick_and_a_virtual_camera_is_flagged() {
     h.state_mut().set(false, keys::DEVICE, Some(keys::string("/dev/video0")));
     settle(&mut h);
     h.get_by_label("Not an IR sensor: face unlock needs greyscale IR frames.");
+}
+
+/// The clean-up verbs the window asked the helper for, across tests.
+static CLEANED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn fake_clean_up(verb: &str) -> Result<String, String> {
+    CLEANED.lock().unwrap().push(verb.to_string());
+    Ok(format!("Did {verb}."))
+}
+
+/// Tall enough that the Models page's last group is on screen to click.
+const TALL: [f32; 2] = [860.0, 1400.0];
+
+#[test]
+fn unused_models_are_listed_and_deleting_them_confirms_in_place() {
+    let (w, _, _) = window(Page::Models, "unused", None, refuse);
+    let mut h = harness(w, TALL, Theme::Light);
+    h.get_by_label("spare.onnx, 1.5 kB. Not the recognition or detector model above.");
+    h.get_by_label("2.5 kB of OpenVINO's compiled models. The next unlock rebuilds it and is slower once; sudo vinoauthface-auth --warm-cache rebuilds it now.");
+    h.get_by_role_and_label(Role::Button, "Delete… the unused models").click();
+    settle(&mut h);
+    h.get_by_label("Deletes spare.onnx, 1.5 kB. The shipped ones download again with deploy.sh.");
+    assert!(unnamed_controls(&h).is_empty());
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    settle(&mut h);
+    assert!(h.query_by_role_and_label(Role::Button, "Delete").is_none(), "cancelled");
+    assert!(!CLEANED.lock().unwrap().iter().any(|v| v == "delete-unused-models"), "nothing ran on Cancel");
+    h.get_by_role_and_label(Role::Button, "Delete… the unused models").click();
+    settle(&mut h);
+    h.get_by_role_and_label(Role::Button, "Delete").click();
+    until_shown(&mut h, "Did delete-unused-models.");
+    assert!(CLEANED.lock().unwrap().iter().any(|v| v == "delete-unused-models"));
+}
+
+#[test]
+fn the_compiled_cache_clears_without_a_confirmation() {
+    let (w, _, _) = window(Page::Models, "cache", None, refuse);
+    let mut h = harness(w, TALL, Theme::Dark);
+    h.get_by_role_and_label(Role::Button, "Clear the compiled cache").click();
+    until_shown(&mut h, "Did clear-cache.");
+    assert!(CLEANED.lock().unwrap().iter().any(|v| v == "clear-cache"));
+}
+
+#[test]
+fn the_models_in_use_are_never_offered() {
+    let (w, system, _) = window(Page::Models, "inuse", None, refuse);
+    let share = system.parent().unwrap().join("share");
+    // Configured by name in the scratch directory: in use, so not listed.
+    let text = format!(
+        "model_path = \"{0}/spare.onnx\"\ndetector_model_path = \"{0}/det.onnx\"\n",
+        share.display()
+    );
+    std::fs::write(&system, text).unwrap();
+    let mut w = w;
+    w.system.reload();
+    let h = harness(w, TALL, Theme::Light);
+    h.get_by_label("None: every model here is in use.");
+    assert!(h.query_by_role_and_label(Role::Button, "Delete… the unused models").is_none());
 }

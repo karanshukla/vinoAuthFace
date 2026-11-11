@@ -126,6 +126,12 @@ pub enum Verb {
     /// whose effect the caller chooses, so the helper does it itself rather
     /// than run anything with it.
     WriteConfig,
+    /// Delete the `.onnx` files in the model directory that
+    /// `/etc/face-auth.toml` doesn't use. Which ones is the helper's to work
+    /// out (`face_auth_core::model_files`), never the caller's to say.
+    DeleteUnusedModels,
+    /// Empty the compiled model cache; the next unlock refills it.
+    ClearCache,
 }
 
 impl Verb {
@@ -141,10 +147,12 @@ impl Verb {
             Verb::LoginFace => "login-face".into(),
             Verb::Set(setting, choice) => format!("set-{}-{}", setting.key, choice.id),
             Verb::WriteConfig => "write-config".into(),
+            Verb::DeleteUnusedModels => "delete-unused-models".into(),
+            Verb::ClearCache => "clear-cache".into(),
         }
     }
 
-    const FIXED: [Verb; 9] = [
+    const FIXED: [Verb; 11] = [
         Verb::Enrol,
         Verb::Retrain,
         Verb::EnrolGuided,
@@ -154,6 +162,8 @@ impl Verb {
         Verb::LoginBoth,
         Verb::LoginFace,
         Verb::WriteConfig,
+        Verb::DeleteUnusedModels,
+        Verb::ClearCache,
     ];
 
     /// Every verb there is: the fixed ones, then one per setting choice.
@@ -184,8 +194,8 @@ pub fn parse_request(args: &[String], pkexec_uid: Option<&str>) -> Result<(Verb,
 }
 
 /// The program and arguments a verb runs for `user`, a name already resolved
-/// from the pkexec caller's user ID. `None` for `WriteConfig`, which runs
-/// nothing.
+/// from the pkexec caller's user ID. `None` for `WriteConfig`,
+/// `DeleteUnusedModels` and `ClearCache`, which the helper does itself.
 pub fn command(verb: Verb, user: &str) -> Option<(&'static str, Vec<String>)> {
     Some(match verb {
         Verb::Enrol => (FACE_ENROLL, vec!["enroll".into(), "--user".into(), user.into()]),
@@ -202,7 +212,7 @@ pub fn command(verb: Verb, user: &str) -> Option<(&'static str, Vec<String>)> {
         Verb::Set(setting, choice) => {
             (bash(), vec![SETTING_MODE.into(), "set".into(), setting.key.into(), choice.id.into()])
         }
-        Verb::WriteConfig => return None,
+        Verb::WriteConfig | Verb::DeleteUnusedModels | Verb::ClearCache => return None,
     })
 }
 
@@ -222,6 +232,27 @@ mod tests {
         assert_eq!(parse_request(&args(&["login-both"]), Some("1000")), Ok((Verb::LoginBoth, 1000)));
         assert_eq!(parse_request(&args(&["write-config"]), Some("1000")), Ok((Verb::WriteConfig, 1000)));
         assert_eq!(command(Verb::WriteConfig, "alice"), None);
+        assert_eq!(parse_request(&args(&["delete-unused-models"]), Some("1000")), Ok((Verb::DeleteUnusedModels, 1000)));
+        assert_eq!(parse_request(&args(&["clear-cache"]), Some("1000")), Ok((Verb::ClearCache, 1000)));
+        assert_eq!(command(Verb::DeleteUnusedModels, "alice"), None);
+        assert_eq!(command(Verb::ClearCache, "alice"), None);
+    }
+
+    /// The model verbs take no path: which files go is the helper's to work
+    /// out, so there is nothing for a caller to point elsewhere.
+    #[test]
+    fn the_model_verbs_take_no_path() {
+        for list in [
+            &["delete-unused-models", "/usr/local/share/face-auth/w600k_mbf.onnx"][..],
+            &["delete-unused-models", "--all"],
+            &["clear-cache", "/var/lib/face-auth"],
+            &["delete-models"],
+            &["delete-model"],
+            &["delete-unused-models "],
+            &["clear-templates"],
+        ] {
+            assert!(parse_request(&args(list), Some("1000")).is_err(), "{list:?}");
+        }
     }
 
     #[test]
