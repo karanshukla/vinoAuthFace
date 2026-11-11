@@ -1,12 +1,22 @@
 # Changelog
 
-## [Unreleased]: fork resync onto upstream
+Releases are numbered consecutively (v2, v3, ...). GitHub's release pages list
+the pull requests in each one; this file says what changed for you.
 
-This fork (karanshukla/vinoAuthFace) was rebuilt on top of upstream's security
-pass below instead of merging, so upstream's fixes all apply. Fork features
-replayed on top:
+## [Unreleased]
+
+## [v14] - 2026-11-11
 
 - **Delete unused models and the compiled cache from the settings window.** The Models page lists the `.onnx` files in `/usr/local/share/face-auth` that `/etc/face-auth.toml` doesn't use (the model left behind after switching between mbf and r50, say) with their size, and deletes them after a confirmation; it also clears `/var/cache/face-auth`. Both run through two new helper verbs, `delete-unused-models` and `clear-cache`, which take no path and work out what to remove themselves. The models in use are still removed only by uninstalling.
+
+## [v13] - 2026-11-08
+
+- **The tray doesn't list the other vinoPilot apps.** The settings window's About
+  page links to vinopilot.ca and the rest of the family; the tray menu is for
+  this app alone, whether or not that window is installed.
+
+## [v11] - 2026-11-04
+
 - **Check for updates on the settings window's About page.** One click asks GitHub; a newer release gets an Update to vN button, which runs the tray helper's `upgrade` through polkit. A build from source is stamped `dev` and is never offered one: that's why the tray's "Update to vN" never shows on a source build. `update_check = false` hides the row.
 - **One-line install, no build.** `curl -fsSL
   https://github.com/karanshukla/vinoAuthFace/releases/latest/download/install.sh
@@ -36,9 +46,6 @@ replayed on top:
   names and shapes, not only their count, and a third format is supported: a
   BlazeFace-style detector with the five alignment points (896 anchors,
   128x128 input, two passes). SCRFD and the slim detector are unchanged.
-- **The tray doesn't list the other vinoPilot apps.** The settings window's About
-  page links to vinopilot.ca and the rest of the family; the tray menu is for
-  this app alone, whether or not that window is installed.
 - **Settings window.** `vinoauthface-settings` (optional, `deploy.sh
   --with-settings`) covers every config key on vino-ui. System changes wait
   for one Apply and one admin prompt, through a new helper verb,
@@ -57,6 +64,9 @@ replayed on top:
   picked a person in the background in 11 of 3,940 images. It now takes the
   largest face over `detector_threshold`. Frames with one face are unchanged,
   so no re-enrolment.
+
+## [v10] - 2026-11-01
+
 - **KDE lock screen on Plasma 6.8.** Plasma 6.8 only runs `kde-fingerprint`
   beside the password field; `kde-smartcard` runs only when picked instead of
   it. With fprintd in the fingerprint stack (authselect's `with-fingerprint`, reader or not),
@@ -77,6 +87,9 @@ replayed on top:
   preload list's paths re-rooted to the copy so nothing outside it can be
   loaded. `vinoauthface doctor` looks there for the compiler too, under either
   driver generation's name. Needs ovfetch 0.6.0.
+
+## [v2] to [v9] - 2026-09-30 to 2026-10-22
+
 - **Commands renamed** (#76). `face-enroll` is now `vinoauthface enroll` and
   `vinoauthface improve` (was `--improve`); `face-auth` is `vinoauthface-auth`;
   the tray, its helper and the two debug tools are `vinoauthface-tray`,
@@ -147,12 +160,13 @@ replayed on top:
 - polkit-1 and Bitwarden unlock, release-binary download in `deploy.sh`, CI.
 - `face-camera-diag` and `face-similarity-check`; 30-frame enrolment default.
 
-Dropped from upstream: the GTK settings GUI and the GNOME scan indicator.
+The GTK settings GUI and the GNOME scan indicator were removed; the tray
+replaces both.
 
 Re-enrol after upgrading: the detector normalisation and CLAHE parameters
 changed, so old templates may score lower.
 
-## Upstream: SamVivan1 merge and security pass
+## Before v2: SamVivan1 merge and security pass
 
 Merges the improvements from the `SamVivan1/authFace` fork and follows them
 with a security pass over the whole tree.
@@ -185,7 +199,7 @@ Three issues combined into a local privilege escalation on a deployed system.
   template was checked, and under `sudo` the `id -un` branch resolved to
   `root`. Usernames are now resolved through NSS and validated before becoming
   a path component, closing a path traversal into an arbitrary embeddings file.
-- **Fixed an arbitrary file write as root** in the fork's new scan-indicator
+- **Fixed an arbitrary file write as root** in the new scan-indicator
   support. `write_status` wrote `/run/user/<uid>/face-auth-status` with
   `fs::write` while running as root; that directory belongs to the user, so
   symlinking the status file at, say, `/etc/shadow` had root truncate it on the
@@ -407,7 +421,8 @@ Three issues combined into a local privilege escalation on a deployed system.
 - `quiet` on the `pam_exec` stanzas.
 - GNOME Shell lock-screen scan indicator.
 
-## [Earlier]
+
+## Earlier
 
 ### Fixed
 - Removed `timeout=10` from PAM stanzas (causes pam_exec to block on stdin; face-auth reads the camera, not stdin)
