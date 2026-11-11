@@ -6,6 +6,7 @@ This fork (karanshukla/vinoAuthFace) was rebuilt on top of upstream's security
 pass below instead of merging, so upstream's fixes all apply. Fork features
 replayed on top:
 
+- **Delete unused models and the compiled cache from the settings window.** The Models page lists the `.onnx` files in `/usr/local/share/face-auth` that `/etc/face-auth.toml` doesn't use (the model left behind after switching between mbf and r50, say) with their size, and deletes them after a confirmation; it also clears `/var/cache/face-auth`. Both run through two new helper verbs, `delete-unused-models` and `clear-cache`, which take no path and work out what to remove themselves. The models in use are still removed only by uninstalling.
 - **Check for updates on the settings window's About page.** One click asks GitHub; a newer release gets an Update to vN button, which runs the tray helper's `upgrade` through polkit. A build from source is stamped `dev` and is never offered one: that's why the tray's "Update to vN" never shows on a source build. `update_check = false` hides the row.
 - **One-line install, no build.** `curl -fsSL
   https://github.com/karanshukla/vinoAuthFace/releases/latest/download/install.sh

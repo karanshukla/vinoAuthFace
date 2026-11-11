@@ -11,7 +11,10 @@
   screen, how strict matching is, or (upgrade) runs a downloaded deploy.sh as root.
   write-config is the one whose content the caller supplies (the settings window's new
   /etc/face-auth.toml, on stdin); the helper validates it and refuses model or template
-  paths that anyone but root could write.
+  paths that anyone but root could write. delete-unused-models and clear-cache take no
+  path: the helper works out the unused models from /etc/face-auth.toml itself, and only
+  removes regular .onnx files directly in /usr/local/share/face-auth, or empties
+  /var/cache/face-auth. auth_admin too: a deleted model is a download to get back.
 -->
 <policyconfig>
   <vendor>vinoAuthFace</vendor>
@@ -253,5 +256,29 @@
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">retrain-guided</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.delete-unused-models">
+    <description>Delete face models vinoAuthFace isn't using</description>
+    <message>Authentication is required to delete unused face models</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">delete-unused-models</annotate>
+  </action>
+
+  <action id="io.github.karanshukla.vinoauthface.clear-cache">
+    <description>Clear vinoAuthFace's compiled model cache</description>
+    <message>Authentication is required to clear the compiled model cache</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vinoauthface-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">clear-cache</annotate>
   </action>
 </policyconfig>

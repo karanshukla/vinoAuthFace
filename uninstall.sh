@@ -105,9 +105,8 @@ rm -f /usr/local/libexec/vinoauthface-unseal
 rm -f "$BIN_DIR/vinoauthface" "$BIN_DIR/vinoauthface-upgrade" "$BIN_DIR/vinoauthface-update" "$BIN_DIR/vinoauthface-setup" "$BIN_DIR/vinoauthface-uninstall" "$BIN_DIR/vinoauthface-pin-camera" "$COMPLETION_DIR/vinoauthface" "$BIN_DIR/face-enroll" "$COMPLETION_DIR/face-enroll"
 rm -f "$ZSH_COMPLETION_DIR/_vinoauthface" "$FISH_COMPLETION_DIR/vinoauthface.fish"
 
-# The tray (installed by deploy.sh unless --no-tray). A running tray exits on its own when its
-# uninstall entry finishes; one started some other way keeps running until
-# logout, with nothing left for it to call.
+# The tray (installed by deploy.sh unless --no-tray). A running tray keeps
+# running until logout, with nothing left for it to call.
 rm -f "$BIN_DIR/vinoauthface-tray" /usr/local/libexec/vinoauthface-helper \
     "$BIN_DIR/face-auth-tray" /usr/local/libexec/face-auth-helper "$BIN_DIR/vinoauthface-settings"
 rm -f /usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
@@ -118,6 +117,7 @@ rm -f /usr/local/share/applications/vinoauthface-enrol.desktop
 rm -f /usr/local/share/applications/vinoauthface-settings.desktop
 rm -f /usr/local/share/icons/hicolor/scalable/apps/vinoauthface.svg
 rm -f /usr/local/share/icons/hicolor/symbolic/apps/vinoauthface{,-scanning,-attention}-symbolic.svg
+echo "Removing the compiled model cache..."
 rm -rf "$NPU_CACHE_DIR"
 
 # Only remove the Bitwarden action if deploy.sh wrote it, not one Bitwarden
@@ -139,7 +139,7 @@ if [ -d /usr/local/lib/face-auth ] || [ -f /etc/ld.so.conf.d/face-auth-openvino.
     fi
 fi
 
-echo "Removing model and SELinux policy..."
+echo "Removing models and SELinux policy..."
 rm -rf "$SHARE_DIR"
 
 echo "Removing config..."
