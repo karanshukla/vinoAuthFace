@@ -90,6 +90,9 @@ the pull requests in each one; this file says what changed for you.
 
 ## [v2] to [v9] - 2026-09-30 to 2026-10-22
 
+The fork was rebuilt on top of upstream's security pass (below) instead of
+merging, so upstream's fixes all apply. Fork features replayed on top:
+
 - **Commands renamed** (#76). `face-enroll` is now `vinoauthface enroll` and
   `vinoauthface improve` (was `--improve`); `face-auth` is `vinoauthface-auth`;
   the tray, its helper and the two debug tools are `vinoauthface-tray`,
@@ -160,13 +163,12 @@ the pull requests in each one; this file says what changed for you.
 - polkit-1 and Bitwarden unlock, release-binary download in `deploy.sh`, CI.
 - `face-camera-diag` and `face-similarity-check`; 30-frame enrolment default.
 
-The GTK settings GUI and the GNOME scan indicator were removed; the tray
-replaces both.
+Dropped from upstream: the GTK settings GUI and the GNOME scan indicator.
 
 Re-enrol after upgrading: the detector normalisation and CLAHE parameters
 changed, so old templates may score lower.
 
-## Before v2: SamVivan1 merge and security pass
+## Upstream: SamVivan1 merge and security pass
 
 Merges the improvements from the `SamVivan1/authFace` fork and follows them
 with a security pass over the whole tree.
@@ -199,7 +201,7 @@ Three issues combined into a local privilege escalation on a deployed system.
   template was checked, and under `sudo` the `id -un` branch resolved to
   `root`. Usernames are now resolved through NSS and validated before becoming
   a path component, closing a path traversal into an arbitrary embeddings file.
-- **Fixed an arbitrary file write as root** in the new scan-indicator
+- **Fixed an arbitrary file write as root** in the fork's new scan-indicator
   support. `write_status` wrote `/run/user/<uid>/face-auth-status` with
   `fs::write` while running as root; that directory belongs to the user, so
   symlinking the status file at, say, `/etc/shadow` had root truncate it on the
@@ -422,7 +424,7 @@ Three issues combined into a local privilege escalation on a deployed system.
 - GNOME Shell lock-screen scan indicator.
 
 
-## Earlier
+## [Earlier]
 
 ### Fixed
 - Removed `timeout=10` from PAM stanzas (causes pam_exec to block on stdin; face-auth reads the camera, not stdin)
