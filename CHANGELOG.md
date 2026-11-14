@@ -5,6 +5,11 @@ the pull requests in each one; this file says what changed for you.
 
 ## [Unreleased]
 
+## [v15] - 2026-11-14
+
+- **The settings window draws its own title bar**, as the other vino apps now do (vino-ui 0.5.0). Wide, the page title sits in a bar beside the sidebar with minimise, maximise and close in its top right corner; narrow, the buttons end the header's first row. The bar, the header and the sidebar's name drag the window and the edges resize it. On sway and other tiling desktops, or with `VINO_UI_TITLE_BAR=system`, the window is as it was. A two-finger touchpad swipe scrolls three times as far as before.
+- **vinoAuthFace's logo beside its name** in the settings window's sidebar and narrow header, as vinoSearch and vinoWhisper show theirs.
+- **A heavier tray icon.** The viewfinder, eyes and smile are drawn thicker, matching the other vino trays, and while scanning a scan bar takes the face's place instead of crossing it.
 - **The app icon matches the other vino apps.** The viewfinder is a grey frame of the family's thick pills, round a face with white eyes and a green smile. The tray's larger pixmaps follow; the symbolic tray icon is unchanged.
 
 ## [v14] - 2026-11-11
