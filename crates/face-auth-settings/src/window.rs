@@ -1369,9 +1369,7 @@ impl SettingsWindow {
                     let brand = ui
                         .scope(|ui| {
                             ui.style_mut().interaction.selectable_labels = false;
-                            // No logo of its own: the name on the nav items' text column.
-                            let logo = None::<fn(&mut egui::Ui, f32) -> egui::Response>;
-                            widgets::sidebar_brand(ui, logo, "vinoAuthFace", "Settings");
+                            widgets::sidebar_brand(ui, Some(vino_ui::logo::authface), "vinoAuthFace", "Settings");
                         })
                         .response
                         .rect;
@@ -1419,6 +1417,7 @@ impl SettingsWindow {
                         vino_ui::window::drag(ui, ui.clip_rect(), "header");
                     }
                     ui.horizontal(|ui| {
+                        vino_ui::logo::authface(ui, 22.0);
                         ui.add(
                             egui::Label::new(
                                 RichText::new("vinoAuthFace").size(15.0).family(theme::bold()).color(header.text),
