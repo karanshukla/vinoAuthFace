@@ -1,7 +1,8 @@
-//! The tray and app icon, in vinoWhisper's style: a dark rounded tile with a
-//! faint edge and pill-shaped marks. Here the marks are a camera viewfinder
-//! around a face. Drawn in code so the tray needs no image decoder, and the
-//! checked-in SVG is generated from the same shapes.
+//! The tray and app icon, in the vino apps' style: a dark rounded tile with a
+//! faint edge and a few heavy marks. Here the marks are a camera viewfinder
+//! around a smiling face, which gives way to a scan bar while a scan runs.
+//! Drawn in code so the tray needs no image decoder, and the checked-in SVG
+//! is generated from the same shapes.
 
 use crate::raster::{Canvas, Rect, Rgba};
 
@@ -37,6 +38,22 @@ impl Shape {
         format!("M{x} {y}h{w}v{h}h-{w}z")
     }
 
+    /// A smile filling this box, as a quadratic curve's two ends and control
+    /// point. `r` is half the stroke's width, and the round caps and the
+    /// lowest point of the stroke land on the box's edges.
+    fn smile(self) -> [(f32, f32); 3] {
+        let Shape { x, y, w, h, r } = self;
+        [(x + r, y + r), (x + w / 2.0, y + r + (h - r * 2.0) * 2.0), (x + w - r, y + r)]
+    }
+
+    fn svg_smile(self, color: &str) -> String {
+        let [(x0, y0), (cx, cy), (x1, y1)] = self.smile();
+        format!(
+            r#"<path d="M{x0} {y0}Q{cx} {cy} {x1} {y1}" fill="none" stroke="{color}" stroke-width="{}" stroke-linecap="round"/>"#,
+            self.r * 2.0
+        )
+    }
+
     fn svg_rect(self, paint: &str) -> String {
         let Shape { x, y, w, h, r } = self;
         format!(r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{r}" {paint}/>"#)
@@ -57,11 +74,15 @@ pub enum State {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Part {
     Bracket,
+    /// An eye, or a piece of the pixel-grid smile.
     Feature,
+    /// The curved smile of the large design: its `Shape` is the box it fills.
+    Smile,
+    /// Takes the face's place while scanning.
     ScanLine,
 }
 
-// vinoWhisper's palette (gui/src/paint.rs).
+// The vino apps' palette (vinoWhisper's gui/src/paint.rs).
 const TILE: Rgba = Rgba(14, 14, 16, 255);
 const EDGE: Rgba = Rgba(255, 255, 255, 46);
 const WHITE: Rgba = Rgba(250, 250, 250, 255);
@@ -77,11 +98,10 @@ const TRAY_AMBER: Rgba = Rgba(184, 115, 0, 255);
 fn paint(state: State, part: Part) -> Option<Rgba> {
     match (state, part) {
         (State::Ready, Part::Bracket) => Some(WHITE),
-        (State::Ready, Part::Feature) => Some(GREEN),
+        (State::Ready, Part::Feature | Part::Smile) => Some(GREEN),
         (State::Scanning, Part::Bracket | Part::ScanLine) => Some(AMBER),
-        (State::Scanning, Part::Feature) => Some(WHITE),
-        (State::Attention, Part::Bracket | Part::Feature) => Some(GREY),
-        (State::Ready | State::Attention, Part::ScanLine) => None,
+        (State::Attention, Part::Bracket | Part::Feature | Part::Smile) => Some(GREY),
+        (State::Scanning, Part::Feature | Part::Smile) | (State::Ready | State::Attention, Part::ScanLine) => None,
     }
 }
 
@@ -92,73 +112,66 @@ struct Grid {
     size: f32,
 }
 
-/// 64-unit design, for the app icon and the larger tray sizes.
+/// 64-unit design, for the app icon and the larger tray sizes. The tile and
+/// the 5-unit marks are the other vino apps' weights.
 const LARGE: Grid = Grid {
-    tile: Shape::new(4.0, 4.0, 56.0, 56.0, 12.0),
+    tile: Shape::new(4.0, 4.0, 56.0, 56.0, 14.0),
     edge: 2.0,
     marks: &[
-        (Shape::new(12.0, 12.0, 12.0, 4.0, 2.0), Part::Bracket),
-        (Shape::new(12.0, 12.0, 4.0, 12.0, 2.0), Part::Bracket),
-        (Shape::new(40.0, 12.0, 12.0, 4.0, 2.0), Part::Bracket),
-        (Shape::new(48.0, 12.0, 4.0, 12.0, 2.0), Part::Bracket),
-        (Shape::new(12.0, 48.0, 12.0, 4.0, 2.0), Part::Bracket),
-        (Shape::new(12.0, 40.0, 4.0, 12.0, 2.0), Part::Bracket),
-        (Shape::new(40.0, 48.0, 12.0, 4.0, 2.0), Part::Bracket),
-        (Shape::new(48.0, 40.0, 4.0, 12.0, 2.0), Part::Bracket),
-        (Shape::new(23.0, 22.0, 5.0, 9.0, 2.5), Part::Feature),
-        (Shape::new(36.0, 22.0, 5.0, 9.0, 2.5), Part::Feature),
-        (Shape::new(22.0, 37.0, 5.0, 8.0, 2.5), Part::Feature),
-        (Shape::new(25.0, 41.0, 14.0, 5.0, 2.5), Part::Feature),
-        (Shape::new(37.0, 37.0, 5.0, 8.0, 2.5), Part::Feature),
-        (Shape::new(18.0, 34.0, 28.0, 2.0, 1.0), Part::ScanLine),
+        (Shape::new(13.0, 13.0, 13.0, 5.0, 2.5), Part::Bracket),
+        (Shape::new(13.0, 13.0, 5.0, 13.0, 2.5), Part::Bracket),
+        (Shape::new(38.0, 13.0, 13.0, 5.0, 2.5), Part::Bracket),
+        (Shape::new(46.0, 13.0, 5.0, 13.0, 2.5), Part::Bracket),
+        (Shape::new(13.0, 46.0, 13.0, 5.0, 2.5), Part::Bracket),
+        (Shape::new(13.0, 38.0, 5.0, 13.0, 2.5), Part::Bracket),
+        (Shape::new(38.0, 46.0, 13.0, 5.0, 2.5), Part::Bracket),
+        (Shape::new(46.0, 38.0, 5.0, 13.0, 2.5), Part::Bracket),
+        (Shape::new(22.0, 22.0, 7.0, 7.0, 3.5), Part::Feature),
+        (Shape::new(35.0, 22.0, 7.0, 7.0, 3.5), Part::Feature),
+        (Shape::new(21.0, 33.0, 22.0, 10.0, 2.5), Part::Smile),
+        (Shape::new(20.0, 29.5, 24.0, 5.0, 2.5), Part::ScanLine),
     ],
     size: 64.0,
 };
 
-/// 16-unit design on whole pixels, so the 16 px tray icon stays sharp.
+/// 16-unit design on whole pixels, so the 16 px tray icon stays sharp. There
+/// is no room for the viewfinder at this size: the face fills the tile.
 const SMALL: Grid = Grid {
     tile: Shape::new(1.0, 1.0, 14.0, 14.0, 3.0),
     edge: 1.0,
     marks: &[
-        (Shape::new(3.0, 3.0, 3.0, 1.0, 0.0), Part::Bracket),
-        (Shape::new(3.0, 3.0, 1.0, 3.0, 0.0), Part::Bracket),
-        (Shape::new(10.0, 3.0, 3.0, 1.0, 0.0), Part::Bracket),
-        (Shape::new(12.0, 3.0, 1.0, 3.0, 0.0), Part::Bracket),
-        (Shape::new(3.0, 12.0, 3.0, 1.0, 0.0), Part::Bracket),
-        (Shape::new(3.0, 10.0, 1.0, 3.0, 0.0), Part::Bracket),
-        (Shape::new(10.0, 12.0, 3.0, 1.0, 0.0), Part::Bracket),
-        (Shape::new(12.0, 10.0, 1.0, 3.0, 0.0), Part::Bracket),
-        (Shape::new(6.0, 5.0, 1.0, 2.0, 0.0), Part::Feature),
-        (Shape::new(9.0, 5.0, 1.0, 2.0, 0.0), Part::Feature),
-        (Shape::new(6.0, 10.0, 1.0, 1.0, 0.0), Part::Feature),
-        (Shape::new(7.0, 11.0, 2.0, 1.0, 0.0), Part::Feature),
-        (Shape::new(9.0, 10.0, 1.0, 1.0, 0.0), Part::Feature),
-        (Shape::new(5.0, 8.0, 6.0, 1.0, 0.0), Part::ScanLine),
+        (Shape::new(4.0, 4.0, 2.0, 3.0, 0.0), Part::Feature),
+        (Shape::new(10.0, 4.0, 2.0, 3.0, 0.0), Part::Feature),
+        (Shape::new(4.0, 9.0, 2.0, 2.0, 0.0), Part::Feature),
+        (Shape::new(10.0, 9.0, 2.0, 2.0, 0.0), Part::Feature),
+        (Shape::new(4.0, 10.0, 8.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(5.0, 11.0, 6.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(4.0, 7.0, 8.0, 2.0, 0.0), Part::ScanLine),
     ],
     size: 16.0,
 };
 
 /// 16-unit design for the symbolic tray icon, which has no tile: the
 /// viewfinder sits on a 12-unit square with a 2-unit margin, the same
-/// footprint as the other icons in the tray.
+/// footprint as the other icons in the tray. Every mark is 2 units thick: a
+/// 1-unit line all but disappears on a panel.
 const SYMBOLIC: Grid = Grid {
     tile: Shape::new(0.0, 0.0, 16.0, 16.0, 0.0),
     edge: 0.0,
     marks: &[
-        (Shape::new(2.0, 2.0, 3.0, 1.0, 0.0), Part::Bracket),
-        (Shape::new(2.0, 2.0, 1.0, 3.0, 0.0), Part::Bracket),
-        (Shape::new(11.0, 2.0, 3.0, 1.0, 0.0), Part::Bracket),
-        (Shape::new(13.0, 2.0, 1.0, 3.0, 0.0), Part::Bracket),
-        (Shape::new(2.0, 13.0, 3.0, 1.0, 0.0), Part::Bracket),
-        (Shape::new(2.0, 11.0, 1.0, 3.0, 0.0), Part::Bracket),
-        (Shape::new(11.0, 13.0, 3.0, 1.0, 0.0), Part::Bracket),
-        (Shape::new(13.0, 11.0, 1.0, 3.0, 0.0), Part::Bracket),
+        (Shape::new(2.0, 2.0, 4.0, 2.0, 0.0), Part::Bracket),
+        (Shape::new(2.0, 2.0, 2.0, 4.0, 0.0), Part::Bracket),
+        (Shape::new(10.0, 2.0, 4.0, 2.0, 0.0), Part::Bracket),
+        (Shape::new(12.0, 2.0, 2.0, 4.0, 0.0), Part::Bracket),
+        (Shape::new(2.0, 12.0, 4.0, 2.0, 0.0), Part::Bracket),
+        (Shape::new(2.0, 10.0, 2.0, 4.0, 0.0), Part::Bracket),
+        (Shape::new(10.0, 12.0, 4.0, 2.0, 0.0), Part::Bracket),
+        (Shape::new(12.0, 10.0, 2.0, 4.0, 0.0), Part::Bracket),
         (Shape::new(5.0, 5.0, 2.0, 2.0, 0.0), Part::Feature),
         (Shape::new(9.0, 5.0, 2.0, 2.0, 0.0), Part::Feature),
-        (Shape::new(5.0, 10.0, 1.0, 1.0, 0.0), Part::Feature),
-        (Shape::new(6.0, 11.0, 4.0, 1.0, 0.0), Part::Feature),
-        (Shape::new(10.0, 10.0, 1.0, 1.0, 0.0), Part::Feature),
-        (Shape::new(4.0, 8.0, 8.0, 1.0, 0.0), Part::ScanLine),
+        (Shape::new(5.0, 9.0, 6.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(6.0, 10.0, 4.0, 1.0, 0.0), Part::Feature),
+        (Shape::new(5.0, 7.0, 6.0, 2.0, 0.0), Part::ScanLine),
     ],
     size: 16.0,
 };
@@ -184,8 +197,10 @@ pub fn app_svg() -> String {
         LARGE.edge
     )));
     for &(shape, part) in LARGE.marks {
-        if let Some(color) = paint(State::Ready, part) {
-            line(shape.svg_rect(&format!(r#"fill="{}""#, hex(color))));
+        match paint(State::Ready, part) {
+            Some(color) if part == Part::Smile => line(shape.svg_smile(&hex(color))),
+            Some(color) => line(shape.svg_rect(&format!(r#"fill="{}""#, hex(color)))),
+            None => {}
         }
     }
     svg.push_str("</svg>\n");
@@ -209,16 +224,17 @@ impl State {
 
 /// A monochrome tray icon for one state, in the KDE symbolic format: the
 /// `ColorScheme-Text` class is what Plasma recolours. The viewfinder follows
-/// the theme; the accent (green face, amber scan) stays fixed. The attention
+/// the theme; the accent (green face, amber scan) stays fixed. The scan bar
+/// takes the face's place, so each state draws one or the other. The attention
 /// state's dimmed viewfinder is at 0.6, not 0.5: half of Breeze Light's text
 /// colour falls just short of 3:1 on its panel.
 pub fn symbolic_svg(state: State) -> String {
     let (mut text, mut accent, mut dim) = (String::new(), String::new(), String::new());
     for &(shape, part) in SYMBOLIC.marks {
         let bucket = match (state, part) {
-            (State::Ready, Part::Feature) | (State::Scanning, Part::Bracket | Part::ScanLine) => &mut accent,
+            _ if paint(state, part).is_none() => continue,
+            (State::Ready, Part::Feature | Part::Smile) | (State::Scanning, _) => &mut accent,
             (State::Attention, _) => &mut dim,
-            (_, Part::ScanLine) => continue,
             _ => &mut text,
         };
         bucket.push_str(&shape.svg_path());
@@ -265,8 +281,13 @@ fn draw(canvas: &mut Canvas, grid: &Grid, state: State, size: f32) {
     canvas.fill_rounded(tile, grid.tile.r * unit, TILE);
     canvas.stroke_rounded(tile, grid.tile.r * unit, grid.edge * unit, EDGE);
     for &(shape, part) in grid.marks {
-        if let Some(color) = paint(state, part) {
-            canvas.fill_rounded(shape.rect(unit), shape.r * unit, color);
+        match paint(state, part) {
+            Some(color) if part == Part::Smile => {
+                let [from, control, to] = shape.smile().map(|(x, y)| (x * unit, y * unit));
+                canvas.stroke_curve(from, control, to, shape.r * 2.0 * unit, color);
+            }
+            Some(color) => canvas.fill_rounded(shape.rect(unit), shape.r * unit, color),
+            None => {}
         }
     }
 }
@@ -320,21 +341,23 @@ mod tests {
     }
 
     #[test]
-    fn the_face_and_scan_line_do_not_touch_the_brackets_or_each_other() {
+    fn the_face_and_scan_bar_do_not_touch_the_brackets() {
         for grid in [&LARGE, &SMALL, &SYMBOLIC] {
-            for (i, (a, part)) in grid.marks.iter().enumerate() {
-                if *part == Part::Bracket {
-                    continue;
-                }
-                for (j, (b, other)) in grid.marks.iter().enumerate() {
-                    // The smile is several pieces of one mark.
-                    if *part == Part::Feature && *other == Part::Feature {
-                        continue;
-                    }
+            for (a, _) in grid.marks.iter().filter(|(_, part)| *part != Part::Bracket) {
+                for (b, _) in grid.marks.iter().filter(|(_, part)| *part == Part::Bracket) {
                     let apart = a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y;
-                    assert!(i == j || apart, "{a:?} touches {b:?}");
+                    assert!(apart, "{a:?} touches {b:?}");
                 }
             }
+        }
+    }
+
+    /// The scan bar lies across the face, so no state may draw both.
+    #[test]
+    fn the_scan_bar_and_the_face_are_never_drawn_together() {
+        for state in STATES {
+            let face = paint(state, Part::Feature).is_some() || paint(state, Part::Smile).is_some();
+            assert_ne!(face, paint(state, Part::ScanLine).is_some(), "{state:?}");
         }
     }
 
