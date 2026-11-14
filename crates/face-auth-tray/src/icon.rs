@@ -1,6 +1,7 @@
 //! The tray and app icon, in the vino apps' style: a dark rounded tile with a
-//! faint edge and a few heavy marks. Here the marks are a camera viewfinder
-//! around a smiling face, which gives way to a scan bar while a scan runs.
+//! faint edge and a few heavy marks. Here the marks are a camera viewfinder,
+//! in grey, around a smiling face, which gives way to a scan bar while a scan
+//! runs.
 //! Drawn in code so the tray needs no image decoder, and the checked-in SVG
 //! is generated from the same shapes.
 
@@ -74,7 +75,9 @@ pub enum State {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Part {
     Bracket,
-    /// An eye, or a piece of the pixel-grid smile.
+    /// An eye of the large design.
+    Eye,
+    /// An eye or a piece of the smile, on the pixel grids.
     Feature,
     /// The curved smile of the large design: its `Shape` is the box it fills.
     Smile,
@@ -88,6 +91,9 @@ const EDGE: Rgba = Rgba(255, 255, 255, 46);
 const WHITE: Rgba = Rgba(250, 250, 250, 255);
 const GREY: Rgba = Rgba(160, 164, 172, 255);
 const GREEN: Rgba = Rgba(86, 204, 120, 255);
+// The grey at 0.6 over the tile: what the vino logos draw behind the mark.
+// Half, as the other logos have it, falls just short of 3:1 on the tile.
+const FRAME: Rgba = Rgba(102, 104, 110, 255);
 const AMBER: Rgba = Rgba(245, 184, 66, 255);
 
 // The symbolic icon sits straight on the panel, light or dark, so its accents
@@ -97,11 +103,13 @@ const TRAY_AMBER: Rgba = Rgba(184, 115, 0, 255);
 
 fn paint(state: State, part: Part) -> Option<Rgba> {
     match (state, part) {
-        (State::Ready, Part::Bracket) => Some(WHITE),
+        (State::Ready, Part::Bracket) => Some(FRAME),
+        (State::Ready, Part::Eye) => Some(WHITE),
         (State::Ready, Part::Feature | Part::Smile) => Some(GREEN),
         (State::Scanning, Part::Bracket | Part::ScanLine) => Some(AMBER),
-        (State::Attention, Part::Bracket | Part::Feature | Part::Smile) => Some(GREY),
-        (State::Scanning, Part::Feature | Part::Smile) | (State::Ready | State::Attention, Part::ScanLine) => None,
+        (State::Attention, Part::Bracket | Part::Eye | Part::Feature | Part::Smile) => Some(GREY),
+        (State::Scanning, Part::Eye | Part::Feature | Part::Smile)
+        | (State::Ready | State::Attention, Part::ScanLine) => None,
     }
 }
 
@@ -112,24 +120,25 @@ struct Grid {
     size: f32,
 }
 
-/// 64-unit design, for the app icon and the larger tray sizes. The tile and
-/// the 5-unit marks are the other vino apps' weights.
+/// 64-unit design, for the app icon and the larger tray sizes. The tile, the
+/// 6-unit pills and the three tones (a grey frame, a white mark, a green
+/// accent) are the other vino apps'.
 const LARGE: Grid = Grid {
     tile: Shape::new(4.0, 4.0, 56.0, 56.0, 14.0),
     edge: 2.0,
     marks: &[
-        (Shape::new(13.0, 13.0, 13.0, 5.0, 2.5), Part::Bracket),
-        (Shape::new(13.0, 13.0, 5.0, 13.0, 2.5), Part::Bracket),
-        (Shape::new(38.0, 13.0, 13.0, 5.0, 2.5), Part::Bracket),
-        (Shape::new(46.0, 13.0, 5.0, 13.0, 2.5), Part::Bracket),
-        (Shape::new(13.0, 46.0, 13.0, 5.0, 2.5), Part::Bracket),
-        (Shape::new(13.0, 38.0, 5.0, 13.0, 2.5), Part::Bracket),
-        (Shape::new(38.0, 46.0, 13.0, 5.0, 2.5), Part::Bracket),
-        (Shape::new(46.0, 38.0, 5.0, 13.0, 2.5), Part::Bracket),
-        (Shape::new(22.0, 22.0, 7.0, 7.0, 3.5), Part::Feature),
-        (Shape::new(35.0, 22.0, 7.0, 7.0, 3.5), Part::Feature),
-        (Shape::new(21.0, 33.0, 22.0, 10.0, 2.5), Part::Smile),
-        (Shape::new(20.0, 29.5, 24.0, 5.0, 2.5), Part::ScanLine),
+        (Shape::new(12.0, 12.0, 15.0, 6.0, 3.0), Part::Bracket),
+        (Shape::new(12.0, 12.0, 6.0, 15.0, 3.0), Part::Bracket),
+        (Shape::new(37.0, 12.0, 15.0, 6.0, 3.0), Part::Bracket),
+        (Shape::new(46.0, 12.0, 6.0, 15.0, 3.0), Part::Bracket),
+        (Shape::new(12.0, 46.0, 15.0, 6.0, 3.0), Part::Bracket),
+        (Shape::new(12.0, 37.0, 6.0, 15.0, 3.0), Part::Bracket),
+        (Shape::new(37.0, 46.0, 15.0, 6.0, 3.0), Part::Bracket),
+        (Shape::new(46.0, 37.0, 6.0, 15.0, 3.0), Part::Bracket),
+        (Shape::new(22.0, 22.0, 6.0, 9.0, 3.0), Part::Eye),
+        (Shape::new(36.0, 22.0, 6.0, 9.0, 3.0), Part::Eye),
+        (Shape::new(20.0, 34.0, 24.0, 10.5, 3.0), Part::Smile),
+        (Shape::new(20.0, 29.0, 24.0, 6.0, 3.0), Part::ScanLine),
     ],
     size: 64.0,
 };
@@ -233,7 +242,7 @@ pub fn symbolic_svg(state: State) -> String {
     for &(shape, part) in SYMBOLIC.marks {
         let bucket = match (state, part) {
             _ if paint(state, part).is_none() => continue,
-            (State::Ready, Part::Feature | Part::Smile) | (State::Scanning, _) => &mut accent,
+            (State::Ready, Part::Eye | Part::Feature | Part::Smile) | (State::Scanning, _) => &mut accent,
             (State::Attention, _) => &mut dim,
             _ => &mut text,
         };
@@ -356,7 +365,7 @@ mod tests {
     #[test]
     fn the_scan_bar_and_the_face_are_never_drawn_together() {
         for state in STATES {
-            let face = paint(state, Part::Feature).is_some() || paint(state, Part::Smile).is_some();
+            let face = [Part::Eye, Part::Feature, Part::Smile].iter().any(|part| paint(state, *part).is_some());
             assert_ne!(face, paint(state, Part::ScanLine).is_some(), "{state:?}");
         }
     }
