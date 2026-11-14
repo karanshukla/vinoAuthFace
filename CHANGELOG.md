@@ -5,6 +5,8 @@ the pull requests in each one; this file says what changed for you.
 
 ## [Unreleased]
 
+- **The app icon matches the other vino apps.** The viewfinder is a grey frame of the family's thick pills, round a face with white eyes and a green smile. The tray's larger pixmaps follow; the symbolic tray icon is unchanged.
+
 ## [v14] - 2026-11-11
 
 - **Delete unused models and the compiled cache from the settings window.** The Models page lists the `.onnx` files in `/usr/local/share/face-auth` that `/etc/face-auth.toml` doesn't use (the model left behind after switching between mbf and r50, say) with their size, and deletes them after a confirmation; it also clears `/var/cache/face-auth`. Both run through two new helper verbs, `delete-unused-models` and `clear-cache`, which take no path and work out what to remove themselves. The models in use are still removed only by uninstalling.
