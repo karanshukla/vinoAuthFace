@@ -5,6 +5,8 @@ the pull requests in each one; this file says what changed for you.
 
 ## [Unreleased]
 
+- **The tray icon matches the other vino trays.** It's a face in the same rounded frame as vinoWhisper's and vinoWatch's icons, drawn in the same thin bars, with the smile as its one colour: green when ready, amber while a scan runs. Until setup is finished the face is dimmed with a flat mouth.
+
 ## [v15] - 2026-11-14
 
 - **The settings window draws its own title bar**, as the other vino apps now do (vino-ui 0.5.0). Wide, the page title sits in a bar beside the sidebar with minimise, maximise and close in its top right corner; narrow, the buttons end the header's first row. The bar, the header and the sidebar's name drag the window and the edges resize it. On sway and other tiling desktops, or with `VINO_UI_TITLE_BAR=system`, the window is as it was. A two-finger touchpad swipe scrolls three times as far as before.
