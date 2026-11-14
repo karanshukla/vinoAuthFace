@@ -101,7 +101,8 @@ and a notification. The tray reads it from `vinoauthface enroll`'s normal output
 The icon is a monochrome viewfinder that follows your Plasma theme, with a green face when ready.
 Left click opens the menu, which doubles as the status panel.
 
-The icon turns amber while any face scan is running: `sudo`, a polkit prompt, or a test scan. It
+The icon turns amber while any face scan is running, with a scan bar in place of the face: `sudo`,
+a polkit prompt, or a test scan. It
 checks for a running `vinoauthface-auth` process in `/proc` every 200 ms. It can't show on the KDE lock
 screen, which has no tray. With `/proc` mounted `hidepid=1` or `2`, root's scans are invisible and
 the icon doesn't change.
