@@ -34,11 +34,6 @@ impl Shape {
         }
     }
 
-    fn svg_path(self) -> String {
-        let Shape { x, y, w, h, .. } = self;
-        format!("M{x} {y}h{w}v{h}h-{w}z")
-    }
-
     /// A smile filling this box, as a quadratic curve's two ends and control
     /// point. `r` is half the stroke's width, and the round caps and the
     /// lowest point of the stroke land on the box's edges.
@@ -75,9 +70,9 @@ pub enum State {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Part {
     Bracket,
-    /// An eye of the large design.
+    /// A round eye of the large design.
     Eye,
-    /// An eye or a piece of the smile, on the pixel grids.
+    /// An eye or a piece of the smile, on the 16 px pixmap's grid.
     Feature,
     /// The curved smile of the large design: its `Shape` is the box it fills.
     Smile,
@@ -160,30 +155,14 @@ const SMALL: Grid = Grid {
     size: 16.0,
 };
 
-/// 16-unit design for the symbolic tray icon, which has no tile: the
-/// viewfinder sits on a 12-unit square with a 2-unit margin, the same
-/// footprint as the other icons in the tray. Every mark is 2 units thick: a
-/// 1-unit line all but disappears on a panel.
-const SYMBOLIC: Grid = Grid {
-    tile: Shape::new(0.0, 0.0, 16.0, 16.0, 0.0),
-    edge: 0.0,
-    marks: &[
-        (Shape::new(2.0, 2.0, 4.0, 2.0, 0.0), Part::Bracket),
-        (Shape::new(2.0, 2.0, 2.0, 4.0, 0.0), Part::Bracket),
-        (Shape::new(10.0, 2.0, 4.0, 2.0, 0.0), Part::Bracket),
-        (Shape::new(12.0, 2.0, 2.0, 4.0, 0.0), Part::Bracket),
-        (Shape::new(2.0, 12.0, 4.0, 2.0, 0.0), Part::Bracket),
-        (Shape::new(2.0, 10.0, 2.0, 4.0, 0.0), Part::Bracket),
-        (Shape::new(10.0, 12.0, 4.0, 2.0, 0.0), Part::Bracket),
-        (Shape::new(12.0, 10.0, 2.0, 4.0, 0.0), Part::Bracket),
-        (Shape::new(5.0, 5.0, 2.0, 2.0, 0.0), Part::Feature),
-        (Shape::new(9.0, 5.0, 2.0, 2.0, 0.0), Part::Feature),
-        (Shape::new(5.0, 9.0, 6.0, 1.0, 0.0), Part::Feature),
-        (Shape::new(6.0, 10.0, 4.0, 1.0, 0.0), Part::Feature),
-        (Shape::new(5.0, 7.0, 6.0, 2.0, 0.0), Part::ScanLine),
-    ],
-    size: 16.0,
-};
+/// The vino trays' shared frame (vinoWhisper's and vinoWatch's symbolic
+/// icons): a 14x12 rounded tile drawn as a 1-unit outline.
+const TRAY_FRAME: &str = "M3 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-8a2 2 0 0 1 2 -2zM3 3h10a1 1 0 0 1 1 1v8a1 1 0 0 1 -1 1h-10a1 1 0 0 1 -1 -1v-8a1 1 0 0 1 1 -1z";
+/// The face inside it, in the family's 1-unit bars: two eyes, a smile, and
+/// the flat mouth that replaces the smile until setup is finished.
+const TRAY_EYES: &str = "M6 5h1v2h-1zM9 5h1v2h-1z";
+const TRAY_SMILE: &str = "M5 9h1v1h-1zM10 9h1v1h-1zM6 10h4v1h-4z";
+const TRAY_FLAT: &str = "M5 10h6v1h-6z";
 
 fn hex(Rgba(r, g, b, _): Rgba) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
@@ -231,37 +210,29 @@ impl State {
     }
 }
 
-/// A monochrome tray icon for one state, in the KDE symbolic format: the
-/// `ColorScheme-Text` class is what Plasma recolours. The viewfinder follows
-/// the theme; the accent (green face, amber scan) stays fixed. The scan bar
-/// takes the face's place, so each state draws one or the other. The attention
-/// state's dimmed viewfinder is at 0.6, not 0.5: half of Breeze Light's text
-/// colour falls just short of 3:1 on its panel.
+/// A tray icon for one state, in the vino trays' symbolic style and the KDE
+/// symbolic format (`ColorScheme-Text` is what Plasma recolours): the shared
+/// frame and the eyes in the theme's colour, the smile as the one accent,
+/// green when ready and amber while a scan runs, as vinoWatch's accent turns
+/// amber. Until setup is finished the face is dimmed, with a flat mouth; at
+/// 0.6, not 0.5: half of Breeze Light's text colour falls just short of 3:1
+/// on its panel.
 pub fn symbolic_svg(state: State) -> String {
-    let (mut text, mut accent, mut dim) = (String::new(), String::new(), String::new());
-    for &(shape, part) in SYMBOLIC.marks {
-        let bucket = match (state, part) {
-            _ if paint(state, part).is_none() => continue,
-            (State::Ready, Part::Eye | Part::Feature | Part::Smile) | (State::Scanning, _) => &mut accent,
-            (State::Attention, _) => &mut dim,
-            _ => &mut text,
-        };
-        bucket.push_str(&shape.svg_path());
+    let text = r#"class="ColorScheme-Text" style="fill:currentColor""#;
+    let dim = r#"class="ColorScheme-Text" style="fill:currentColor;fill-opacity:0.6""#;
+    let accent = |color: Rgba| format!(r#"style="fill:{}""#, hex(color));
+    let mut paths = vec![(format!(r#"{text} fill-rule="evenodd""#), TRAY_FRAME)];
+    match state {
+        State::Ready => paths.extend([(text.to_string(), TRAY_EYES), (accent(TRAY_GREEN), TRAY_SMILE)]),
+        State::Scanning => paths.extend([(text.to_string(), TRAY_EYES), (accent(TRAY_AMBER), TRAY_SMILE)]),
+        State::Attention => paths.extend([(dim.to_string(), TRAY_EYES), (dim.to_string(), TRAY_FLAT)]),
     }
-    let accent_fill = hex(if state == State::Ready { TRAY_GREEN } else { TRAY_AMBER });
     let mut svg = String::from(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\">\n  \
          <style id=\"current-color-scheme\" type=\"text/css\">.ColorScheme-Text { color: #232629; }</style>\n",
     );
-    for (path, style) in [
-        (text, "fill:currentColor".to_string()),
-        (dim, "fill:currentColor;fill-opacity:0.6".to_string()),
-        (accent, format!("fill:{accent_fill}")),
-    ] {
-        if !path.is_empty() {
-            let class = if style.contains("currentColor") { r#" class="ColorScheme-Text""# } else { "" };
-            svg.push_str(&format!("  <path{class} style=\"{style}\" d=\"{path}\"/>\n"));
-        }
+    for (paint, d) in paths {
+        svg.push_str(&format!("  <path {paint} d=\"{d}\"/>\n"));
     }
     svg.push_str("</svg>\n");
     svg
@@ -334,7 +305,7 @@ mod tests {
 
     #[test]
     fn the_marks_sit_inside_the_tile() {
-        for grid in [&LARGE, &SMALL, &SYMBOLIC] {
+        for grid in [&LARGE, &SMALL] {
             let inner = grid.tile.inset(grid.edge);
             for (m, _) in grid.marks {
                 assert!(
@@ -351,7 +322,7 @@ mod tests {
 
     #[test]
     fn the_face_and_scan_bar_do_not_touch_the_brackets() {
-        for grid in [&LARGE, &SMALL, &SYMBOLIC] {
+        for grid in [&LARGE, &SMALL] {
             for (a, _) in grid.marks.iter().filter(|(_, part)| *part != Part::Bracket) {
                 for (b, _) in grid.marks.iter().filter(|(_, part)| *part == Part::Bracket) {
                     let apart = a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y;
@@ -372,7 +343,7 @@ mod tests {
 
     #[test]
     fn the_small_icon_lands_on_whole_pixels() {
-        let shapes = std::iter::once(SMALL.tile).chain(SMALL.marks.iter().chain(SYMBOLIC.marks).map(|(s, _)| *s));
+        let shapes = std::iter::once(SMALL.tile).chain(SMALL.marks.iter().map(|(s, _)| *s));
         for s in shapes {
             for edge in [s.x, s.y, s.w, s.h, SMALL.edge] {
                 assert_eq!(edge.fract(), 0.0, "{s:?} is off the pixel grid");
@@ -452,7 +423,7 @@ mod tests {
 
     /// The symbolic icons have no tile: every path, as the theme recolours it,
     /// must clear 3:1 against the panel. That includes the attention state's
-    /// half-opacity viewfinder, not just the fixed accents.
+    /// dimmed face, not just the fixed accents.
     #[test]
     fn the_symbolic_icons_show_on_light_and_dark_panels() {
         for state in STATES {
@@ -465,7 +436,7 @@ mod tests {
                         let alpha = style.split("fill-opacity:").nth(1).map_or(1.0, |a| a.parse().unwrap());
                         over(text, alpha, panel)
                     } else {
-                        let hex = style.strip_prefix("fill:#").unwrap();
+                        let hex = style.split(":#").nth(1).unwrap();
                         let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap();
                         Rgba(byte(0), byte(2), byte(4), 255)
                     };
