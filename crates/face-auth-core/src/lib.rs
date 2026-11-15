@@ -15,6 +15,8 @@ pub mod scrfd;
 pub mod seal;
 pub mod seat;
 pub mod storage;
+#[cfg(test)]
+mod test_support;
 pub mod update;
 pub mod user;
 pub mod verify;
@@ -764,16 +766,9 @@ mod tests {
         assert!(drop_oldest_face(MAX_LIVENESS_FRAMES + 1, Duration::ZERO, window));
     }
 
-    fn lockout_tmpdir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("face-auth-pending-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     #[test]
     fn a_counted_attempt_proceeds_and_a_match_clears_it() {
-        let dir = lockout_tmpdir("counted");
+        let dir = crate::test_support::tmpdir("counted");
         std::fs::create_dir(dir.join("alice")).unwrap();
         assert!(record_pending_failure("alice", &dir));
         assert!(record_pending_failure("alice", &dir));
@@ -787,7 +782,7 @@ mod tests {
     // lets the scan go on uncounted, rather than turning into an error.
     #[test]
     fn a_failed_write_proceeds_uncounted_by_design() {
-        let dir = lockout_tmpdir("nostore");
+        let dir = crate::test_support::tmpdir("nostore");
         assert!(record_pending_failure("alice", &dir));
         assert!(!dir.join("alice").exists());
         std::fs::remove_dir_all(&dir).unwrap();
@@ -798,7 +793,7 @@ mod tests {
     #[test]
     fn a_held_lock_declines_the_scan() {
         use std::os::fd::AsRawFd;
-        let dir = lockout_tmpdir("held");
+        let dir = crate::test_support::tmpdir("held");
         let lockout_dir = dir.join("alice/lockout");
         std::fs::create_dir_all(&lockout_dir).unwrap();
         let held = std::fs::File::create(lockout_dir.join("state.lock")).unwrap();

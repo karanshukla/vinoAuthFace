@@ -7,6 +7,8 @@
 
 mod confirm;
 mod prompt;
+#[cfg(test)]
+mod test_pty;
 
 use face_auth_core::environment::{self, SkipReason};
 use face_auth_core::storage::EmbeddingStore;

@@ -401,19 +401,8 @@ fn seal_payload(user: &str, model_tag: &str, embeddings: &[Vec<f32>]) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::tmpdir;
     use std::os::unix::fs::PermissionsExt;
-
-    fn tmpdir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "face-auth-test-{}-{}-{:?}",
-            tag,
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
 
     const TAG: &str = "w600k_mbf.onnx";
 
