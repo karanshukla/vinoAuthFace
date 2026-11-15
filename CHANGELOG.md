@@ -5,7 +5,7 @@ the pull requests in each one; this file says what changed for you.
 
 ## [Unreleased]
 
-- **The tray icon matches the other vino trays.** It's a face in the same rounded frame as vinoWhisper's and vinoWatch's icons, drawn in the same thin bars, with the smile as its one colour: green when ready, amber while a scan runs. Until setup is finished the face is dimmed with a flat mouth.
+- **A new icon: the IR camera.** The app and tray icons now show what does the work, a camera module with its lens and the IR emitter dot beside it, instead of a face. The tray icon sits in the same rounded frame as vinoWhisper's and vinoWatch's, with the emitter as its one colour: green when ready, amber while a scan runs, and off until setup is finished.
 
 ## [v15] - 2026-11-14
 

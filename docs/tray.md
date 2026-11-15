@@ -98,12 +98,12 @@ yours rather than the system's: it is saved as `tray_idle_minutes` in your own
 Enrolment progress ("Capturing frame 3/30", "Face too small: move closer") shows in the tooltip
 and a notification. The tray reads it from `vinoauthface enroll`'s normal output.
 
-The icon is a face in a rounded frame, drawn like the other vino trays' icons and in your Plasma
-theme's colour, with a green smile when ready. Until you're enrolled with a camera found, the face is
-dimmed with a flat mouth.
+The icon is an IR camera, a lens and the emitter dot beside it, in a rounded frame, drawn like the
+other vino trays' icons and in your Plasma theme's colour. The emitter is green when ready. Until
+you're enrolled with a camera found, the lens is dimmed and the emitter is off.
 Left click opens the menu, which doubles as the status panel.
 
-The smile turns amber while any face scan is running: `sudo`,
+The emitter turns amber while any face scan is running: `sudo`,
 a polkit prompt, or a test scan. It
 checks for a running `vinoauthface-auth` process in `/proc` every 200 ms. It can't show on the KDE lock
 screen, which has no tray. With `/proc` mounted `hidepid=1` or `2`, root's scans are invisible and
