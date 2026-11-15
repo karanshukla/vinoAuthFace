@@ -106,6 +106,16 @@ impl SettingsWindow {
 
     pub(super) fn matching(&mut self, ui: &mut egui::Ui) {
         let c = self.system.values();
+        columns(ui, |ui, column| match column {
+            Column::Left => self.matching_rows(ui, &c),
+            Column::Right => {
+                widgets::group_label(ui, "Scan");
+                widgets::group(ui, |ui| self.timing(ui, false, &c));
+            }
+        });
+    }
+
+    pub(super) fn matching_rows(&mut self, ui: &mut egui::Ui, c: &FaceAuthConfig) {
         widgets::group_label(ui, "Matching");
         widgets::group(ui, |ui| {
             self.number(ui, false, keys::THRESHOLD, Num {
@@ -140,9 +150,6 @@ impl SettingsWindow {
                 log: false,
             });
         });
-        ui.add_space(20.0);
-        widgets::group_label(ui, "Scan");
-        widgets::group(ui, |ui| self.timing(ui, false, &c));
     }
 
     /// The scan timing rows, for either file: they're the same keys and
@@ -331,6 +338,13 @@ impl SettingsWindow {
     }
 
     pub(super) fn models(&mut self, ui: &mut egui::Ui) {
+        columns(ui, |ui, column| match column {
+            Column::Left => self.models_in_use(ui),
+            Column::Right => self.clean_up(ui),
+        });
+    }
+
+    pub(super) fn models_in_use(&mut self, ui: &mut egui::Ui) {
         let c = self.system.values();
         let was = self.system.read.as_deref().and_then(|t| FaceAuthConfig::from_toml(t).ok());
         widgets::group_label(ui, "Recognition");
@@ -403,8 +417,6 @@ impl SettingsWindow {
         });
         ui.add_space(8.0);
         widgets::small(ui, "Check always uses tract on the CPU.");
-        ui.add_space(20.0);
-        self.clean_up(ui);
     }
 
     /// Spare models and the compiled cache, each removed by a helper verb
@@ -489,6 +501,13 @@ impl SettingsWindow {
 
     pub(super) fn security(&mut self, ui: &mut egui::Ui) {
         let c = self.system.values();
+        columns(ui, |ui, column| match column {
+            Column::Left => self.when_a_scan_runs(ui, &c),
+            Column::Right => self.after_a_scan(ui, &c),
+        });
+    }
+
+    pub(super) fn when_a_scan_runs(&mut self, ui: &mut egui::Ui, c: &FaceAuthConfig) {
         widgets::group_label(ui, "When a scan runs");
         widgets::group(ui, |ui| {
             self.switch(
@@ -550,7 +569,9 @@ impl SettingsWindow {
                 true,
             );
         });
-        ui.add_space(20.0);
+    }
+
+    pub(super) fn after_a_scan(&mut self, ui: &mut egui::Ui, c: &FaceAuthConfig) {
         let lockout = c.lockout_policy();
         widgets::group_label(ui, "After failed scans");
         widgets::group_help(ui, "Face unlock pauses; the password always works.");
@@ -634,6 +655,13 @@ impl SettingsWindow {
                 widgets::banner(ui, Tone::Error, &format!("Your file doesn't parse, so it's ignored: {e}"), |_| {});
             }
         }
+        columns(ui, |ui, column| match column {
+            Column::Left => self.stricter_for_you(ui, &sys, &mine),
+            Column::Right => self.timing_and_camera_for_you(ui, &sys, &mine),
+        });
+    }
+
+    pub(super) fn stricter_for_you(&mut self, ui: &mut egui::Ui, sys: &FaceAuthConfig, mine: &FaceAuthConfig) {
         widgets::group_label(ui, "Stricter for you");
         widgets::group_help(
             ui,
@@ -694,10 +722,12 @@ impl SettingsWindow {
                 });
             }
         });
-        ui.add_space(20.0);
+    }
+
+    pub(super) fn timing_and_camera_for_you(&mut self, ui: &mut egui::Ui, sys: &FaceAuthConfig, mine: &FaceAuthConfig) {
         widgets::group_label(ui, "Timing for you");
         widgets::group(ui, |ui| {
-            let effective = sys.clone().with_user_overlay(&mine);
+            let effective = sys.clone().with_user_overlay(mine);
             self.timing(ui, true, &effective);
         });
         ui.add_space(20.0);

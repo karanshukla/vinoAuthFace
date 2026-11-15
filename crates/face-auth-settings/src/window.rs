@@ -19,7 +19,7 @@ use face_auth_core::{capture, config_write, update, FaceAuthConfig};
 use vino_ui::a11y;
 use vino_ui::icons::Icon;
 use vino_ui::theme;
-use vino_ui::widgets::{self, Button, ChipKind, Row, Tone};
+use vino_ui::widgets::{self, Button, ChipKind, Column, Row, Tone};
 
 use crate::apply;
 use crate::enrol;
@@ -87,6 +87,13 @@ impl Page {
         }
     }
 
+    fn max_width(self) -> f32 {
+        match self {
+            Page::Face | Page::Liveness | Page::Camera | Page::About => widgets::CONTENT_MAX,
+            Page::Matching | Page::Models | Page::Security | Page::You => widgets::WIDE_MAX,
+        }
+    }
+
     fn icon(self) -> Icon {
         match self {
             Page::Face => Icon::Face,
@@ -145,6 +152,18 @@ impl Unit {
 fn trim(v: f64, decimals: usize) -> String {
     let s = format!("{v:.decimals$}");
     if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
+}
+
+/// `widgets::columns`, with the 20 between this window's groups kept when
+/// the right column is stacked under the left.
+fn columns(ui: &mut egui::Ui, mut add: impl FnMut(&mut egui::Ui, Column)) {
+    let stacked = ui.available_width() < widgets::TWO_COLUMNS_FROM;
+    widgets::columns(ui, |ui, column| {
+        if stacked && column == Column::Right {
+            ui.add_space(20.0);
+        }
+        add(ui, column);
+    });
 }
 
 fn secs(ms: u64) -> f64 {
@@ -428,13 +447,14 @@ impl SettingsWindow {
 
         let p = theme::palette(ctx);
         let header = theme::header(ctx, self.kde_header.as_ref(), focused);
-        let wide = ctx.content_rect().width() >= widgets::SIDEBAR_FROM;
+        let window = ctx.content_rect().width();
+        let wide = window >= widgets::SIDEBAR_FROM;
 
         if wide {
             egui::Panel::left("pages")
                 .resizable(false)
                 .show_separator_line(false)
-                .exact_size(widgets::SIDEBAR_WIDTH)
+                .exact_size(widgets::sidebar_width(window))
                 .frame(widgets::sidebar_frame(p))
                 .show(root, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
@@ -541,7 +561,7 @@ impl SettingsWindow {
             let title = self.page.title();
             vino_ui::window::bar(
                 root,
-                widgets::PAGE_INSET,
+                widgets::page_inset(window),
                 |ui| {
                     widgets::title(ui, title);
                 },
@@ -551,7 +571,7 @@ impl SettingsWindow {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin {
-                left: if wide { widgets::PAGE_INSET as i8 } else { 16 },
+                left: if wide { widgets::page_inset(window) as i8 } else { 16 },
                 right: 0,
                 top: match (wide, title_bar) {
                     (_, true) => 2,
@@ -561,7 +581,7 @@ impl SettingsWindow {
                 bottom: 0,
             }))
             .show(root, |ui| {
-                widgets::page_scroll(ui, self.page.title(), widgets::CONTENT_MAX, |ui| {
+                widgets::page_scroll(ui, self.page.title(), self.page.max_width(), |ui| {
                     if !title_bar {
                         widgets::title(ui, self.page.title());
                     }

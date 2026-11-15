@@ -156,6 +156,28 @@ fn the_pages_are_tabs_and_clicking_one_shows_it() {
 }
 
 #[test]
+fn a_full_screen_window_puts_a_page_s_groups_in_two_columns() {
+    for (page, left, right) in [
+        (Page::Matching, "Matching", "Scan"),
+        (Page::Models, "Recognition", "Disk space"),
+        (Page::Security, "When a scan runs", "After failed scans"),
+        (Page::You, "Stricter for you", "Timing for you"),
+    ] {
+        let (w, _, _) = window(page, "columns", None, refuse);
+        let h = harness(w, [1440.0, 900.0], Theme::Light);
+        let group = |label: &str| {
+            let mut found = h
+                .query_all_by_role_and_label(Role::Heading, label)
+                .filter(|n| n.accesskit_node().data().level() == Some(2));
+            found.next().unwrap_or_else(|| panic!("no group {label}")).rect()
+        };
+        let (left, right) = (group(left), group(right));
+        assert_eq!(left.top(), right.top(), "{}", page.title());
+        assert!(right.left() > left.right(), "{}", page.title());
+    }
+}
+
+#[test]
 fn zoom_keeps_every_page_usable() {
     for page in Page::ALL {
         let (w, _, _) = window(page, "zoom", None, refuse);
