@@ -6,9 +6,8 @@
 //! fixed verb and no flags, and acts only for the user pkexec says invoked it
 //! (`PKEXEC_UID`, which pkexec sets and a caller cannot).
 
-pub const HELPER: &str = "/usr/local/libexec/vinoauthface-helper";
+pub use face_auth_core::installed::{FACE_AUTH, HELPER};
 pub const FACE_ENROLL: &str = "/usr/local/bin/vinoauthface";
-pub const FACE_AUTH: &str = "/usr/local/bin/vinoauthface-auth";
 pub const UPGRADER: &str = "/usr/local/bin/vinoauthface-upgrade";
 pub const LOGIN_MODE: &str = "/usr/local/share/face-auth/login-mode.sh";
 pub const SETTING_MODE: &str = "/usr/local/share/face-auth/setting-mode.sh";
