@@ -19,7 +19,7 @@ use face_auth_core::{capture, config_write, update, FaceAuthConfig};
 use vino_ui::a11y;
 use vino_ui::icons::Icon;
 use vino_ui::theme;
-use vino_ui::widgets::{self, Button, ChipKind, Row, Tone};
+use vino_ui::widgets::{self, Button, ChipKind, Column, Row, Tone};
 
 use crate::apply;
 use crate::enrol;
@@ -87,6 +87,13 @@ impl Page {
         }
     }
 
+    fn max_width(self) -> f32 {
+        match self {
+            Page::Face | Page::Liveness | Page::Camera | Page::About => widgets::CONTENT_MAX,
+            Page::Matching | Page::Models | Page::Security | Page::You => widgets::WIDE_MAX,
+        }
+    }
+
     fn icon(self) -> Icon {
         match self {
             Page::Face => Icon::Face,
@@ -145,6 +152,18 @@ impl Unit {
 fn trim(v: f64, decimals: usize) -> String {
     let s = format!("{v:.decimals$}");
     if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
+}
+
+/// `widgets::columns`, with the 20 between this window's groups kept when
+/// the right column is stacked under the left.
+fn columns(ui: &mut egui::Ui, mut add: impl FnMut(&mut egui::Ui, Column)) {
+    let stacked = ui.available_width() < widgets::TWO_COLUMNS_FROM;
+    widgets::columns(ui, |ui, column| {
+        if stacked && column == Column::Right {
+            ui.add_space(20.0);
+        }
+        add(ui, column);
+    });
 }
 
 fn secs(ms: u64) -> f64 {
@@ -622,6 +641,16 @@ impl SettingsWindow {
 
     fn matching(&mut self, ui: &mut egui::Ui) {
         let c = self.system.values();
+        columns(ui, |ui, column| match column {
+            Column::Left => self.matching_rows(ui, &c),
+            Column::Right => {
+                widgets::group_label(ui, "Scan");
+                widgets::group(ui, |ui| self.timing(ui, false, &c));
+            }
+        });
+    }
+
+    fn matching_rows(&mut self, ui: &mut egui::Ui, c: &FaceAuthConfig) {
         widgets::group_label(ui, "Matching");
         widgets::group(ui, |ui| {
             self.number(ui, false, keys::THRESHOLD, Num {
@@ -656,9 +685,6 @@ impl SettingsWindow {
                 log: false,
             });
         });
-        ui.add_space(20.0);
-        widgets::group_label(ui, "Scan");
-        widgets::group(ui, |ui| self.timing(ui, false, &c));
     }
 
     /// The scan timing rows, for either file: they're the same keys and
@@ -847,6 +873,13 @@ impl SettingsWindow {
     }
 
     fn models(&mut self, ui: &mut egui::Ui) {
+        columns(ui, |ui, column| match column {
+            Column::Left => self.models_in_use(ui),
+            Column::Right => self.clean_up(ui),
+        });
+    }
+
+    fn models_in_use(&mut self, ui: &mut egui::Ui) {
         let c = self.system.values();
         let was = self.system.read.as_deref().and_then(|t| FaceAuthConfig::from_toml(t).ok());
         widgets::group_label(ui, "Recognition");
@@ -919,8 +952,6 @@ impl SettingsWindow {
         });
         ui.add_space(8.0);
         widgets::small(ui, "Check always uses tract on the CPU.");
-        ui.add_space(20.0);
-        self.clean_up(ui);
     }
 
     /// Spare models and the compiled cache, each removed by a helper verb
@@ -1005,6 +1036,13 @@ impl SettingsWindow {
 
     fn security(&mut self, ui: &mut egui::Ui) {
         let c = self.system.values();
+        columns(ui, |ui, column| match column {
+            Column::Left => self.when_a_scan_runs(ui, &c),
+            Column::Right => self.after_a_scan(ui, &c),
+        });
+    }
+
+    fn when_a_scan_runs(&mut self, ui: &mut egui::Ui, c: &FaceAuthConfig) {
         widgets::group_label(ui, "When a scan runs");
         widgets::group(ui, |ui| {
             self.switch(
@@ -1066,7 +1104,9 @@ impl SettingsWindow {
                 true,
             );
         });
-        ui.add_space(20.0);
+    }
+
+    fn after_a_scan(&mut self, ui: &mut egui::Ui, c: &FaceAuthConfig) {
         let lockout = c.lockout_policy();
         widgets::group_label(ui, "After failed scans");
         widgets::group_help(ui, "Face unlock pauses; the password always works.");
@@ -1150,6 +1190,13 @@ impl SettingsWindow {
                 widgets::banner(ui, Tone::Error, &format!("Your file doesn't parse, so it's ignored: {e}"), |_| {});
             }
         }
+        columns(ui, |ui, column| match column {
+            Column::Left => self.stricter_for_you(ui, &sys, &mine),
+            Column::Right => self.timing_and_camera_for_you(ui, &sys, &mine),
+        });
+    }
+
+    fn stricter_for_you(&mut self, ui: &mut egui::Ui, sys: &FaceAuthConfig, mine: &FaceAuthConfig) {
         widgets::group_label(ui, "Stricter for you");
         widgets::group_help(
             ui,
@@ -1210,10 +1257,12 @@ impl SettingsWindow {
                 });
             }
         });
-        ui.add_space(20.0);
+    }
+
+    fn timing_and_camera_for_you(&mut self, ui: &mut egui::Ui, sys: &FaceAuthConfig, mine: &FaceAuthConfig) {
         widgets::group_label(ui, "Timing for you");
         widgets::group(ui, |ui| {
-            let effective = sys.clone().with_user_overlay(&mine);
+            let effective = sys.clone().with_user_overlay(mine);
             self.timing(ui, true, &effective);
         });
         ui.add_space(20.0);
@@ -1355,13 +1404,14 @@ impl SettingsWindow {
 
         let p = theme::palette(ctx);
         let header = theme::header(ctx, self.kde_header.as_ref(), focused);
-        let wide = ctx.content_rect().width() >= widgets::SIDEBAR_FROM;
+        let window = ctx.content_rect().width();
+        let wide = window >= widgets::SIDEBAR_FROM;
 
         if wide {
             egui::Panel::left("pages")
                 .resizable(false)
                 .show_separator_line(false)
-                .exact_size(widgets::SIDEBAR_WIDTH)
+                .exact_size(widgets::sidebar_width(window))
                 .frame(widgets::sidebar_frame(p))
                 .show(root, |ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
@@ -1468,7 +1518,7 @@ impl SettingsWindow {
             let title = self.page.title();
             vino_ui::window::bar(
                 root,
-                widgets::PAGE_INSET,
+                widgets::page_inset(window),
                 |ui| {
                     widgets::title(ui, title);
                 },
@@ -1478,7 +1528,7 @@ impl SettingsWindow {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin {
-                left: if wide { widgets::PAGE_INSET as i8 } else { 16 },
+                left: if wide { widgets::page_inset(window) as i8 } else { 16 },
                 right: 0,
                 top: match (wide, title_bar) {
                     (_, true) => 2,
@@ -1488,7 +1538,7 @@ impl SettingsWindow {
                 bottom: 0,
             }))
             .show(root, |ui| {
-                widgets::page_scroll(ui, self.page.title(), widgets::CONTENT_MAX, |ui| {
+                widgets::page_scroll(ui, self.page.title(), self.page.max_width(), |ui| {
                     if !title_bar {
                         widgets::title(ui, self.page.title());
                     }
