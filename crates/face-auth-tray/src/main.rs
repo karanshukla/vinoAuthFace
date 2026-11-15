@@ -235,11 +235,8 @@ impl ksni::Tray for Tray {
             menu.push(MenuItem::Separator);
         }
 
-        // Collapsed so the menu stays short; the warning icon says when to
-        // open it, as the tray icon's colour does. Its label carries the
-        // summary whenever there is more to say than "ready", so a running
-        // action explains the greyed entries below it without the tooltip,
-        // which some hosts never show.
+        // Some hosts never show the tooltip, so the label carries the summary:
+        // pinned by `the_status_entry_says_what_the_tooltip_says`.
         let plain = s.ready() && self.busy.is_none() && !self.scanning;
         menu.push(
             SubMenu {

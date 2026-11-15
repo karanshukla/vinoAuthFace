@@ -115,6 +115,7 @@ crates/
       detector.rs          # Frame quality gates, detector formats, slim box decode
       error.rs             # Error types
       inference.rs         # tract / OpenVINO encoder
+      installed.rs         # Installed helper paths, the --enrolled query, pkexec's exit codes
       lib.rs               # FaceAuth: auth scan (liveness, lockout) + enrolment
       lockout.rs           # Per-user failed-match backoff
       preprocess.rs        # CLAHE, face crop, resize/normalise, motion profile
@@ -127,6 +128,7 @@ crates/
   face-camera-diag/        # Camera discovery tool (list, dump)
   face-similarity-check/   # Offline photo FAR tool
   face-auth-tray/          # Tray icon + vinoauthface-helper (pkexec), polkit policy, desktop files
+  face-auth-settings/      # Settings window: window.rs (frame), window/pages.rs, window/rows.rs
 config/face-auth.toml.example   # Documented config template
 selinux/face-auth.te            # SELinux policy source
 selinux/face-auth.fc            # SELinux file labels (NPU node, store, lockout, NPU cache)
