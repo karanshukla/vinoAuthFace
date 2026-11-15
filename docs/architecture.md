@@ -61,6 +61,25 @@ InsightFace repo). Only InsightFace's library *code* is MIT
 No model is bundled. `deploy.sh` downloads them from InsightFace's GitHub releases and verifies a
 pinned SHA-256 before installing.
 
+## Why it is built this way
+
+**Built for immutable distros and devices equipped with Intel NPUs.** One static musl binary, no
+daemon, no systemd unit, no D-Bus, no system packages. The other Linux face-auth projects are a
+daemon plus D-Bus ([gaze](https://github.com/gundulabs/gaze), Visage, Biopass) or a Python runtime
+(Howdy), and all of them install through the distro package manager. On Bazzite, Bluefin,
+Silverblue or Kinoite that means layering packages and rebooting, or not installing at all. gaze's
+installer [refuses to run](https://github.com/gundulabs/gaze/blob/main/docs/public/install.sh) on
+rpm-ostree systems.
+
+**IR only, on purpose.** There is no RGB path, no hybrid mode, no fallback to a normal webcam. The
+screen-spoof defense is a property of active near-infrared sensing. The use of an NPU allows for
+more powerful models, which improves face recognition accuracy. Windows Hello was IR only as well
+so it could be used in the dark, this project aims to bring it back with some additional security
+measures.
+
+If you don't have an IR camera, or you want a GUI, an enrolment wizard or GNOME lock screen
+integration, check out Gaze, Facelock or Howdy.
+
 ## Relationship to upstream
 
 A fork of [Peter Falkingham's authFace](https://github.com/pfalkingham/authFace), kept in sync

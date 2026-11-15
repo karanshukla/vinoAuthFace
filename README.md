@@ -22,19 +22,13 @@ see [what this fork adds](docs/architecture.md#relationship-to-upstream).
 
 ## Why this exists
 
-**Built for immutable distros and devices equipped with Intel NPUs.** One static musl binary, no daemon, no systemd unit, no D-Bus, no
-system packages. The other Linux face-auth projects are a daemon plus D-Bus
-([gaze](https://github.com/gundulabs/gaze), Visage, Biopass) or a Python runtime (Howdy), and all
-of them install through the distro package manager. On Bazzite, Bluefin, Silverblue or Kinoite
-that means layering packages and rebooting, or not installing at all. gaze's installer
-[refuses to run](https://github.com/gundulabs/gaze/blob/main/docs/public/install.sh) on rpm-ostree
-systems.
+Built for immutable distros and laptops with an Intel NPU. The other Linux face-auth projects are
+a daemon plus D-Bus or a Python runtime, installed through the distro package manager, which on
+Bazzite or Silverblue means layering and a reboot. This is one static binary in `/usr/local`.
 
-**IR only, on purpose.** There is no RGB path, no hybrid mode, no fallback to a normal webcam.
-The screen-spoof defense is a property of active near-infrared sensing. The use of an NPU allows for more powerful models, which improves face recognition accuracy. Windows Hello was IR only as well so it could be used in the dark, this project aims to bring it back with some additional security measures.
-
-If you don't have an IR camera, or you want a GUI, an enrolment wizard or GNOME lock screen
-integration, check out Gaze, Facelock or Howdy.
+IR only, on purpose: there is no RGB path and no fallback to a normal webcam. The longer version,
+and what to use if you have no IR camera, is in
+[docs/architecture.md](docs/architecture.md#why-it-is-built-this-way).
 
 ## Quick start
 
@@ -88,21 +82,22 @@ sudo vinoauthface-uninstall --purge   # templates too
 
 | Page | Covers |
 |---|---|
-| [Installing](docs/install.md) | What `deploy.sh` does, building from source, NPU backend, distrobox, camera pinning, SELinux |
-| [Configuration and enrolment](docs/configuration.md) | Config files and what users may override, enrolment, mbf vs r50 models |
+| [Installing](docs/install.md) | `deploy.sh`, building from source, the NPU backend, SELinux |
+| [Configuration and enrolment](docs/configuration.md) | Config files, user overrides, enrolment, mbf vs r50 |
 | [PAM integration](docs/pam.md) | Services, KDE, polkit, Bitwarden, keyrings |
-| [Hardware and diagnostics](docs/hardware.md) | Supported cameras, `vinoauthface-camera-diag`, hardware reports |
+| [Hardware and diagnostics](docs/hardware.md) | Supported cameras, `vinoauthface-camera-diag` |
 | [Troubleshooting](docs/troubleshooting.md) | Debug output, common errors |
-| [Tray icon](docs/tray.md) | Optional tray: status, enrol, retrain, test scan, login screen, settings (installed by default, `--no-tray` to skip) |
-| [Settings window](docs/settings.md) | Every config key in one window, applied with one admin prompt; checking your own models; deleting unused models and the compiled cache |
-| [Security model](docs/security.md) | Trust model, spoofing, frame injection, limitations |
-| [Releasing](docs/releasing.md) | Consecutive version tags, `scripts/release.sh`, releases |
-| [Architecture](docs/architecture.md) | Pipeline, models and licensing, project layout, upstream relationship |
+| [Tray icon](docs/tray.md) | Status, enrol, retrain, test scan (`--no-tray` skips it) |
+| [Settings window](docs/settings.md) | Every config key in one window, model clean-up |
+| [Security model](docs/security.md) | Trust model, spoofing, frame injection, limits |
+| [Architecture](docs/architecture.md) | Pipeline, models and licensing, layout, upstream |
+| [Releasing](docs/releasing.md) | Version tags and `scripts/release.sh` |
 
 Changes: [CHANGELOG.md](CHANGELOG.md). Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT, for this code. The detector (`det_500m.onnx`) and recognition models (`w600k_mbf.onnx`,
-`w600k_r50.onnx`) are InsightFace model-zoo weights, licensed for non-commercial research use
-only; see [docs/architecture.md](docs/architecture.md#models). As a result, you may only use this software for your own personal research purposes. If you do fork this project and plan on commercial use, you MUST replace the models used.
+MIT, for this code. The models it downloads (`det_500m.onnx`, `w600k_mbf.onnx`, `w600k_r50.onnx`)
+are InsightFace weights, licensed for **non-commercial research use only**, so personal research
+use is all this software is good for as shipped. A fork meant for commercial use MUST replace the
+models. See [docs/architecture.md](docs/architecture.md#models).
