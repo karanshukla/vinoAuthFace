@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/banner.png" alt="vinoAuthFace: IR camera face unlock for Linux" width="100%"></p>
+
 # vinoAuthFace: IR Camera Face Unlock for Linux
 
 **Windows Hello-style face unlock for Linux, through PAM and an IR camera.** Works on immutable

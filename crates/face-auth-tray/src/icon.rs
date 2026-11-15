@@ -1,7 +1,7 @@
 //! The tray and app icon, in the vino apps' style: a dark rounded tile with a
-//! faint edge and a few heavy marks. Here the marks are a camera viewfinder,
-//! in grey, around a smiling face, which gives way to a scan bar while a scan
-//! runs.
+//! faint edge and a few heavy marks. Here the marks are the IR camera module
+//! itself: a grey outline holding a white lens ring and, beside it, the
+//! emitter dot that lights up for a scan, as the one green accent.
 //! Drawn in code so the tray needs no image decoder, and the checked-in SVG
 //! is generated from the same shapes.
 
@@ -34,22 +34,6 @@ impl Shape {
         }
     }
 
-    /// A smile filling this box, as a quadratic curve's two ends and control
-    /// point. `r` is half the stroke's width, and the round caps and the
-    /// lowest point of the stroke land on the box's edges.
-    fn smile(self) -> [(f32, f32); 3] {
-        let Shape { x, y, w, h, r } = self;
-        [(x + r, y + r), (x + w / 2.0, y + r + (h - r * 2.0) * 2.0), (x + w - r, y + r)]
-    }
-
-    fn svg_smile(self, color: &str) -> String {
-        let [(x0, y0), (cx, cy), (x1, y1)] = self.smile();
-        format!(
-            r#"<path d="M{x0} {y0}Q{cx} {cy} {x1} {y1}" fill="none" stroke="{color}" stroke-width="{}" stroke-linecap="round"/>"#,
-            self.r * 2.0
-        )
-    }
-
     fn svg_rect(self, paint: &str) -> String {
         let Shape { x, y, w, h, r } = self;
         format!(r#"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{r}" {paint}/>"#)
@@ -69,15 +53,14 @@ pub enum State {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Part {
-    Bracket,
-    /// A round eye of the large design.
-    Eye,
-    /// An eye or a piece of the smile, on the 16 px pixmap's grid.
-    Feature,
-    /// The curved smile of the large design: its `Shape` is the box it fills.
-    Smile,
-    /// Takes the face's place while scanning.
-    ScanLine,
+    /// The camera module, drawn as an outline `Grid::ring` wide.
+    Module,
+    /// A ring `Grid::lens_ring` wide, so it reads as a lens and not as a
+    /// switch's knob.
+    Lens,
+    /// The IR emitter: green when ready, amber while scanning, dark until
+    /// setup is finished.
+    Emitter,
 }
 
 // The vino apps' palette (vinoWhisper's gui/src/paint.rs).
@@ -98,59 +81,63 @@ const TRAY_AMBER: Rgba = Rgba(184, 115, 0, 255);
 
 fn paint(state: State, part: Part) -> Option<Rgba> {
     match (state, part) {
-        (State::Ready, Part::Bracket) => Some(FRAME),
-        (State::Ready, Part::Eye) => Some(WHITE),
-        (State::Ready, Part::Feature | Part::Smile) => Some(GREEN),
-        (State::Scanning, Part::Bracket | Part::ScanLine) => Some(AMBER),
-        (State::Attention, Part::Bracket | Part::Eye | Part::Feature | Part::Smile) => Some(GREY),
-        (State::Scanning, Part::Eye | Part::Feature | Part::Smile)
-        | (State::Ready | State::Attention, Part::ScanLine) => None,
+        (State::Ready, Part::Module) => Some(FRAME),
+        (State::Ready | State::Scanning, Part::Lens) => Some(WHITE),
+        (State::Ready, Part::Emitter) => Some(GREEN),
+        (State::Scanning, Part::Module | Part::Emitter) => Some(AMBER),
+        (State::Attention, Part::Module | Part::Lens) => Some(GREY),
+        (State::Attention, Part::Emitter) => None,
     }
 }
 
 struct Grid {
     tile: Shape,
     edge: f32,
+    /// How wide the module's outline is drawn.
+    ring: f32,
+    lens_ring: f32,
     marks: &'static [(Shape, Part)],
     size: f32,
 }
 
-/// 64-unit design, for the app icon and the larger tray sizes. The tile, the
-/// 6-unit pills and the three tones (a grey frame, a white mark, a green
-/// accent) are the other vino apps'.
+impl Grid {
+    /// The outline width a part is drawn with, or `None` for a filled one.
+    fn ring_of(&self, part: Part) -> Option<f32> {
+        match part {
+            Part::Module => Some(self.ring),
+            Part::Lens => Some(self.lens_ring),
+            Part::Emitter => None,
+        }
+    }
+}
+
+/// 64-unit design, for the app icon and the larger tray sizes. The tile and
+/// the three tones (a grey frame, a white mark, a green accent) are the other
+/// vino apps'.
 const LARGE: Grid = Grid {
     tile: Shape::new(4.0, 4.0, 56.0, 56.0, 14.0),
     edge: 2.0,
+    ring: 5.0,
+    lens_ring: 4.0,
     marks: &[
-        (Shape::new(12.0, 12.0, 15.0, 6.0, 3.0), Part::Bracket),
-        (Shape::new(12.0, 12.0, 6.0, 15.0, 3.0), Part::Bracket),
-        (Shape::new(37.0, 12.0, 15.0, 6.0, 3.0), Part::Bracket),
-        (Shape::new(46.0, 12.0, 6.0, 15.0, 3.0), Part::Bracket),
-        (Shape::new(12.0, 46.0, 15.0, 6.0, 3.0), Part::Bracket),
-        (Shape::new(12.0, 37.0, 6.0, 15.0, 3.0), Part::Bracket),
-        (Shape::new(37.0, 46.0, 15.0, 6.0, 3.0), Part::Bracket),
-        (Shape::new(46.0, 37.0, 6.0, 15.0, 3.0), Part::Bracket),
-        (Shape::new(22.0, 22.0, 6.0, 9.0, 3.0), Part::Eye),
-        (Shape::new(36.0, 22.0, 6.0, 9.0, 3.0), Part::Eye),
-        (Shape::new(20.0, 34.0, 24.0, 10.5, 3.0), Part::Smile),
-        (Shape::new(20.0, 29.0, 24.0, 6.0, 3.0), Part::ScanLine),
+        (Shape::new(10.0, 18.0, 44.0, 28.0, 9.0), Part::Module),
+        (Shape::new(17.0, 25.0, 14.0, 14.0, 7.0), Part::Lens),
+        (Shape::new(36.5, 27.5, 9.0, 9.0, 4.5), Part::Emitter),
     ],
     size: 64.0,
 };
 
 /// 16-unit design on whole pixels, so the 16 px tray icon stays sharp. There
-/// is no room for the viewfinder at this size: the face fills the tile.
+/// is no room for the module's outline at this size: the tile stands in for
+/// it, around the lens and the emitter.
 const SMALL: Grid = Grid {
     tile: Shape::new(1.0, 1.0, 14.0, 14.0, 3.0),
     edge: 1.0,
+    ring: 0.0,
+    lens_ring: 2.0,
     marks: &[
-        (Shape::new(4.0, 4.0, 2.0, 3.0, 0.0), Part::Feature),
-        (Shape::new(10.0, 4.0, 2.0, 3.0, 0.0), Part::Feature),
-        (Shape::new(4.0, 9.0, 2.0, 2.0, 0.0), Part::Feature),
-        (Shape::new(10.0, 9.0, 2.0, 2.0, 0.0), Part::Feature),
-        (Shape::new(4.0, 10.0, 8.0, 1.0, 0.0), Part::Feature),
-        (Shape::new(5.0, 11.0, 6.0, 1.0, 0.0), Part::Feature),
-        (Shape::new(4.0, 7.0, 8.0, 2.0, 0.0), Part::ScanLine),
+        (Shape::new(3.0, 5.0, 6.0, 6.0, 3.0), Part::Lens),
+        (Shape::new(11.0, 7.0, 2.0, 2.0, 1.0), Part::Emitter),
     ],
     size: 16.0,
 };
@@ -158,11 +145,9 @@ const SMALL: Grid = Grid {
 /// The vino trays' shared frame (vinoWhisper's and vinoWatch's symbolic
 /// icons): a 14x12 rounded tile drawn as a 1-unit outline.
 const TRAY_FRAME: &str = "M3 2h10a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-8a2 2 0 0 1 2 -2zM3 3h10a1 1 0 0 1 1 1v8a1 1 0 0 1 -1 1h-10a1 1 0 0 1 -1 -1v-8a1 1 0 0 1 1 -1z";
-/// The face inside it, in the family's 1-unit bars: two eyes, a smile, and
-/// the flat mouth that replaces the smile until setup is finished.
-const TRAY_EYES: &str = "M6 5h1v2h-1zM9 5h1v2h-1z";
-const TRAY_SMILE: &str = "M5 9h1v1h-1zM10 9h1v1h-1zM6 10h4v1h-4z";
-const TRAY_FLAT: &str = "M5 10h6v1h-6z";
+/// The camera module inside it: the lens, and the emitter dot beside it.
+const TRAY_LENS: &str = "M6 5a3 3 0 1 1 0 6a3 3 0 1 1 0 -6zM6 6.75a1.25 1.25 0 1 0 0 2.5a1.25 1.25 0 1 0 0 -2.5z";
+const TRAY_EMITTER: &str = "M11.5 6.5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0 -3z";
 
 fn hex(Rgba(r, g, b, _): Rgba) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
@@ -185,10 +170,14 @@ pub fn app_svg() -> String {
         LARGE.edge
     )));
     for &(shape, part) in LARGE.marks {
-        match paint(State::Ready, part) {
-            Some(color) if part == Part::Smile => line(shape.svg_smile(&hex(color))),
-            Some(color) => line(shape.svg_rect(&format!(r#"fill="{}""#, hex(color)))),
-            None => {}
+        if let Some(color) = paint(State::Ready, part) {
+            match LARGE.ring_of(part) {
+                Some(width) => line(shape.inset(width / 2.0).svg_rect(&format!(
+                    r#"fill="none" stroke="{}" stroke-width="{width}""#,
+                    hex(color)
+                ))),
+                None => line(shape.svg_rect(&format!(r#"fill="{}""#, hex(color)))),
+            }
         }
     }
     svg.push_str("</svg>\n");
@@ -212,20 +201,21 @@ impl State {
 
 /// A tray icon for one state, in the vino trays' symbolic style and the KDE
 /// symbolic format (`ColorScheme-Text` is what Plasma recolours): the shared
-/// frame and the eyes in the theme's colour, the smile as the one accent,
+/// frame and the lens ring in the theme's colour, the emitter as the one accent,
 /// green when ready and amber while a scan runs, as vinoWatch's accent turns
-/// amber. Until setup is finished the face is dimmed, with a flat mouth; at
-/// 0.6, not 0.5: half of Breeze Light's text colour falls just short of 3:1
-/// on its panel.
+/// amber. Until setup is finished the lens is dimmed and the emitter is off;
+/// at 0.6, not 0.5: half of Breeze Light's text colour falls just short of
+/// 3:1 on its panel.
 pub fn symbolic_svg(state: State) -> String {
     let text = r#"class="ColorScheme-Text" style="fill:currentColor""#;
     let dim = r#"class="ColorScheme-Text" style="fill:currentColor;fill-opacity:0.6""#;
     let accent = |color: Rgba| format!(r#"style="fill:{}""#, hex(color));
+    let lens = |paint: &str| format!(r#"{paint} fill-rule="evenodd""#);
     let mut paths = vec![(format!(r#"{text} fill-rule="evenodd""#), TRAY_FRAME)];
     match state {
-        State::Ready => paths.extend([(text.to_string(), TRAY_EYES), (accent(TRAY_GREEN), TRAY_SMILE)]),
-        State::Scanning => paths.extend([(text.to_string(), TRAY_EYES), (accent(TRAY_AMBER), TRAY_SMILE)]),
-        State::Attention => paths.extend([(dim.to_string(), TRAY_EYES), (dim.to_string(), TRAY_FLAT)]),
+        State::Ready => paths.extend([(lens(text), TRAY_LENS), (accent(TRAY_GREEN), TRAY_EMITTER)]),
+        State::Scanning => paths.extend([(lens(text), TRAY_LENS), (accent(TRAY_AMBER), TRAY_EMITTER)]),
+        State::Attention => paths.push((lens(dim), TRAY_LENS)),
     }
     let mut svg = String::from(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\">\n  \
@@ -261,13 +251,11 @@ fn draw(canvas: &mut Canvas, grid: &Grid, state: State, size: f32) {
     canvas.fill_rounded(tile, grid.tile.r * unit, TILE);
     canvas.stroke_rounded(tile, grid.tile.r * unit, grid.edge * unit, EDGE);
     for &(shape, part) in grid.marks {
-        match paint(state, part) {
-            Some(color) if part == Part::Smile => {
-                let [from, control, to] = shape.smile().map(|(x, y)| (x * unit, y * unit));
-                canvas.stroke_curve(from, control, to, shape.r * 2.0 * unit, color);
+        if let Some(color) = paint(state, part) {
+            match grid.ring_of(part) {
+                Some(width) => canvas.stroke_rounded(shape.rect(unit), shape.r * unit, width * unit, color),
+                None => canvas.fill_rounded(shape.rect(unit), shape.r * unit, color),
             }
-            Some(color) => canvas.fill_rounded(shape.rect(unit), shape.r * unit, color),
-            None => {}
         }
     }
 }
@@ -321,24 +309,30 @@ mod tests {
     }
 
     #[test]
-    fn the_face_and_scan_bar_do_not_touch_the_brackets() {
+    fn the_lens_and_emitter_sit_inside_the_module_and_apart() {
         for grid in [&LARGE, &SMALL] {
-            for (a, _) in grid.marks.iter().filter(|(_, part)| *part != Part::Bracket) {
-                for (b, _) in grid.marks.iter().filter(|(_, part)| *part == Part::Bracket) {
-                    let apart = a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y;
-                    assert!(apart, "{a:?} touches {b:?}");
+            let inside: Vec<Shape> = grid.marks.iter().filter(|(_, p)| *p != Part::Module).map(|(s, _)| *s).collect();
+            for (module, _) in grid.marks.iter().filter(|(_, p)| *p == Part::Module) {
+                let hole = module.inset(grid.ring);
+                for m in &inside {
+                    assert!(
+                        m.x > hole.x && m.y > hole.y && m.x + m.w < hole.x + hole.w && m.y + m.h < hole.y + hole.h,
+                        "{m:?} touches the module's outline"
+                    );
                 }
             }
+            let [lens, emitter] = inside[..] else { panic!("expected a lens and an emitter") };
+            assert!(lens.x + lens.w < emitter.x, "the lens touches the emitter");
         }
     }
 
-    /// The scan bar lies across the face, so no state may draw both.
+    /// The emitter is what lights up: off until setup is finished, and a
+    /// different colour while a scan runs.
     #[test]
-    fn the_scan_bar_and_the_face_are_never_drawn_together() {
-        for state in STATES {
-            let face = [Part::Eye, Part::Feature, Part::Smile].iter().any(|part| paint(state, *part).is_some());
-            assert_ne!(face, paint(state, Part::ScanLine).is_some(), "{state:?}");
-        }
+    fn the_emitter_shows_the_state() {
+        assert_eq!(paint(State::Attention, Part::Emitter), None);
+        let (ready, scanning) = (paint(State::Ready, Part::Emitter), paint(State::Scanning, Part::Emitter));
+        assert!(ready.is_some() && scanning.is_some() && ready != scanning);
     }
 
     #[test]

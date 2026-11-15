@@ -1,6 +1,6 @@
 //! Anti-aliased rounded rectangles into a premultiplied BGRA buffer, enough to
 //! draw the tray icon without an image or font stack. Ported from vinoWhisper's
-//! `gui/src/raster.rs`; `stroke_curve` (the icon's smile) is this fork's.
+//! `gui/src/raster.rs`.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgba(pub u8, pub u8, pub u8, pub u8);
@@ -76,29 +76,6 @@ impl<'a> Canvas<'a> {
         });
     }
 
-    /// A quadratic curve from `from` to `to`, `width` thick with round ends.
-    pub fn stroke_curve(&mut self, from: (f32, f32), control: (f32, f32), to: (f32, f32), width: f32, color: Rgba) {
-        const STEPS: usize = 24;
-        let at = |i: usize| {
-            let t = i as f32 / STEPS as f32;
-            let mix = |a: f32, b: f32, c: f32| (1.0 - t).powi(2) * a + 2.0 * (1.0 - t) * t * b + t * t * c;
-            (mix(from.0, control.0, to.0), mix(from.1, control.1, to.1))
-        };
-        let points: Vec<(f32, f32)> = (0..=STEPS).map(at).collect();
-        let half = width / 2.0;
-        let (xs, ys) = (points.iter().map(|p| p.0), points.iter().map(|p| p.1));
-        let bounds = Rect {
-            x0: xs.clone().fold(f32::MAX, f32::min) - half,
-            y0: ys.clone().fold(f32::MAX, f32::min) - half,
-            x1: xs.fold(f32::MIN, f32::max) + half,
-            y1: ys.fold(f32::MIN, f32::max) + half,
-        };
-        self.cover(bounds, color, |x, y| {
-            let distance = points.windows(2).map(|ends| segment_distance(x, y, ends[0], ends[1])).fold(f32::MAX, f32::min);
-            (0.5 - (distance - half)).clamp(0.0, 1.0)
-        });
-    }
-
     fn cover(&mut self, rect: Rect, color: Rgba, coverage: impl Fn(f32, f32) -> f32) {
         let (x0, y0) = (rect.x0.floor() as i32, rect.y0.floor() as i32);
         let (x1, y1) = (rect.x1.ceil() as i32, rect.y1.ceil() as i32);
@@ -133,13 +110,6 @@ impl<'a> Canvas<'a> {
         }
         out
     }
-}
-
-fn segment_distance(px: f32, py: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
-    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-    let length = dx * dx + dy * dy;
-    let t = if length > 0.0 { (((px - a.0) * dx + (py - a.1) * dy) / length).clamp(0.0, 1.0) } else { 0.0 };
-    ((px - a.0 - dx * t).powi(2) + (py - a.1 - dy * t).powi(2)).sqrt()
 }
 
 pub fn rounded_coverage(px: f32, py: f32, rect: Rect, radius: f32) -> f32 {
@@ -192,17 +162,6 @@ mod tests {
     #[test]
     fn an_edge_straddling_pixel_is_half_covered() {
         assert!((rounded_coverage(10.0, 5.0, SQUARE, 0.0) - 0.5).abs() < 1e-6);
-    }
-
-    #[test]
-    fn a_curve_is_as_thick_as_asked_and_round_at_its_ends() {
-        let mut pixels = vec![0u8; 20 * 20 * 4];
-        let mut canvas = Canvas::new(&mut pixels, 20, 20);
-        canvas.stroke_curve((4.5, 6.0), (10.5, 14.0), (16.5, 6.0), 4.0, Rgba(255, 255, 255, 255));
-        let alpha = |x: usize, y: usize| pixels[(y * 20 + x) * 4 + 3];
-        // The curve's lowest point is halfway to the control point: y = 10.
-        assert_eq!([alpha(10, 6), alpha(10, 9), alpha(10, 10), alpha(10, 12)], [0, 255, 255, 0]);
-        assert_eq!([alpha(1, 6), alpha(3, 6), alpha(4, 2)], [0, 255, 0], "the cap is a half circle");
     }
 
     #[test]
