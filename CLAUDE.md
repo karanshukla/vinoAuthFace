@@ -121,7 +121,8 @@ Seven crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM
 - **`crates/face-auth-tray`**: The tray icon (installed by default, `deploy.sh --no-tray` skips it, see `docs/tray.md`),
   which replaces upstream's GTK GUI. Two binaries: `vinoauthface-tray` (per-user, `ksni`
   StatusNotifierItem, never in the auth path; spots scans by `vinoauthface-auth` in `/proc`, reads
-  enrolment via `vinoauthface-auth --enrolled`) and `vinoauthface-helper`, the only thing its polkit policy
+  enrolment via `vinoauthface-auth --enrolled`; `status.rs` is what it reads about the install,
+  `main.rs` the menu, the actions and the event loop) and `vinoauthface-helper`, the only thing its polkit policy
   lets pkexec run. The helper takes one verb (`enrol|retrain|enrol-guided|retrain-guided|upgrade|login-off|login-both|login-face|set-*|write-config|delete-unused-models|clear-cache`), no flags, and the
   target user from `PKEXEC_UID` only; keep it that way, and keep ksni/zbus out of it. `write-config` is
   the one verb with caller-chosen content (a new `/etc/face-auth.toml` on stdin, from the settings
@@ -136,7 +137,12 @@ Seven crates. All the logic lives in `face-auth-core`; the rest are thin CLI/PAM
   Host (glibc) only, never in the musl builds: winit and glow dlopen the desktop's libraries.
   `keys.rs` lists every `FaceAuthConfig` key (a test fails when one is missing) and edits the
   file line by line; changes to `/etc` go through the helper's `write-config`. A new config key
-  needs a `Key` there and a row in `window.rs`.
+  needs a `Key` there and a row in `window/pages.rs` (`window.rs` is the frame, `window/rows.rs`
+  the kinds of row).
+
+`face-auth-core/src/installed.rs` is the one copy of the installed helper paths, the
+`vinoauthface-auth --enrolled` query and pkexec's cancelled exit codes that the tray and the
+settings window share. Unit tests get scratch directories from `face-auth-core/src/test_support.rs`.
 
 `with_ov_core` (inference.rs) first loads `libopenvino_c` itself (`load_openvino`: fixed
 directories only, `OPENVINO_SEARCH`, never the environment; none found is `OpenVinoMissing`, the

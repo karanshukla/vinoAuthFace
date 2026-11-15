@@ -241,19 +241,8 @@ pub fn record_success(user: &str, embeddings_dir: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::tmpdir;
     use std::os::unix::fs::PermissionsExt;
-
-    fn tmpdir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "face-auth-lockout-{}-{}-{:?}",
-            tag,
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
 
     #[test]
     fn no_cooldown_below_threshold() {

@@ -91,17 +91,8 @@ impl Drop for ScanPrompt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_pty::pty;
     use std::io::Read;
-    use std::os::fd::FromRawFd;
-
-    fn pty() -> (File, File) {
-        let (mut master, mut slave) = (0, 0);
-        let rc = unsafe {
-            libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null(), std::ptr::null())
-        };
-        assert_eq!(rc, 0);
-        unsafe { (File::from_raw_fd(master), File::from_raw_fd(slave)) }
-    }
 
     #[test]
     fn shows_then_erases() {

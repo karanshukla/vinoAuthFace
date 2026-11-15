@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::apply::HELPER;
 
-const FACE_AUTH: &str = "/usr/local/bin/vinoauthface-auth";
+pub use face_auth_core::installed::enrolled;
+use face_auth_core::installed::{last_line, pkexec_cancelled};
 
 #[derive(Default)]
 pub struct Run {
@@ -116,9 +117,9 @@ pub fn start(shared: &Shared, spawner: Spawner, append: bool, ctx: &eframe::egui
         run.done = Some(match (code, run.saved.take()) {
             (Some(0), Some(saved)) => Ok(saved),
             (Some(0), None) => Ok("Saved.".into()),
-            (Some(126) | Some(127), _) => Err("Nothing was enrolled: the password prompt was cancelled or failed.".into()),
+            (code, _) if pkexec_cancelled(code) => Err("Nothing was enrolled: the password prompt was cancelled or failed.".into()),
             _ => {
-                let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+                let last = last_line(&err);
                 let last = last.trim_start_matches("Error: ");
                 Err(if last.contains("cancelled") || last.is_empty() {
                     "Stopped. Nothing was saved.".into()
@@ -136,25 +137,6 @@ pub fn send(shared: &Shared, cancel: bool) {
     if let Some(stdin) = shared.lock().unwrap().stdin.as_mut() {
         let _ = stdin.write_all(if cancel { b"cancel\n" } else { b"\n" });
         let _ = stdin.flush();
-    }
-}
-
-/// Whether the user has templates: `vinoauthface-auth --enrolled`, the
-/// set-group-ID binary that can open the store, as the tray asks it.
-/// `None` when it can't say.
-pub fn enrolled() -> Option<bool> {
-    let status = Command::new(FACE_AUTH)
-        .arg("--enrolled")
-        .env_clear()
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .ok()?;
-    match status.code() {
-        Some(0) => Some(true),
-        Some(1) => Some(false),
-        _ => None,
     }
 }
 

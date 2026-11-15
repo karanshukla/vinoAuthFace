@@ -7,8 +7,8 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-/// Where deploy.sh installs the tray's root helper; polkit pins this path.
-pub const HELPER: &str = "/usr/local/libexec/vinoauthface-helper";
+pub use face_auth_core::installed::HELPER;
+use face_auth_core::installed::pkexec_cancelled;
 
 /// Runs the helper with a payload from `config_write::frame` (Apply), or
 /// with a verb that takes nothing on stdin (the clean-up); tests swap it.
@@ -71,8 +71,7 @@ fn run_helper(verb: &str, payload: Option<&str>, failed: &str) -> Result<String,
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     match out.status.code() {
         Some(0) => Ok(String::from_utf8_lossy(&out.stdout).trim().to_string()),
-        // pkexec's own: dismissed, or the password was wrong.
-        Some(126) | Some(127) => Err("Nothing was changed: the password prompt was cancelled or failed.".into()),
+        code if pkexec_cancelled(code) => Err("Nothing was changed: the password prompt was cancelled or failed.".into()),
         _ => {
             let err = String::from_utf8_lossy(&out.stderr);
             let err = err.trim().trim_start_matches("vinoauthface-helper: ");

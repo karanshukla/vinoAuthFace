@@ -145,18 +145,7 @@ pub fn check(enrolled: &[String], live: Option<&str>, device: &str) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
-    fn tmpdir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "face-auth-cameras-{tag}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+    use crate::test_support::tmpdir;
 
     #[test]
     fn unknown_allows_any_camera() {

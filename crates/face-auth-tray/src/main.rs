@@ -7,10 +7,12 @@
 //! looking for the process in `/proc` (see `scanning.rs`): `vinoauthface-auth` does not
 //! know the tray exists.
 
-use face_auth_core::{capture, update, user, Camera, FaceAuthConfig};
-use face_auth_tray::helper::{bash, Verb, FACE_AUTH, Choice, Setting, HELPER, LOGIN_MODE, SAFE_PATH, SETTING_MODE, SETTINGS};
+use face_auth_core::installed::{enrolled, last_line, pkexec_cancelled};
+use face_auth_core::{update, user, FaceAuthConfig};
+use face_auth_tray::helper::{Verb, FACE_AUTH, Choice, Setting, HELPER, SAFE_PATH, SETTINGS};
 use face_auth_tray::icon::{self, State};
 use face_auth_tray::idle::{self, Idle};
+use face_auth_tray::status::{LoginMode, Status, SETTINGS_WINDOW};
 use face_auth_tray::{progress, scanning, single_instance};
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{CheckmarkItem, RadioGroup, RadioItem, StandardItem, SubMenu};
@@ -26,9 +28,6 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 const TRAY: &str = "/usr/local/bin/vinoauthface-tray";
-/// The optional settings window (`deploy.sh --with-settings`). When it is
-/// installed, Settings opens it instead of the tray's own submenu.
-const SETTINGS_WINDOW: &str = "/usr/local/bin/vinoauthface-settings";
 const DOCS: &str = "https://vinoauthface.vinopilot.ca/";
 /// How often `/proc` is checked for a running scan.
 const SCAN_POLL: Duration = Duration::from_millis(200);
@@ -37,8 +36,6 @@ const STATUS_POLL: Duration = Duration::from_secs(30);
 /// First update check, after login's own network and tray startup settle.
 const UPDATE_FIRST_CHECK: Duration = Duration::from_secs(60);
 const UPDATE_CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
-/// pkexec's exit codes for a dismissed or refused prompt.
-const PKEXEC_CANCELLED: [i32; 2] = [126, 127];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
@@ -48,43 +45,6 @@ enum Action {
     Upgrade,
     Login(LoginMode),
     Set(&'static Setting, &'static Choice),
-}
-
-/// Face unlock at the KDE login screen (Plasma Login or SDDM), as `login-mode.sh` names it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LoginMode {
-    Off,
-    Both,
-    Face,
-}
-
-impl LoginMode {
-    const ALL: [LoginMode; 3] = [LoginMode::Off, LoginMode::Both, LoginMode::Face];
-
-    fn parse(status: &str) -> Option<LoginMode> {
-        match status.trim() {
-            "off" => Some(LoginMode::Off),
-            "both" => Some(LoginMode::Both),
-            "face" => Some(LoginMode::Face),
-            _ => None,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            LoginMode::Off => "Password only",
-            LoginMode::Both => "Password, then face",
-            LoginMode::Face => "Face, or the password",
-        }
-    }
-
-    fn verb(self) -> Verb {
-        match self {
-            LoginMode::Off => Verb::LoginOff,
-            LoginMode::Both => Verb::LoginBoth,
-            LoginMode::Face => Verb::LoginFace,
-        }
-    }
 }
 
 /// What the tray does once an action has finished.
@@ -106,140 +66,6 @@ enum Msg {
     /// A new idle delay from the Settings menu, in minutes.
     IdleMinutes(u64),
     Quit,
-}
-
-#[derive(Debug, Clone, Default)]
-struct Status {
-    /// The IR camera vinoauthface-auth would use, if one opens.
-    camera: Option<String>,
-    /// `None` when vinoauthface-auth is missing or could not answer.
-    enrolled: Option<bool>,
-    backend: String,
-    /// The recognition and detector models, as `model_path` and
-    /// `detector_model_path` name them.
-    model: String,
-    /// `None` without Plasma Login or SDDM, which hides the menu entry.
-    login: Option<LoginMode>,
-    /// Each setting's current choice id, from `setting-mode.sh status`; empty
-    /// when it is missing (an install from before it), which hides the menu.
-    settings: HashMap<String, String>,
-    /// `SETTINGS_WINDOW` is installed.
-    settings_window: bool,
-}
-
-impl Status {
-    fn read() -> Status {
-        let config = FaceAuthConfig::load_system().ok();
-        // The system config's device is trusted as is: it is often
-        // pin-camera.sh's /dev/face-auth-ir symlink, which has no sysfs node
-        // of its own for the stricter IR checks to read.
-        let camera = config.as_ref().and_then(|c| match &c.device {
-            Some(device) => Camera::open(device).is_ok().then(|| device.clone()),
-            None => capture::detect_ir_camera(),
-        });
-        let backend = match config.as_ref().map(|c| (c.backend(), c.npu_device())) {
-            Some((b, device)) if b == "openvino" => format!("OpenVINO ({device})"),
-            Some(_) => "tract (CPU)".into(),
-            None => "unknown (cannot read /etc/face-auth.toml)".into(),
-        };
-        let model = config.as_ref().map_or("unknown".into(), |c| model_names(&c.model_path(), &c.detector_model_path()));
-        Status {
-            camera,
-            enrolled: enrolled(),
-            backend,
-            model,
-            login: login_mode(),
-            settings: settings(),
-            settings_window: Path::new(SETTINGS_WINDOW).exists(),
-        }
-    }
-
-    fn ready(&self) -> bool {
-        self.camera.is_some() && self.enrolled == Some(true)
-    }
-
-    /// The Status submenu's read-only lines.
-    fn lines(&self) -> Vec<String> {
-        vec![
-            match &self.camera {
-                Some(device) => format!("Camera: {device}"),
-                None => "Camera: no IR camera found".into(),
-            },
-            format!(
-                "Face: {}",
-                match self.enrolled {
-                    Some(true) => "enrolled",
-                    Some(false) => "not enrolled",
-                    None => "unknown (is vinoauthface installed?)",
-                }
-            ),
-            format!("Backend: {}", self.backend),
-            format!("Model: {}", self.model),
-            format!("Version: {}", update::CURRENT),
-            "Full check: sudo vinoauthface doctor".into(),
-        ]
-    }
-}
-
-/// "w600k_r50 (detector det_500m)": the file stems, which are what the model
-/// table in docs/configuration.md lists.
-fn model_names(model: &str, detector: &str) -> String {
-    let stem = |path: &str| {
-        std::path::Path::new(path).file_stem().map_or(path.to_string(), |n| n.to_string_lossy().into_owned())
-    };
-    format!("{} (detector {})", stem(model), stem(detector))
-}
-
-/// Asks the set-group-ID vinoauthface-auth, which can open the store the user cannot.
-fn enrolled() -> Option<bool> {
-    let status = Command::new(FACE_AUTH)
-        .arg("--enrolled")
-        .env_clear()
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .ok()?;
-    match status.code() {
-        Some(0) => Some(true),
-        Some(1) => Some(false),
-        _ => None,
-    }
-}
-
-/// Reads /etc/pam.d, which needs no privileges.
-fn login_mode() -> Option<LoginMode> {
-    let out = Command::new(bash())
-        .args([LOGIN_MODE, "status"])
-        .env_clear()
-        .env("PATH", SAFE_PATH)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    LoginMode::parse(&String::from_utf8_lossy(&out.stdout))
-}
-
-/// Reads /etc/face-auth.toml, which needs no privileges. "custom" is a value
-/// the menu doesn't offer, set by hand.
-fn settings() -> HashMap<String, String> {
-    let out = Command::new(bash())
-        .args([SETTING_MODE, "status"])
-        .env_clear()
-        .env("PATH", SAFE_PATH)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    let Ok(out) = out else { return HashMap::new() };
-    parse_settings(&String::from_utf8_lossy(&out.stdout))
-}
-
-fn parse_settings(status: &str) -> HashMap<String, String> {
-    status
-        .lines()
-        .filter_map(|l| l.split_once(' '))
-        .map(|(k, v)| (k.to_string(), v.trim().to_string()))
-        .collect()
 }
 
 /// Desktop notifications over the session bus. Best effort: without a
@@ -409,11 +235,8 @@ impl ksni::Tray for Tray {
             menu.push(MenuItem::Separator);
         }
 
-        // Collapsed so the menu stays short; the warning icon says when to
-        // open it, as the tray icon's colour does. Its label carries the
-        // summary whenever there is more to say than "ready", so a running
-        // action explains the greyed entries below it without the tooltip,
-        // which some hosts never show.
+        // Some hosts never show the tooltip, so the label carries the summary:
+        // pinned by `the_status_entry_says_what_the_tooltip_says`.
         let plain = s.ready() && self.busy.is_none() && !self.scanning;
         menu.push(
             SubMenu {
@@ -618,12 +441,31 @@ fn setting_radio(setting: &'static Setting, status: &Status, idle: bool) -> [Men
     ]
 }
 
+/// How one `pkexec vinoauthface-helper` run ended.
+#[derive(Debug, PartialEq, Eq)]
+enum HelperOutcome {
+    /// The password prompt was dismissed or refused: nothing ran, nothing to report.
+    Cancelled,
+    Succeeded,
+    /// The last line the helper wrote to stderr.
+    Failed(String),
+}
+
+impl HelperOutcome {
+    fn from_exit(code: Option<i32>, stderr: &str) -> HelperOutcome {
+        if pkexec_cancelled(code) {
+            HelperOutcome::Cancelled
+        } else if code == Some(0) {
+            HelperOutcome::Succeeded
+        } else {
+            HelperOutcome::Failed(last_line(stderr))
+        }
+    }
+}
+
 /// Run `pkexec vinoauthface-helper <verb>`, reading vinoauthface enroll's progress off
-/// its stdout. `Ok(None)` when the password prompt was dismissed.
-fn run_helper(
-    verb: Verb,
-    mut on_line: impl FnMut(&str),
-) -> std::io::Result<Option<(bool, String)>> {
+/// its stdout.
+fn run_helper(verb: Verb, mut on_line: impl FnMut(&str)) -> std::io::Result<HelperOutcome> {
     let mut child = Command::new("pkexec")
         .args([HELPER, verb.arg().as_str()])
         .stdin(Stdio::null())
@@ -644,14 +486,28 @@ fn run_helper(
     }
     let status = child.wait()?;
     let stderr = stderr.and_then(|t| t.join().ok()).unwrap_or_default();
-    if status.code().is_some_and(|c| PKEXEC_CANCELLED.contains(&c)) {
-        return Ok(None);
-    }
-    Ok(Some((status.success(), last_line(&stderr))))
+    Ok(HelperOutcome::from_exit(status.code(), &stderr))
 }
 
-fn last_line(text: &str) -> String {
-    text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_owned()
+/// Whether the helper succeeded. A failure is notified under `failure_summary`,
+/// replacing notification `replaces`; a dismissed prompt says nothing.
+fn helper_succeeded(
+    result: std::io::Result<HelperOutcome>,
+    notifier: &Notifier,
+    replaces: u32,
+    failure_summary: &str,
+) -> bool {
+    match result {
+        Ok(HelperOutcome::Succeeded) => return true,
+        Ok(HelperOutcome::Cancelled) => {}
+        Ok(HelperOutcome::Failed(err)) => {
+            notifier.send(replaces, failure_summary, &err);
+        }
+        Err(e) => {
+            notifier.send(replaces, "Cannot run pkexec", &e.to_string());
+        }
+    }
+    false
 }
 
 /// One live verify as the user, the same way the lock screen runs it. Counts
@@ -704,55 +560,29 @@ fn perform(action: Action, handle: &Handle<Tray>, notifier: &Notifier, user: &st
                 set_busy(Some(format!("{title}: {text}")));
                 id = notifier.send(id, title, &text);
             });
-            match result {
-                Ok(None) => {}
-                Ok(Some((true, _))) => {
-                    let body = finished.unwrap_or_else(|| "Done.".into());
-                    notifier.send(id, "Face enrolled", &format!("{body}. Use Test scan to check it."));
-                }
-                Ok(Some((false, err))) => {
-                    notifier.send(id, &format!("{title} failed"), &err);
-                }
-                Err(e) => {
-                    notifier.send(id, "Cannot run pkexec", &e.to_string());
-                }
+            if helper_succeeded(result, notifier, id, &format!("{title} failed")) {
+                let body = finished.unwrap_or_else(|| "Done.".into());
+                notifier.send(id, "Face enrolled", &format!("{body}. Use Test scan to check it."));
             }
         }
         Action::Login(mode) => {
             set_busy(Some("Login screen: waiting for authentication".into()));
-            match run_helper(mode.verb(), |_| {}) {
-                Ok(None) => {}
-                Ok(Some((true, _))) => {
-                    let body = match mode {
-                        LoginMode::Off => "Your password alone logs you in.",
-                        LoginMode::Both => {
-                            "Type your password, then look at the camera. If the camera fails, log in on a text console (Ctrl+Alt+F3)."
-                        }
-                        LoginMode::Face => "Select your account and press Enter to scan. A failed scan falls back to the password.",
-                    };
-                    notifier.send(0, &format!("Login screen: {}", mode.label()), body);
-                }
-                Ok(Some((false, err))) => {
-                    notifier.send(0, "Could not change the login screen", &err);
-                }
-                Err(e) => {
-                    notifier.send(0, "Cannot run pkexec", &e.to_string());
-                }
+            if helper_succeeded(run_helper(mode.verb(), |_| {}), notifier, 0, "Could not change the login screen") {
+                let body = match mode {
+                    LoginMode::Off => "Your password alone logs you in.",
+                    LoginMode::Both => {
+                        "Type your password, then look at the camera. If the camera fails, log in on a text console (Ctrl+Alt+F3)."
+                    }
+                    LoginMode::Face => "Select your account and press Enter to scan. A failed scan falls back to the password.",
+                };
+                notifier.send(0, &format!("Login screen: {}", mode.label()), body);
             }
         }
         Action::Set(setting, choice) => {
             set_busy(Some(format!("{}: waiting for authentication", setting.title)));
-            match run_helper(Verb::Set(setting, choice), |_| {}) {
-                Ok(None) => {}
-                Ok(Some((true, _))) => {
-                    notifier.send(0, &format!("{}: {}", setting.title, choice.label), choice.note);
-                }
-                Ok(Some((false, err))) => {
-                    notifier.send(0, &format!("Could not change {}", setting.title.to_lowercase()), &err);
-                }
-                Err(e) => {
-                    notifier.send(0, "Cannot run pkexec", &e.to_string());
-                }
+            let failure_summary = format!("Could not change {}", setting.title.to_lowercase());
+            if helper_succeeded(run_helper(Verb::Set(setting, choice), |_| {}), notifier, 0, &failure_summary) {
+                notifier.send(0, &format!("{}: {}", setting.title, choice.label), choice.note);
             }
         }
         Action::Upgrade => {
@@ -764,18 +594,9 @@ fn perform(action: Action, handle: &Handle<Tray>, notifier: &Notifier, user: &st
                     id = notifier.send(0, "Upgrading vinoAuthFace", "Downloading and installing the new release.");
                 }
             });
-            match result {
-                Ok(None) => {}
-                Ok(Some((true, _))) => {
-                    notifier.send(id, "vinoAuthFace upgraded", "The tray restarts on the new version.");
-                    return After::Restart;
-                }
-                Ok(Some((false, err))) => {
-                    notifier.send(id, "Upgrade failed", &err);
-                }
-                Err(e) => {
-                    notifier.send(id, "Cannot run pkexec", &e.to_string());
-                }
+            if helper_succeeded(result, notifier, id, "Upgrade failed") {
+                notifier.send(id, "vinoAuthFace upgraded", "The tray restarts on the new version.");
+                return After::Restart;
             }
         }
     }
@@ -951,49 +772,28 @@ mod tests {
     use ksni::Tray as _;
 
     #[test]
-    fn status_lines_name_what_is_missing() {
-        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into(), model: "unknown".into(), login: None, settings: HashMap::new(), settings_window: false };
-        let lines = s.lines();
-        assert_eq!(lines[0], "Camera: no IR camera found");
-        assert_eq!(lines[1], "Face: unknown (is vinoauthface installed?)");
-        assert_eq!(lines[2], "Backend: tract (CPU)");
-        assert_eq!(lines[3], "Model: unknown");
-        // ksni reads "_" as an access-key marker.
-        assert!(lines.iter().all(|l| !l.contains('_')), "{lines:?}");
-
-        let s = Status {
-            camera: Some("/dev/video2".into()),
-            enrolled: Some(true),
-            backend: "OpenVINO (NPU)".into(),
-            model: "w600k_r50 (detector det_500m)".into(),
-            login: Some(LoginMode::Face),
-            settings: HashMap::new(),
-            settings_window: false,
-        };
-        assert!(s.ready());
-        assert_eq!(s.lines()[..2], ["Camera: /dev/video2", "Face: enrolled"]);
+    fn a_dismissed_prompt_is_cancelled_not_a_failure() {
+        assert_eq!(HelperOutcome::from_exit(Some(126), "Error: dismissed\n"), HelperOutcome::Cancelled);
+        assert_eq!(HelperOutcome::from_exit(Some(127), ""), HelperOutcome::Cancelled);
     }
 
     #[test]
-    fn login_modes_round_trip_through_the_script() {
-        // login-mode.sh's status words, and its "none" without Plasma Login or SDDM.
-        assert_eq!(LoginMode::parse("off\n"), Some(LoginMode::Off));
-        assert_eq!(LoginMode::parse("both"), Some(LoginMode::Both));
-        assert_eq!(LoginMode::parse("face"), Some(LoginMode::Face));
-        assert_eq!(LoginMode::parse("none"), None);
-        assert_eq!(LoginMode::parse(""), None);
-        for m in LoginMode::ALL {
-            assert_eq!(m.verb().arg(), format!("login-{m:?}").to_lowercase());
-            assert!(!m.label().contains('_'));
-        }
+    fn a_helper_failure_carries_its_last_stderr_line() {
+        assert_eq!(
+            HelperOutcome::from_exit(Some(1), "Enrolling\nError: no face found\n\n"),
+            HelperOutcome::Failed("Error: no face found".into())
+        );
+        assert_eq!(HelperOutcome::from_exit(None, ""), HelperOutcome::Failed(String::new()), "killed by a signal");
+        assert_eq!(HelperOutcome::from_exit(Some(0), "a warning\n"), HelperOutcome::Succeeded);
     }
 
     #[test]
-    fn settings_status_parses_one_pair_per_line() {
-        let parsed = parse_settings("security strict\nscan 5s\nconfirm custom\n");
-        assert_eq!(parsed["security"], "strict");
-        assert_eq!(parsed["confirm"], "custom");
-        assert!(parse_settings("").is_empty());
+    fn only_a_successful_helper_run_goes_on_to_its_success_notice() {
+        let notifier = Notifier { bus: None };
+        assert!(helper_succeeded(Ok(HelperOutcome::Succeeded), &notifier, 0, "failed"));
+        assert!(!helper_succeeded(Ok(HelperOutcome::Cancelled), &notifier, 0, "failed"));
+        assert!(!helper_succeeded(Ok(HelperOutcome::Failed("no".into())), &notifier, 0, "failed"));
+        assert!(!helper_succeeded(Err(std::io::Error::other("no pkexec")), &notifier, 0, "failed"));
     }
 
     #[test]
@@ -1016,14 +816,6 @@ mod tests {
             settings: HashMap::new(),
             settings_window: false,
         }
-    }
-
-    #[test]
-    fn model_names_are_the_file_stems() {
-        assert_eq!(
-            model_names("/usr/local/share/face-auth/w600k_mbf.onnx", "/usr/local/share/face-auth/det_500m.onnx"),
-            "w600k_mbf (detector det_500m)"
-        );
     }
 
     fn tray(status: Status) -> Tray {
