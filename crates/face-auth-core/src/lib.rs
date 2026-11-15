@@ -8,6 +8,7 @@ pub mod environment;
 pub mod error;
 pub mod guided;
 pub mod inference;
+pub mod installed;
 pub mod lockout;
 pub mod model_files;
 pub mod preprocess;
