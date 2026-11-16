@@ -156,6 +156,6 @@ fn is_test_fn(text: &str, name: &str) -> bool {
                 .rev()
                 .map(|l| l.trim())
                 .take_while(|l| l.starts_with("#[") || l.starts_with("///"))
-                .any(|l| *l == "#[test]")
+                .any(|l| l == "#[test]")
     })
 }

@@ -163,7 +163,8 @@ fn root_running_verify() -> bool {
 
 /// Real uid, not effective: under sudo the effective uid is 0 for any caller.
 fn caller_is_root() -> bool {
-    unsafe { libc::getuid() } == 0
+    let uid = unsafe { libc::getuid() };
+    uid == 0
 }
 
 /// What survives [`scrub_caller_environment`], read through `get` (pinned by

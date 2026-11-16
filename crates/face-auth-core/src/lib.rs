@@ -747,6 +747,50 @@ mod tests {
         assert!(!liveness_disabled(0.0, RESIDUAL));
     }
 
+    fn liveness_config(motion: f32, residual: f32) -> FaceAuthConfig {
+        FaceAuthConfig {
+            liveness_motion_threshold: Some(motion),
+            liveness_residual_motion_threshold: Some(residual),
+            ..FaceAuthConfig::default()
+        }
+    }
+
+    fn face_frame(seed: u32) -> FaceFrame {
+        let (width, height) = (120u32, 120u32);
+        let data = (0..width * height)
+            .map(|i| (i.wrapping_mul(2654435761u32.wrapping_add(seed.wrapping_mul(0x9E37_79B9))) >> 16) as u16)
+            .collect();
+        FaceFrame {
+            at: Instant::now(),
+            raw: crate::capture::IrFrame { data, width, height },
+            face_box: FaceBox { x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.9, landmarks: None },
+        }
+    }
+
+    #[test]
+    fn the_first_face_frame_is_only_a_baseline() {
+        let mut liveness = Liveness::new(&liveness_config(0.05, 0.0));
+        assert!(!liveness.observe(1, face_frame(1)).unwrap());
+        assert!(liveness.observe(2, face_frame(1)).unwrap());
+    }
+
+    #[test]
+    fn motion_is_not_seen_until_a_frame_changes() {
+        let mut liveness = Liveness::new(&liveness_config(0.05, 0.0));
+        liveness.observe(1, face_frame(1)).unwrap();
+        liveness.observe(2, face_frame(1)).unwrap();
+        assert!(!liveness.motion_seen);
+
+        liveness.observe(3, face_frame(2)).unwrap();
+        assert!(liveness.motion_seen);
+    }
+
+    #[test]
+    fn liveness_with_both_thresholds_zero_starts_with_motion_seen() {
+        assert!(Liveness::new(&liveness_config(0.0, 0.0)).motion_seen);
+        assert!(!Liveness::new(&liveness_config(0.05, 0.0)).motion_seen);
+    }
+
     #[test]
     fn extends_a_pending_match_once() {
         let grace = Duration::from_millis(4000);

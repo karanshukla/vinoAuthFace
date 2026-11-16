@@ -1038,6 +1038,64 @@ mod tests {
     }
 
     #[test]
+    fn user_overlay_may_only_raise_detector_threshold() {
+        let mut cfg = system_baseline();
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            detector_threshold: Some(0.1),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.detector_threshold(), 0.5);
+
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            detector_threshold: Some(0.7),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.detector_threshold(), 0.7);
+    }
+
+    #[test]
+    fn user_overlay_capture_timeout_must_be_within_bounds() {
+        let mut cfg = system_baseline();
+        let before = cfg.capture_timeout_ms();
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            capture_timeout_ms: Some(50),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.capture_timeout_ms(), before, "below the range is ignored");
+
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            capture_timeout_ms: Some(5000),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.capture_timeout_ms(), 5000);
+    }
+
+    #[test]
+    fn tightens_accepts_equal_or_stricter_values_in_range() {
+        assert!(tightens(0.6, 0.6, &THRESHOLD_RANGE));
+        assert!(tightens(0.9, 0.6, &THRESHOLD_RANGE));
+        assert!(tightens(1.0, 0.6, &THRESHOLD_RANGE));
+    }
+
+    #[test]
+    fn tightens_rejects_looser_out_of_range_and_non_finite_values() {
+        assert!(!tightens(0.59, 0.6, &THRESHOLD_RANGE));
+        assert!(!tightens(1.1, 0.6, &THRESHOLD_RANGE));
+        assert!(!tightens(f32::NAN, 0.6, &THRESHOLD_RANGE));
+        assert!(!tightens(f32::INFINITY, 0.6, &THRESHOLD_RANGE));
+    }
+
+    #[test]
+    fn tightened_and_within_pass_none_through_as_none() {
+        assert_eq!(tightened(None, 0.6, &THRESHOLD_RANGE), None);
+        assert_eq!(tightened(Some(0.7), 0.6, &THRESHOLD_RANGE), Some(0.7));
+        assert_eq!(tightened(Some(0.5), 0.6, &THRESHOLD_RANGE), None);
+        assert_eq!(within(None, &SCAN_INTERVAL_RANGE), None);
+        assert_eq!(within(Some(5000), &SCAN_INTERVAL_RANGE), Some(5000));
+        assert_eq!(within(Some(5001), &SCAN_INTERVAL_RANGE), None);
+    }
+
+    #[test]
     fn validate_rejects_permissive_threshold() {
         let cfg = FaceAuthConfig {
             threshold: Some(0.0),
