@@ -4,9 +4,8 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use libc::{c_void, mmap, munmap, pollfd, PROT_READ, MAP_SHARED, MAP_FAILED, POLLIN};
 use anyhow::Result;
 
-// Correct ioctl numbers from kernel headers (x86_64)
-// NOTE: This module is x86_64-only. ioctl numbers and struct layouts are ABI-dependent.
-// For ARM/aarch64 support, replace with the `v4l` or `v4l2-sys` crates.
+// x86_64 only: ioctl numbers and struct layouts are ABI-dependent. Other
+// architectures need the `v4l` or `v4l2-sys` crates.
 const VIDIOC_G_FMT: u64 = 0xc0d05604;
 const VIDIOC_REQBUFS: u64 = 0xc0145608;
 const VIDIOC_QUERYBUF: u64 = 0xc0585609;
@@ -16,25 +15,27 @@ const VIDIOC_STREAMON: u64 = 0x40045612;
 const VIDIOC_STREAMOFF: u64 = 0x40045613;
 const VIDIOC_QUERYCAP: u64 = 0x80685600;
 
+const _: () = assert!(std::mem::size_of::<v4l2_format>() == 208);
+const _: () = assert!(std::mem::size_of::<v4l2_buffer>() == 88);
+const _: () = assert!(std::mem::size_of::<v4l2_capability>() == 104);
+
 const V4L2_BUF_TYPE_VIDEO_CAPTURE: u32 = 1;
 const V4L2_MEMORY_MMAP: u32 = 1;
 
-/// v4l2_fourcc('G','R','E','Y') — 8-bit greyscale, what most Windows Hello
-/// IR sensors expose.
+/// v4l2_fourcc('G','R','E','Y'): 8-bit greyscale.
 const V4L2_PIX_FMT_GREY: u32 = 0x5945_5247;
-/// v4l2_fourcc('Y','U','Y','V') — some IR sensors report packed YUYV with the
-/// IR intensity in the luma bytes.
+/// v4l2_fourcc('Y','U','Y','V'): some IR sensors put the intensity in luma.
 const V4L2_PIX_FMT_YUYV: u32 = 0x5659_5559;
-/// v4l2_fourcc('Y','1','6',' ') — 16-bit little-endian greyscale.
+/// v4l2_fourcc('Y','1','6',' '): 16-bit little-endian greyscale.
 const V4L2_PIX_FMT_Y16: u32 = 0x2036_3159;
 
-/// Formats `convert_frame_bytes` knows how to turn into luma samples. Anything
-/// else (MJPEG, RGB) is refused rather than reinterpreted as noise.
+/// Formats `convert_frame_bytes` reads. Anything else (MJPEG, RGB) is refused
+/// rather than compared as noise against a real template (pinned by
+/// `tests::refuses_compressed_formats`).
 fn supported_format(fourcc: u32) -> bool {
     matches!(fourcc, V4L2_PIX_FMT_GREY | V4L2_PIX_FMT_YUYV | V4L2_PIX_FMT_Y16)
 }
 
-/// Human-readable FourCC, e.g. "GREY".
 pub fn fourcc_to_string(fourcc: u32) -> String {
     fourcc
         .to_le_bytes()
@@ -43,29 +44,38 @@ pub fn fourcc_to_string(fourcc: u32) -> String {
         .collect()
 }
 
-/// Convert raw buffer bytes to u16 luma samples. 8-bit sources are widened by
-/// 257 (0..=255 -> 0..=65535) so every format lands in the same range the rest
-/// of the pipeline expects.
+/// Raw buffer bytes as 16-bit luma samples (pinned by
+/// `tests::converts_each_supported_format_to_widened_luma`).
 fn convert_frame_bytes(pixelformat: u32, bytes: &[u8]) -> Vec<u16> {
     match pixelformat {
-        // Y0 U Y1 V ...: luma sits at even offsets.
-        V4L2_PIX_FMT_YUYV => bytes.iter().step_by(2).map(|&y| y as u16 * 257).collect(),
+        V4L2_PIX_FMT_YUYV => yuyv_luma(bytes).map(widen_8_bit).collect(),
         V4L2_PIX_FMT_Y16 => bytes.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect(),
-        _ => bytes.iter().map(|&b| b as u16 * 257).collect(),
+        _ => bytes.iter().copied().map(widen_8_bit).collect(),
     }
 }
 
-/// Significant bits in a Y16 frame: the position of its highest set bit,
-/// never below 8. UVC doesn't say whether a 10- or 12-bit sensor's samples
-/// sit in the low or high bits of the 16-bit container (#109).
+/// Y0 U Y1 V ...: luma at even offsets.
+fn yuyv_luma(bytes: &[u8]) -> impl Iterator<Item = u8> + '_ {
+    bytes.iter().step_by(2).copied()
+}
+
+/// 0..=255 onto 0..=65535, the range every format is read into.
+fn widen_8_bit(sample: u8) -> u16 {
+    sample as u16 * 257
+}
+
+/// Significant bits in a Y16 frame: its highest set bit, never below 8. UVC
+/// doesn't say whether a 10- or 12-bit sensor's samples sit in the low or high
+/// bits of the container (pinned by `tests::y16_depth_comes_from_the_highest_set_bit`,
+/// `tests::a_dark_y16_frame_reads_as_8_bit`).
 fn y16_bits(samples: &[u16]) -> u32 {
     let max = samples.iter().copied().max().unwrap_or(0);
     (16 - max.leading_zeros()).max(8)
 }
 
 /// Scale low-aligned Y16 samples up to the full 16-bit range, so a 10-bit
-/// sensor doesn't read as `TooDark` on every frame. MSB-aligned data has a
-/// high bit set and passes through unchanged.
+/// sensor doesn't read as `TooDark` (pinned by
+/// `tests::low_aligned_y16_is_widened_and_msb_aligned_is_left_alone`).
 fn widen_y16(samples: &mut [u16], bits: u32) {
     if bits < 16 {
         for s in samples {
@@ -77,13 +87,12 @@ fn widen_y16(samples: &mut [u16], bits: u32) {
 /// Refuse implausible geometry from `G_FMT` before it sizes an allocation.
 const MAX_DIMENSION: u32 = 8192;
 
-/// Buffers to request from the driver. One is not enough: between `DQBUF` and
-/// `QBUF` the driver drops incoming frames, so two captures need not be
-/// adjacent, and on a strobing sensor "the brighter of two" could be two unlit
-/// frames. A ring keeps a buffer queued at all times.
+/// Buffers to request. With one, the driver drops frames between `DQBUF` and
+/// `QBUF`, so on a strobing sensor "the brighter of two" could be two unlit
+/// frames; a ring keeps a buffer queued at all times.
 const BUFFER_COUNT: u32 = 4;
 
-// Kernel struct v4l2_format: type(4) + padding(4) + union raw_data[200] = 208 bytes
+/// Kernel `struct v4l2_format`: type, padding, then the 200-byte union.
 #[repr(C)]
 struct v4l2_format {
     type_: u32,
@@ -128,7 +137,7 @@ struct v4l2_requestbuffers {
     reserved: [u32; 2],
 }
 
-// Kernel struct v4l2_buffer: 88 bytes
+/// Kernel `struct v4l2_buffer`.
 #[repr(C)]
 struct v4l2_buffer {
     index: u32,
@@ -154,8 +163,7 @@ pub struct IrFrame {
 }
 
 impl IrFrame {
-    /// Mean sample value, 0.0–65535.0. Accumulated in f64 because a 640x400
-    /// frame sums a quarter of a million terms.
+    /// Mean sample value, 0.0–65535.0.
     pub fn mean_intensity(&self) -> f64 {
         if self.data.is_empty() {
             return 0.0;
@@ -164,7 +172,6 @@ impl IrFrame {
     }
 }
 
-/// One mmap'd capture buffer.
 struct MappedBuffer {
     ptr: *mut c_void,
     length: usize,
@@ -177,8 +184,8 @@ pub struct Camera {
     height: u32,
     pixelformat: u32,
     stream_on: bool,
-    /// Y16 bit depth seen so far this session. Only ever rises, so an
-    /// emitter-dark frame can't be scaled up once a lit one has set the depth.
+    /// Highest Y16 bit depth seen this session. Only rises, so an emitter-dark
+    /// frame isn't scaled up once a lit one has set it.
     y16_bits: u32,
 }
 
@@ -196,10 +203,6 @@ impl Camera {
         let height = pix.height;
         let pixelformat = pix.pixelformat;
 
-        // Validate what the driver reports rather than assuming it. Pointed at
-        // an ordinary webcam streaming MJPEG this would otherwise reinterpret
-        // compressed bytes as greyscale and compare the noise against a real
-        // template.
         if !supported_format(pixelformat) {
             return Err(anyhow::anyhow!(
                 "{} reports pixel format '{}' ({:#010x}); expected GREY, YUYV or Y16 from an \
@@ -229,7 +232,7 @@ impl Camera {
             return Err(anyhow::anyhow!("{} allocated no capture buffers", device_path));
         }
 
-        // The driver may grant fewer buffers than requested; honour what it says.
+        // The driver may grant fewer than requested.
         let mut buffers: Vec<MappedBuffer> = Vec::with_capacity(reqbuf.count as usize);
         for index in 0..reqbuf.count {
             let mut buf = v4l2_buffer {
@@ -253,7 +256,6 @@ impl Camera {
                 )
             };
             if ptr == MAP_FAILED {
-                // Unmap whatever succeeded before giving up.
                 for b in &buffers {
                     unsafe { munmap(b.ptr, b.length) };
                 }
@@ -266,14 +268,12 @@ impl Camera {
     }
 
     /// Queue every buffer and start streaming; a no-op once streaming.
-    /// `capture_frame` calls it on first use, so calling it early only moves
-    /// the sensor's warm-up off the critical path.
+    /// Calling it before `capture_frame` moves the sensor's warm-up off the
+    /// critical path.
     pub fn start_stream(&mut self) -> Result<()> {
         if self.stream_on {
             return Ok(());
         }
-        // Queue every buffer before streaming, so the driver always has
-        // somewhere to write and never has to drop a frame.
         for index in 0..self.buffers.len() as u32 {
             let buf = v4l2_buffer {
                 index,
@@ -290,15 +290,12 @@ impl Camera {
     }
 
     /// Hand back every frame the driver has already finished, so the next
-    /// read is a fresh one. The ring returns its oldest frame first, so when
-    /// the caller is slower than the sensor it would otherwise work on frames
-    /// several periods old.
+    /// read is fresh rather than the ring's oldest.
     pub fn discard_queued(&mut self) {
         if !self.stream_on {
             return;
         }
-        // The ring holds `buffers.len()` frames at most; the bound only guards
-        // a driver that keeps reporting readiness.
+        // Bounded only against a driver that keeps reporting readiness.
         for _ in 0..self.buffers.len() {
             let mut pfd = pollfd { fd: self.fd.as_raw_fd(), events: POLLIN, revents: 0 };
             if unsafe { libc::poll(&mut pfd, 1, 0) } <= 0 {
@@ -352,9 +349,8 @@ impl Camera {
             ));
         };
 
-        // `bytesused` comes from the driver and is not trusted to fit the
-        // mapping: this is the one place external data sizes an unsafe read,
-        // and an oversized value would run off the end of the mmap.
+        // `bytesused` comes from the driver and sizes an unsafe read: clamp it
+        // to the mapping.
         let bytes_used = (buf.bytesused as usize).min(mapped.length);
         if bytes_used < buf.bytesused as usize {
             tracing::warn!(
@@ -374,7 +370,6 @@ impl Camera {
             widen_y16(&mut data, bits);
         }
 
-        // Hand the buffer straight back so the ring stays full.
         let _ = ioctl(self.fd.as_raw_fd(), VIDIOC_QBUF, &mut buf as *mut _ as *mut c_void);
 
         let expected = self.width as usize * self.height as usize;
@@ -392,22 +387,17 @@ impl Camera {
         Ok(IrFrame { data, width: self.width, height: self.height })
     }
 
-    /// Capture a frame, preferring an illuminated one.
+    /// The brighter of two consecutive frames.
     ///
-    /// Windows Hello IR modules commonly strobe their illuminator, emitting a
-    /// lit frame and a near-black ambient frame alternately. On the reference
-    /// ASUS sensor the lit frames average 48–96 (of 255) and the dark ones
-    /// 2–8, strictly alternating at 15 fps.
-    ///
-    /// A dark frame is worse than useless: equalisation stretches its noise
-    /// into a high-contrast field, and a capture interval of an even number of
-    /// frames can lock onto the dark phase. The brighter of two consecutive
-    /// frames avoids both without assuming a strobe exists.
+    /// IR modules commonly strobe the illuminator, alternating lit and
+    /// near-black frames (the reference ASUS sensor: 48–96 vs 2–8 of 255 at
+    /// 15 fps). Equalisation turns a dark frame's noise into a high-contrast
+    /// field, and a fixed capture interval can lock onto the dark phase. This
+    /// avoids both without assuming a strobe exists.
     pub fn capture_illuminated_frame(&mut self, timeout_ms: i32) -> Result<IrFrame> {
         self.discard_queued();
         let first = self.capture_frame(timeout_ms)?;
 
-        // If the second capture fails, the first is still a usable answer.
         let second = match self.capture_frame(timeout_ms) {
             Ok(f) => f,
             Err(e) => {
@@ -462,8 +452,7 @@ fn ioctl(fd: i32, request: u64, arg: *mut c_void) -> Result<i32> {
     }
 }
 
-// Kernel struct v4l2_capability: driver[16] + card[32] + bus_info[32] +
-// version + capabilities + device_caps + reserved[3] = 104 bytes.
+/// Kernel `struct v4l2_capability`.
 #[repr(C)]
 struct v4l2_capability {
     driver: [u8; 16],
@@ -576,11 +565,9 @@ fn video_kernel_name(video_path: &str) -> Result<String> {
     Ok(name.to_string_lossy().into_owned())
 }
 
-/// Does this V4L2 device name look like an IR sensor?
-///
-/// Matched on word boundaries rather than as a substring: plain `contains("ir")`
-/// also fires on "Virtual Camera" (v4l2loopback) and "BRIO", either of which
-/// would be picked as the authentication camera ahead of the real IR sensor.
+/// Does this V4L2 device name look like an IR sensor? Whole words only
+/// (pinned by `tests::recognises_ir_camera_names`,
+/// `tests::does_not_match_ir_inside_unrelated_words`).
 pub fn name_suggests_ir(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower
@@ -588,20 +575,16 @@ pub fn name_suggests_ir(name: &str) -> bool {
         .any(|word| word == "ir" || word == "infrared")
 }
 
-/// Is this node backed by real hardware rather than a virtual (v4l2loopback)
-/// device? Any local user can write frames into an existing loopback node,
-/// and its name is just a module parameter, so it is never auto-detected or
-/// accepted from a user's config, however IR-like its name. Root can still
-/// name one with `device` in the system config, e.g. for testing.
+/// Not a virtual (v4l2loopback) node. Any local user can write frames into a
+/// loopback node and its name is a module parameter, so one is never
+/// auto-detected or accepted from a user's config. Root can still name one in
+/// the system config.
 pub fn is_physical(path: &str) -> bool {
     device_bus_path(path).is_ok_and(|p| !p.contains("/virtual/"))
 }
 
-/// Does this node stream native greyscale?
-///
-/// Catches IR sensors whose sysfs name says nothing useful (e.g. a combined
-/// module named "Integrated_Webcam_FHD: Integrat", truncated at 32 bytes).
-/// RGB webcams do not stream GREY or Y16.
+/// Native greyscale: an IR sensor whose sysfs name says nothing useful
+/// ("Integrated_Webcam_FHD: Integrat"). RGB webcams don't stream GREY or Y16.
 fn streams_greyscale(path: &str) -> bool {
     query_format(path)
         .is_ok_and(|(_, _, fourcc)| matches!(fourcc, V4L2_PIX_FMT_GREY | V4L2_PIX_FMT_Y16))
@@ -611,12 +594,8 @@ fn looks_like_ir(path: &str, name: &str) -> bool {
     is_physical(path) && (name_suggests_ir(name) || streams_greyscale(path))
 }
 
-/// Enumerate IR capture devices, best candidate first.
-///
-/// UVC cameras commonly expose several `/dev/videoN` nodes under one name —
-/// typically a capture node followed by a metadata node that accepts no
-/// frames. Each candidate is opened to confirm it really is a capture device
-/// in a supported format before being offered.
+/// IR capture devices, best candidate first. Each is opened first: UVC
+/// cameras put a metadata node that takes no frames under the same name.
 pub fn enumerate_ir_cameras() -> Vec<(String, String)> {
     let base = std::path::Path::new("/sys/class/video4linux");
     let mut candidates: Vec<(String, String)> = Vec::new();
@@ -636,21 +615,18 @@ pub fn enumerate_ir_cameras() -> Vec<(String, String)> {
             candidates.push((path, name));
         }
     }
-    // An explicit IR name ranks ahead of a format-only match; within each,
-    // sort numerically so /dev/video9 orders before /dev/video10.
-    candidates.sort_by_key(|(path, name)| {
-        (
-            !name_suggests_ir(name),
-            path.trim_start_matches("/dev/video")
-                .parse::<u32>()
-                .unwrap_or(u32::MAX),
-            path.clone(),
-        )
-    });
+    candidates.sort_by_key(|(path, name)| candidate_rank(path, name));
     candidates
         .into_iter()
         .filter(|(path, _)| Camera::open(path).is_ok())
         .collect()
+}
+
+/// An IR name ahead of a format-only match, then numerically by node
+/// (pinned by `tests::ir_names_rank_first_then_nodes_numerically`).
+fn candidate_rank(path: &str, name: &str) -> (bool, u32, String) {
+    let node = path.trim_start_matches("/dev/video").parse::<u32>().unwrap_or(u32::MAX);
+    (!name_suggests_ir(name), node, path.to_owned())
 }
 
 pub fn detect_ir_camera() -> Option<String> {
@@ -660,14 +636,10 @@ pub fn detect_ir_camera() -> Option<String> {
         .map(|(path, _)| path)
 }
 
-/// Is `path` a real IR capture device on this machine?
-///
-/// Lets an unprivileged setting name *which* IR sensor to use without letting
-/// it name an arbitrary video source: the device must live under `/dev`, be
-/// physical hardware with an IR-looking name in sysfs or a greyscale format,
-/// and open as a supported capture node. Selecting
-/// among the sensors physically present is a preference; pointing the
-/// authentication camera at some other stream is not.
+/// Is `path` a real IR capture device on this machine? Lets an unprivileged
+/// setting choose among the sensors present, never another video source: a
+/// node directly under `/dev`, physical, IR by name or format, and opening as
+/// a supported capture node.
 pub fn is_ir_capture_device(path: &str) -> bool {
     let Some(node) = path.strip_prefix("/dev/") else {
         return false;
@@ -686,7 +658,6 @@ pub fn is_ir_capture_device(path: &str) -> bool {
         return false;
     }
 
-    // Camera::open enforces a supported pixel format and sane geometry.
     Camera::open(path).is_ok()
 }
 
@@ -712,7 +683,6 @@ mod tests {
     #[test]
     fn converts_each_supported_format_to_widened_luma() {
         assert_eq!(convert_frame_bytes(V4L2_PIX_FMT_GREY, &[0, 1, 255]), vec![0, 257, 65535]);
-        // Y0 U Y1 V: chroma bytes are dropped.
         assert_eq!(convert_frame_bytes(V4L2_PIX_FMT_YUYV, &[10, 99, 20, 99]), vec![2570, 5140]);
         assert_eq!(convert_frame_bytes(V4L2_PIX_FMT_Y16, &[0x34, 0x12]), vec![0x1234]);
     }
@@ -722,7 +692,10 @@ mod tests {
         assert_eq!(y16_bits(&[0, 1023, 5]), 10);
         assert_eq!(y16_bits(&[4095]), 12);
         assert_eq!(y16_bits(&[0xff00]), 16);
-        // Dark or empty frames never read as deeper than 8-bit data.
+    }
+
+    #[test]
+    fn a_dark_y16_frame_reads_as_8_bit() {
         assert_eq!(y16_bits(&[3, 20]), 8);
         assert_eq!(y16_bits(&[]), 8);
     }
@@ -747,10 +720,20 @@ mod tests {
 
     #[test]
     fn does_not_match_ir_inside_unrelated_words() {
-        // These are the cases plain substring matching got wrong.
         assert!(!name_suggests_ir("Virtual Camera"));
         assert!(!name_suggests_ir("Logitech BRIO"));
         assert!(!name_suggests_ir("Integrated Webcam"));
         assert!(!name_suggests_ir("Mirror Cam"));
+    }
+
+    #[test]
+    fn ir_names_rank_first_then_nodes_numerically() {
+        let mut nodes = [
+            ("/dev/video10", "Integrated Webcam"),
+            ("/dev/video9", "Integrated Webcam"),
+            ("/dev/video12", "IR Camera"),
+        ];
+        nodes.sort_by_key(|(path, name)| candidate_rank(path, name));
+        assert_eq!(nodes.map(|(path, _)| path), ["/dev/video12", "/dev/video9", "/dev/video10"]);
     }
 }

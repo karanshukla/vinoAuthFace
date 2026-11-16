@@ -2,15 +2,21 @@
 
 use super::*;
 
+/// Where a number's slider starts, so that drawing it changes nothing: on the
+/// step, since an f32 widened to f64 (0.6 is 0.60000002) would snap and read
+/// as a change, and inside the range, since the slider would clamp a user's
+/// value below this computer's floor and write it back unasked (pinned by
+/// `tests::a_widened_f32_starts_on_its_own_step`,
+/// `tests::a_value_below_the_range_starts_at_its_floor`).
+fn shown_value(value: f64, step: f64, range: &RangeInclusive<f64>) -> f64 {
+    ((value / step).round() * step).clamp(*range.start(), *range.end())
+}
+
 impl SettingsWindow {
     pub(super) fn number(&mut self, ui: &mut egui::Ui, user: bool, key: Key, n: Num<'_>) {
         let set = self.file(user).is_set(key);
-        // Rounded to the step first: an f32 widened to f64 (0.6 is
-        // 0.60000002) would otherwise snap to the step and read as a change.
         let step = n.unit.step();
-        // And inside the range: a value of the user's below this computer's
-        // floor would be clamped by the slider, and written back unasked.
-        let before = ((n.value / step).round() * step).clamp(*n.range.start(), *n.range.end());
+        let before = shown_value(n.value, step, &n.range);
         let mut v = before;
         let mut out = None;
         Row::new(n.title).help(&n.help).tone(n.tone).show(ui, |ui, named| {
@@ -207,5 +213,22 @@ impl SettingsWindow {
         if picked != current {
             self.set(user, keys::DEVICE, picked.as_deref().map(keys::string));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_widened_f32_starts_on_its_own_step() {
+        let widened = f64::from(0.6f32);
+        assert_ne!(widened, 0.6);
+        assert!((shown_value(widened, 0.01, &(0.3..=1.0)) - 0.6).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_value_below_the_range_starts_at_its_floor() {
+        assert_eq!(shown_value(0.4, 0.01, &(0.5..=1.0)), 0.5);
     }
 }

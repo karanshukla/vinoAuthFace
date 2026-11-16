@@ -33,6 +33,20 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
+  # Every `tests::name` a comment cites is a real #[test] fn
+  # (docs/comment-style.md). Also part of `cargo test`; its own job so a
+  # broken citation is named on the PR.
+  doc-links:
+    name: Doc Links
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - run: cargo test --locked -p face-auth-core --test doc_links
+
   deny:
     runs-on: ubuntu-latest
     steps:

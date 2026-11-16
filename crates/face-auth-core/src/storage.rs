@@ -24,9 +24,8 @@ const EMBEDDING_DIM: u32 = 512;
 /// A tag is a file name; bounded like `MAX_EMBEDDINGS`.
 const MAX_MODEL_TAG_LEN: u32 = 255;
 
-/// Upper bound on stored embeddings per user. `count` is read off disk and
-/// sizes an allocation, so it is bounded before use. Pinned by
-/// `check_room_allows_up_to_the_limit`.
+/// Upper bound on stored embeddings per user: `count` is read off disk and
+/// sizes an allocation (pinned by `tests::check_room_allows_up_to_the_limit`).
 const MAX_EMBEDDINGS: u32 = 256;
 
 /// Refuses an enrolment that would pass `MAX_EMBEDDINGS`, before the camera opens.
@@ -141,15 +140,13 @@ fn read_body(reader: &mut impl Read) -> anyhow::Result<Vec<Vec<f32>>> {
         for val in &mut embedding {
             *val = reader.read_f32::<LittleEndian>()?;
         }
-        // A non-finite stored value makes every comparison NaN, which
-        // fails closed but silently. Reject it as corruption instead.
+        // NaN fails closed but silently: call it corruption.
         if !embedding.iter().all(|v| v.is_finite()) {
             return Err(FaceAuthError::InvalidEmbeddingFormat.into());
         }
         embeddings.push(embedding);
     }
 
-    // Trailing bytes mean this is not the file we think it is.
     let mut trailing = [0u8; 1];
     if reader.read(&mut trailing)? != 0 {
         return Err(FaceAuthError::InvalidEmbeddingFormat.into());
@@ -316,7 +313,7 @@ impl EmbeddingStore {
             fs::DirBuilder::new().recursive(true).mode(EMBEDDINGS_DIR_MODE).create(parent)?;
         }
         ensure_dir(&user_dir, EMBEDDINGS_DIR_MODE)?;
-        // The group cannot create entries in the user directory, so root makes this now.
+        // The group can't create it later.
         ensure_dir(&lockout_dir(&user_dir), LOCKOUT_DIR_MODE)?;
 
         // Unique, exclusive, never followed: a pre-planted name can't redirect the write.
@@ -352,8 +349,8 @@ impl EmbeddingStore {
             }
 
             writer.flush()?;
-            // Rename alone is atomic but not durable: without this a crash can
-            // leave a present-but-empty template file, locking the user out.
+            // Rename is atomic, not durable: a crash could leave an empty
+            // template file.
             writer.get_ref().sync_all()?;
         }
 

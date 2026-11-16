@@ -27,9 +27,8 @@ fn reject_remote_session() -> Result<(), String> {
     remote_session(env::var_os("PAM_RHOST").as_deref())
 }
 
-/// Unset is local. A value that isn't UTF-8 can't be a loopback address or
-/// `localhost`, so it is remote: reading it with `env::var` turned it into
-/// "unset" and let it through.
+/// Unset is local; a value that isn't UTF-8 is remote (pinned by
+/// `tests::a_non_utf8_rhost_is_remote_not_unset`).
 fn remote_session(rhost: Option<&std::ffi::OsStr>) -> Result<(), String> {
     let Some(rhost) = rhost else {
         return Ok(());
@@ -45,9 +44,9 @@ fn remote_session(rhost: Option<&std::ffi::OsStr>) -> Result<(), String> {
     }
 }
 
-/// Empty, exactly `localhost`, or a loopback IP address. Anything else is
-/// remote, hostnames included: `127.evil.example.com` is a name, not an
-/// address, and resolving it would let DNS decide.
+/// Empty, exactly `localhost`, or a loopback IP address. Hostnames are never
+/// resolved: that would let DNS decide (pinned by
+/// `tests::only_loopback_addresses_and_localhost_are_local`).
 fn rhost_is_local(rhost: &str) -> bool {
     rhost.is_empty()
         || rhost == "localhost"
@@ -66,12 +65,11 @@ fn skip_reason(config: &FaceAuthConfig) -> Option<SkipReason> {
         return Some(SkipReason::SshSession);
     }
     if config.abort_if_lid_closed() && environment::lid_closed(Path::new("/proc/acpi/button/lid")) {
-        // An external IR camera still sees a docked user with the lid shut.
-        let external = config
+        let docked_with_external_camera = config
             .device()
             .and_then(|device| capture::device_bus_path(&device))
             .is_ok_and(|bus| environment::camera_is_external(Path::new(&bus)));
-        if !external {
+        if !docked_with_external_camera {
             return Some(SkipReason::LidClosed);
         }
     }
@@ -114,9 +112,9 @@ fn fail_auth(msg: &str) -> ! {
     std::process::exit(1)
 }
 
-/// A misconfiguration: PAM did not supply a user, the config is broken, a model
-/// is missing, the camera is unusable. These are rare, actionable, and useless
-/// if silent — an admin has to be able to see them without setting RUST_LOG.
+/// A misconfiguration (no PAM user, broken config, missing model, unusable
+/// camera): logged at error and to syslog, so an admin sees it without
+/// `RUST_LOG`.
 fn fail_setup(msg: &str) -> ! {
     tracing::error!("{msg}");
     audit(libc::LOG_ERR, msg);
@@ -144,14 +142,7 @@ fn scrub_caller_environment() {
     if !borrowed {
         return;
     }
-    // Root running `--verify` by hand (`sudo env RUST_LOG=... vinoauthface-auth
-    // --verify`) still counts as borrowed, since the set-group-ID bit leaves
-    // the real and effective group apart. Its log filter is root's own
-    // choice, so keep it. Under pam_exec the arguments come from the
-    // root-owned PAM line and are never `--verify`, and a lock screen's real
-    // uid isn't root.
-    let root_verify = unsafe { libc::getuid() } == 0 && env::args().nth(1).as_deref() == Some("--verify");
-    let kept = environment_to_keep(|k| env::var_os(k), root_verify);
+    let kept = environment_to_keep(|k| env::var_os(k), root_running_verify());
     let all: Vec<std::ffi::OsString> = env::vars_os().map(|(k, _)| k).collect();
     for key in all {
         env::remove_var(key);
@@ -162,7 +153,22 @@ fn scrub_caller_environment() {
     env::set_var("PATH", "/usr/sbin:/usr/bin:/sbin:/bin");
 }
 
-/// What survives [`scrub_caller_environment`], read through `get`.
+/// `sudo env RUST_LOG=... vinoauthface-auth --verify`: still "borrowed" (the
+/// set-group-ID bit splits real and effective group), but the log filter is
+/// root's own choice. pam_exec never passes `--verify` (the PAM line is
+/// root-owned) and a lock screen's real uid isn't root.
+fn root_running_verify() -> bool {
+    caller_is_root() && env::args().nth(1).as_deref() == Some("--verify")
+}
+
+/// Real uid, not effective: under sudo the effective uid is 0 for any caller.
+fn caller_is_root() -> bool {
+    unsafe { libc::getuid() } == 0
+}
+
+/// What survives [`scrub_caller_environment`], read through `get` (pinned by
+/// `tests::only_what_pam_exec_sets_survives_the_scrub`,
+/// `tests::root_running_verify_keeps_its_log_filter`).
 fn environment_to_keep(
     get: impl Fn(&str) -> Option<std::ffi::OsString>,
     root_verify: bool,
@@ -174,28 +180,25 @@ fn environment_to_keep(
         .collect()
 }
 
-/// Root-owned directory the Intel NPU driver may cache compiled models in.
-/// Created by `deploy.sh`, `root:root 0755`.
+/// Where the NPU driver caches compiled models; `deploy.sh` makes it
+/// `root:root 0755`.
 const NPU_CACHE_HOME: &str = "/var/cache/face-auth";
 
 /// Pin the working directory and `HOME` before OpenVINO loads.
 ///
-/// The NPU driver caches compiled model blobs under `$HOME/.cache`, falling
-/// back to a *relative* `.cache` when `HOME` is unset, so it used whatever
-/// directory vinoauthface-auth was started from. Under sudo that meant root reading
-/// and writing a model cache in a directory the user controls, and the blobs
-/// are only checksummed, not authenticated: a planted one is a model the NPU
-/// runs. Pointing `HOME` at a root-owned directory means only root paths
-/// (sudo, GDM, polkit) populate the cache, and the lock screen, running as
-/// the user, can read it but gets a cache miss rather than a write.
+/// The NPU driver caches compiled blobs under `$HOME/.cache`, or a relative
+/// `.cache` when `HOME` is unset. The blobs are checksummed, not
+/// authenticated, so a planted one is a model the NPU runs: only root paths
+/// (sudo, GDM, polkit) may write the cache. The lock screen, as the user,
+/// reads it and misses rather than writes.
 fn pin_process_context() {
     let _ = env::set_current_dir("/");
     env::set_var("HOME", NPU_CACHE_HOME);
 }
 
-/// A caller that is not root may only test its own face. Without this, the
-/// set-group-ID binary would let any user probe another account's templates and
-/// drive that account's lockout.
+/// A caller that is not root may only test its own face, so the
+/// set-group-ID binary can't probe another account's templates or lockout
+/// (pinned by `tests::another_user_may_not_probe_an_account`).
 fn caller_may_authenticate(caller: u32, target_uid: u32) -> bool {
     caller == 0 || caller == target_uid
 }
@@ -210,19 +213,16 @@ enum Refusal {
 }
 
 /// The gates ahead of the config and the camera, in order: a `PAM_USER`
-/// (the only authoritative identity here), an NSS lookup of it, a caller
-/// allowed to test that account, and a local session. Every one fails
-/// closed. `remote` is [`reject_remote_session`]; passed in so tests can
-/// drive it.
+/// (never `USER`, `LOGNAME` or `id -un`, which name the caller or the
+/// environment), an NSS lookup of it, a caller allowed to test that account,
+/// and a local session. Every one fails closed. `remote` is
+/// [`reject_remote_session`].
 fn pre_scan(
     pam_user: Option<String>,
     caller_uid: u32,
     lookup: impl FnOnce(&str) -> anyhow::Result<user::UserInfo>,
     remote: impl FnOnce() -> Result<(), String>,
 ) -> Result<user::UserInfo, Refusal> {
-    // USER, LOGNAME and `id -un` are environment strings or the *invoking*
-    // account, not the account being authenticated, and trusting them lets
-    // the wrong template decide the answer.
     let username = match pam_user {
         Some(u) if !u.is_empty() => u,
         _ => {
@@ -231,8 +231,6 @@ fn pre_scan(
             ))
         }
     };
-    // NSS also rejects anything that is not a real, well-formed account name
-    // before it becomes a path component.
     let info = lookup(&username).map_err(|e| Refusal::Setup(format!("cannot authenticate '{username}': {e}")))?;
     if !caller_may_authenticate(caller_uid, info.uid) {
         return Err(Refusal::Auth(format!(
@@ -244,39 +242,27 @@ fn pre_scan(
     Ok(info)
 }
 
-/// Interactive verification against a stored template. Prints a human-readable
-/// result and exits 0 on a match, 1 otherwise.
+/// The value, or `{prefix}{error}` on stderr and exit 2, for the command-line
+/// modes.
+fn or_exit<T>(result: Result<T, impl std::fmt::Display>, prefix: &str) -> T {
+    result.unwrap_or_else(|e| {
+        eprintln!("{prefix}{e}");
+        std::process::exit(2)
+    })
+}
+
+/// Interactive verification against a stored template, set up as the PAM
+/// path is so timings match an unlock. Exits 0 on a match, 1 otherwise.
 fn run_verify(name: &str) -> ! {
-    // Real user ID, not effective: under sudo the effective user ID is 0 even
-    // though the caller is not root.
-    if unsafe { libc::getuid() } != 0 {
+    if !caller_is_root() {
         eprintln!("--verify reads root-owned templates; re-run with sudo or pkexec");
         std::process::exit(2);
     }
-    let info = match user::lookup(name) {
-        Ok(info) => info,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(2);
-        }
-    };
-    let config = match FaceAuthConfig::load_for_auth(&info.name) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("config error: {e}");
-            std::process::exit(2);
-        }
-    };
+    let info = or_exit(user::lookup(name), "");
+    let config = or_exit(FaceAuthConfig::load_for_auth(&info.name), "config error: ");
     let window = config.scan_duration_ms();
     let interval = config.scan_interval_ms();
-    // The same setup as the PAM path, so timings here match an unlock.
-    let (mut auth, prepared) = match FaceAuth::new_for_scan(config, &info.name, |_| {}) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("init error: {e}");
-            std::process::exit(2);
-        }
-    };
+    let (mut auth, prepared) = or_exit(FaceAuth::new_for_scan(config, &info.name, |_| {}), "init error: ");
     match auth.authenticate_prepared(&info.name, prepared, window, interval) {
         Ok(true) => {
             println!("match");
@@ -293,31 +279,23 @@ fn run_verify(name: &str) -> ! {
     }
 }
 
-/// Compile both models once as root so the NPU cache is populated before the
-/// first unlock. The lock screen runs as the user and cannot write the cache,
-/// so without this every lock-screen unlock after a deploy recompiles both
-/// models on the CPU until something root (sudo, polkit) authenticates.
-/// Models, backend and device are system-only settings, so the system config
-/// compiles exactly what the PAM path will look up.
+/// Compile both models as root so the NPU cache is filled before the first
+/// unlock: the lock screen runs as the user and can't write it. Models,
+/// backend and device are system-only settings, so the system config compiles
+/// exactly what the PAM path will look up.
 fn run_warm_cache() -> ! {
-    if unsafe { libc::getuid() } != 0 {
+    if !caller_is_root() {
         eprintln!("--warm-cache writes the root-owned NPU cache; re-run with sudo");
         std::process::exit(2);
     }
-    let config = match FaceAuthConfig::load_system() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("config error: {e}");
-            std::process::exit(2);
-        }
-    };
+    let config = or_exit(FaceAuthConfig::load_system(), "config error: ");
     if config.backend() != "openvino" {
         println!("backend is {}: nothing to cache", config.backend());
         std::process::exit(0);
     }
     let device = config.npu_device();
-    // The backends fall back to tract without OpenVINO, which would compile
-    // nothing and still report success here.
+    // Without OpenVINO the backends fall back to tract and this would
+    // "succeed" having compiled nothing.
     #[cfg(feature = "npu")]
     if face_auth_core::inference::find_openvino().is_none() {
         eprintln!("cannot compile the models for {device}: {}", face_auth_core::inference::OpenVinoMissing);
@@ -353,27 +331,13 @@ fn run_openvino_devices() -> ! {
     }
 }
 
-/// Does the caller have templates? Exit 0 yes, 1 no, 2 error. For the tray's
-/// status line, which runs as the user and cannot open the store. Answers
-/// only for the real user ID, so it says nothing about any other account, and
-/// reads the store path from the system config alone.
+/// Does the caller have templates? Exit 0 yes, 1 no, 2 error. For the tray,
+/// which runs as the user and can't open the store. Answers only for the
+/// real uid, from the system config's store path alone.
 fn run_enrolled() -> ! {
-    let info = match user::current() {
-        Ok(info) => info,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(2);
-        }
-    };
-    let config = match FaceAuthConfig::load_system() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("config error: {e}");
-            std::process::exit(2);
-        }
-    };
-    // EmbeddingStore::load reads a missing file as "not enrolled", and a
-    // store it cannot see into looks missing. That is an error here, not a no.
+    let info = or_exit(user::current(), "");
+    let config = or_exit(FaceAuthConfig::load_system(), "config error: ");
+    // A store we can't see into would read as "not enrolled": that's an error.
     let dir = config.embeddings_dir();
     if let Err(e) = std::fs::read_dir(&dir) {
         eprintln!("cannot read {}: {e}", dir.display());
@@ -409,17 +373,14 @@ fn main() {
 
     let t0 = Instant::now();
 
-    // `--verify <user>` tests a stored face without going through PAM. It
-    // reads the same root-owned templates the PAM path does, so it requires
-    // root; it grants nothing a root caller did not already have.
     let argv: Vec<String> = env::args().skip(1).collect();
     if !argv.is_empty() {
         match argv.as_slice() {
             [flag, name] if flag == "--verify" => run_verify(name),
             [flag] if flag == "--warm-cache" => run_warm_cache(),
             [flag] if flag == "--enrolled" => run_enrolled(),
-            // For the install scripts: which backend this binary can run.
-            // Since the npu build loads OpenVINO at run time, ldd can't tell.
+            // For the install scripts: the npu build loads OpenVINO at run
+            // time, so ldd can't tell the builds apart.
             [flag] if flag == "--build" => {
                 println!("{}", if cfg!(feature = "npu") { "openvino" } else { "tract" });
                 std::process::exit(0)
@@ -437,9 +398,9 @@ fn main() {
         }
     }
 
-    // With `pam_exec.so stdout`, stderr reaches the user too, as PAM
-    // messages on a lock screen. The scan prompt is the only line meant for
-    // them; failures go to syslog through `audit`.
+    // With `pam_exec.so stdout`, stderr also reaches the lock screen as PAM
+    // messages. Only the scan prompt is meant for the user; failures go to
+    // `audit`.
     let relayed = prompt::relayed();
     if relayed {
         silence_stderr();
@@ -452,7 +413,6 @@ fn main() {
         Err(Refusal::Auth(msg)) => fail_auth(&msg),
     };
 
-    // System config only, plus a strictly-narrowing overlay from the user.
     let config = match FaceAuthConfig::load_for_auth(&info.name) {
         Ok(c) => c,
         Err(e) => fail_setup(&format!("config error: {e}")),
@@ -472,14 +432,13 @@ fn main() {
     let scan_interval = config.scan_interval_ms();
     let surface = environment::classify_pam_service(env::var("PAM_SERVICE").ok().as_deref());
     let confirm = config.require_confirmation_for(surface);
-    // With sealing on, plaintext stores are refused, so a match means an unseal.
     let store_kind = if config.seal_embeddings() { "sealed" } else { "plaintext" };
     let service = env::var("PAM_SERVICE").unwrap_or_else(|_| "?".into());
     let outcome = |what: &str| {
         format!("{what} for '{}' (service {service}, {store_kind} templates)", info.name)
     };
 
-    // The start delay runs beside the model load, ahead of any camera use.
+    // The start delay runs alongside the model load, before the camera opens.
     let (mut auth, prepared) = match FaceAuth::new_for_scan(config, &info.name, wait_for_start_delay) {
         Ok(a) => a,
         Err(e) => fail_setup(&format!("init error: {e}")),
@@ -566,7 +525,6 @@ mod tests {
 
     #[test]
     fn another_user_may_not_probe_an_account() {
-        // The set-group-ID binary run by bob against alice's templates and lockout.
         let got = pre_scan(Some("alice".into()), 1001, found, unreached);
         assert_eq!(got.unwrap_err(), Refusal::Auth("caller user ID 1001 may not authenticate 'alice'".into()));
     }
@@ -580,8 +538,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn only_what_pam_exec_sets_survives_the_scrub() {
+    /// What survives the scrub of a caller environment with PAM's variables
+    /// and some of the caller's own.
+    fn kept_keys(root_verify: bool) -> Vec<&'static str> {
         let caller_env = |k: &str| -> Option<std::ffi::OsString> {
             match k {
                 "PAM_USER" => Some("alice".into()),
@@ -591,12 +550,17 @@ mod tests {
                 _ => None,
             }
         };
-        let keys = |root_verify| -> Vec<&str> {
-            environment_to_keep(caller_env, root_verify).into_iter().map(|(k, _)| k).collect()
-        };
-        assert_eq!(keys(false), ["PAM_USER", "PAM_SERVICE", "PAM_TTY"]);
-        // Root running --verify by hand keeps its own log filter, nothing more.
-        assert_eq!(keys(true), ["PAM_USER", "PAM_SERVICE", "PAM_TTY", "RUST_LOG"]);
+        environment_to_keep(caller_env, root_verify).into_iter().map(|(k, _)| k).collect()
+    }
+
+    #[test]
+    fn only_what_pam_exec_sets_survives_the_scrub() {
+        assert_eq!(kept_keys(false), ["PAM_USER", "PAM_SERVICE", "PAM_TTY"]);
+    }
+
+    #[test]
+    fn root_running_verify_keeps_its_log_filter() {
+        assert_eq!(kept_keys(true), ["PAM_USER", "PAM_SERVICE", "PAM_TTY", "RUST_LOG"]);
     }
 
     #[test]

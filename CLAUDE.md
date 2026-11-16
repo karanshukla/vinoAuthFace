@@ -64,6 +64,10 @@ cargo deny check
   from main's copy via `pull_request_target`, so changes to it only take effect once merged.
 - The `main` ruleset requires a PR plus `test`, `clippy`, `deny`, `deploy-script` and `guard`.
   Dependabot PRs always trip `guard` by design and merge through the owner bypass.
+- Comments follow [docs/comment-style.md](docs/comment-style.md): a comment is the last resort
+  (extract, name, or pin a rule with a named test pair first), and a rule's test is cited from
+  the code as ``(pinned by `tests::name`)``. `crates/face-auth-core/tests/doc_links.rs` (CI job
+  Doc Links, also part of `cargo test`) fails on a citation with no such `#[test]` in any crate.
 - rustfmt is deliberately *not* enforced: upstream isn't fmt-clean, and reformatting its files
   would make every resync conflict. Match the surrounding style by hand.
 - Every Actions `uses:` is pinned to a commit SHA with a version comment.

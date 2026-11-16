@@ -5,10 +5,13 @@ use tract_onnx::tract_hir::infer::Factoid;
 
 use crate::capture::IrFrame;
 
-// Frame-quality gates in 8-bit-equivalent units, comparable to what
-// `cargo run --example frame-stats` prints. The mean gate must carry the
-// dark-frame rejection: dark strobe frames have enough variance to pass a
-// variance-only gate. Pinned by the `*_minimum_mean` and `*_minimum_variance` tests.
+// Frame-quality gates in 8-bit units, as `cargo run --example frame-stats`
+// prints them. The mean gate carries dark-frame rejection: dark strobe frames
+// have enough variance to pass a variance-only gate (pinned by
+// `tests::unlit_strobe_frame_is_too_dark`, `tests::accepts_frame_at_minimum_mean`,
+// `tests::rejects_frame_below_minimum_mean`,
+// `tests::accepts_frame_above_minimum_variance`,
+// `tests::rejects_frame_below_minimum_variance`).
 //
 // Measured on the reference ASUS IR sensor:
 //   illuminated frames   mean 48-96,  variance  82-317
@@ -352,8 +355,7 @@ impl FaceDetector {
             tracing::debug!(patched, "SCRFD: upsample scales made explicit for tract");
         }
         let [h, w] = kind.input_hw();
-        // The input fact is required before optimisation: without a concrete
-        // shape the graph stays symbolic and tract cannot lower it.
+        // Without a concrete input shape tract can't lower the graph.
         let model = model
             .with_input_fact(0, InferenceFact::dt_shape(f32::datum_type(), tvec!(1, 3, h, w)))?
             .into_optimized()?
@@ -520,9 +522,8 @@ fn preprocess_for_detector(frame: &IrFrame) -> anyhow::Result<tract_ndarray::Arr
     let mut array =
         tract_ndarray::Array3::<f32>::zeros((3, DETECTOR_HEIGHT, DETECTOR_WIDTH));
 
-    // (px - 127) / 128 is what the model was trained on (the reference
-    // implementation's image_mean/image_std). Plain [0, 1] scaling shifts every
-    // input and skews both the scores and the regressed boxes.
+    // (px - 127) / 128: the model's training normalisation. [0, 1] scaling
+    // skews both scores and boxes.
     for y in 0..DETECTOR_HEIGHT {
         for x in 0..DETECTOR_WIDTH {
             let pixel = rgb.get_pixel(x as u32, y as u32);
@@ -555,8 +556,8 @@ mod tests {
 
     #[test]
     fn covered_lens_is_too_flat() {
-        // Uniform mid-grey: bright enough, but no structure at all.
-        let q = assess_frame(&frame8(vec![128; 1024], 32, 32));
+        let uniform_mid_grey = frame8(vec![128; 1024], 32, 32);
+        let q = assess_frame(&uniform_mid_grey);
         assert!(matches!(q, FrameQuality::TooFlat { .. }), "got {q:?}");
     }
 
@@ -598,7 +599,6 @@ mod tests {
 
     #[test]
     fn illuminated_frame_is_accepted() {
-        // Mean ~64, plenty of structure — like a real lit frame.
         let data: Vec<u8> = (0..1024).map(|i| (i % 128) as u8).collect();
         assert_eq!(assess_frame(&frame8(data, 32, 32)), FrameQuality::Ok);
         assert!(raw_frame_has_content(&frame8(

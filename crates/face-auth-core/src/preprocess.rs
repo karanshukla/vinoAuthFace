@@ -5,12 +5,9 @@ use tract_onnx::prelude::tract_ndarray::Array3;
 
 const ENCODER_SIZE: usize = 112;
 
-/// Wrap a captured frame as a 16-bit greyscale image.
-///
-/// Shared by the detector and encoder paths so the geometry check lives in
-/// one place: `ImageBuffer::from_fn` indexes `width * height` pixels, and a
-/// frame shorter than that would otherwise be silently zero-padded into a
-/// picture that is part real and part black.
+/// Wrap a captured frame as a 16-bit greyscale image, refusing one shorter
+/// than its geometry rather than zero-padding it (pinned by
+/// `tests::rejects_frame_shorter_than_its_geometry`).
 pub fn frame_to_luma16(frame: &IrFrame) -> anyhow::Result<ImageBuffer<Luma<u16>, Vec<u16>>> {
     let width = frame.width;
     let height = frame.height;
@@ -35,10 +32,9 @@ pub fn frame_to_luma16(frame: &IrFrame) -> anyhow::Result<ImageBuffer<Luma<u16>,
 /// box's own size on each side) and squared up so the encoder's
 /// `resize_exact` does not distort the aspect ratio.
 ///
-/// A window that runs off an edge is shifted back inside rather than shrunk,
-/// so a face near the border still gets a full-size crop.
+/// A window that runs off an edge is shifted back inside rather than shrunk
+/// (pinned by `tests::crop_near_an_edge_shifts_instead_of_shrinking`).
 pub fn crop_to_face(frame: &IrFrame, face_box: &FaceBox, margin: f32) -> anyhow::Result<IrFrame> {
-    // Validates geometry against the buffer before any slicing below.
     frame_to_luma16(frame)?;
 
     let width = frame.width as f32;
@@ -127,9 +123,7 @@ pub fn preprocess_ir_frame(frame: &IrFrame) -> anyhow::Result<Array3<f32>> {
 pub const MOTION_PATCH_SIZE: usize = 48;
 
 /// Largest rigid shift, in patch pixels each way, that `motion_profile`
-/// compensates for. The patch is re-cropped around each frame's detection, so
-/// a moved face or print is already mostly centred; this absorbs the
-/// detector's box jitter on top.
+/// undoes: the detector's box jitter (the patch already follows the face).
 pub const MOTION_MAX_SHIFT: i32 = 4;
 
 /// Side of the square blocks `MotionProfile::local` is taken over, in patch
@@ -141,13 +135,11 @@ pub const MOTION_BLOCK: usize = 8;
 const MOTION_NOISE_FLOOR: f32 = 0.25;
 
 /// The face region of one frame, reduced to what liveness compares: a fixed
-/// size, zero mean and unit variance.
-///
-/// Cropping to the detected box keeps motion elsewhere in view (the hand
-/// holding a print, someone walking past) out of the signal. Normalising
-/// removes gain and offset, so an auto-exposure step or a brighter strobe
-/// frame is not mistaken for motion. Take it from the frame before CLAHE:
-/// equalisation remaps each frame differently and would add its own change.
+/// size, zero mean and unit variance, so motion elsewhere in view and
+/// exposure changes don't count (pinned by
+/// `tests::motion_outside_the_face_is_ignored`,
+/// `tests::brightness_change_is_not_motion`). Take it from the frame before
+/// CLAHE.
 #[derive(Clone, Debug)]
 pub struct FacePatch {
     data: Vec<f32>,
@@ -158,16 +150,28 @@ pub struct FacePatch {
 pub struct MotionProfile {
     /// Fraction of pixels that changed, as the patches stand.
     pub total: f32,
-    /// Fraction still changed after undoing the best rigid shift. A photo
-    /// moved by hand moves as one piece and leaves little here; a real face
-    /// moves in parts (blinks, mouth, parallax as the head turns).
+    /// Fraction still changed after undoing the best rigid shift: little for
+    /// a photo moved by hand, more for a face moving in parts.
     pub residual: f32,
-    /// The largest `residual` of any one `MOTION_BLOCK` square block. A blink
-    /// is a big change in a small area, which `residual`, averaged over the
-    /// whole face, dilutes to almost nothing.
+    /// The largest `residual` of any one `MOTION_BLOCK` square block: a blink
+    /// is a big change in a small area that `residual` dilutes (pinned by
+    /// `tests::blink_sized_change_is_local_not_spread`).
     pub local: f32,
     /// The rigid shift, in patch pixels, that best lines `b` up with `a`.
     pub shift: (f32, f32),
+}
+
+impl FacePatch {
+    /// The patch at (x, y), bilinearly. Callers keep x and y within
+    /// [0, MOTION_PATCH_SIZE - 1].
+    fn bilinear(&self, x: f32, y: f32) -> f32 {
+        let n = MOTION_PATCH_SIZE as i32;
+        let (x0, y0) = (x.floor() as i32, y.floor() as i32);
+        let (fx, fy) = (x - x0 as f32, y - y0 as f32);
+        let (x1, y1) = ((x0 + 1).min(n - 1), (y0 + 1).min(n - 1));
+        let px = |xx: i32, yy: i32| self.data[(yy * n + xx) as usize];
+        (px(x0, y0) * (1.0 - fx) + px(x1, y0) * fx) * (1.0 - fy) + (px(x0, y1) * (1.0 - fx) + px(x1, y1) * fx) * fy
+    }
 }
 
 pub fn face_patch(frame: &IrFrame, face_box: &FaceBox) -> anyhow::Result<FacePatch> {
@@ -185,8 +189,7 @@ pub fn face_patch(frame: &IrFrame, face_box: &FaceBox) -> anyhow::Result<FacePat
     let len = data.len() as f32;
     let mean = data.iter().sum::<f32>() / len;
     let var = data.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / len;
-    // A flat patch has no structure to compare; leave it at zero rather than
-    // dividing noise up into something that looks like motion.
+    // A flat patch stays zero rather than scaling its noise up into motion.
     let scale = if var > 1.0 { 1.0 / var.sqrt() } else { 0.0 };
     for v in &mut data {
         *v = (*v - mean) * scale;
@@ -197,14 +200,11 @@ pub fn face_patch(frame: &IrFrame, face_box: &FaceBox) -> anyhow::Result<FacePat
 /// Compare two face patches: how much changed, and how much of that a single
 /// rigid shift can't explain.
 ///
-/// The shift is found to a quarter of a patch pixel: whole pixels first, then
-/// refined with bilinear sampling. A photo rarely moves by whole pixels, and
-/// a half-pixel misalignment leaves residue along every sharp edge (eyes,
-/// glasses), right where a blink would show.
-///
-/// Every count is taken over the same inner window (the patch less
-/// `MOTION_MAX_SHIFT` on each side) so every candidate shift is scored on the
-/// same pixels.
+/// The shift is found to a quarter of a patch pixel: a half-pixel
+/// misalignment leaves residue along every sharp edge, right where a blink
+/// would show (pinned by `tests::subpixel_translation_leaves_little_local_residual`).
+/// Every shift is scored on the same inner window, the patch less
+/// `MOTION_MAX_SHIFT` on each side.
 pub fn motion_profile(a: &FacePatch, b: &FacePatch) -> MotionProfile {
     let n = MOTION_PATCH_SIZE as i32;
     let s = MOTION_MAX_SHIFT;
@@ -213,18 +213,10 @@ pub fn motion_profile(a: &FacePatch, b: &FacePatch) -> MotionProfile {
         return MotionProfile { total: 0.0, residual: 0.0, local: 0.0, shift: (0.0, 0.0) };
     }
 
-    // `b` at (x, y), bilinearly. Callers keep x and y within [0, n - 1].
-    let sample = |x: f32, y: f32| {
-        let (x0, y0) = (x.floor() as i32, y.floor() as i32);
-        let (fx, fy) = (x - x0 as f32, y - y0 as f32);
-        let (x1, y1) = ((x0 + 1).min(n - 1), (y0 + 1).min(n - 1));
-        let px = |xx: i32, yy: i32| b.data[(yy * n + xx) as usize];
-        (px(x0, y0) * (1.0 - fx) + px(x1, y0) * fx) * (1.0 - fy) + (px(x0, y1) * (1.0 - fx) + px(x1, y1) * fx) * fy
-    };
+    let sample = |x: f32, y: f32| b.bilinear(x, y);
     let span = (n - 2 * s) as usize;
     let inner = (span * span) as f32;
-    // Sum of absolute differences at a shift, for choosing it.
-    let cost = |dx: f32, dy: f32| {
+    let sum_of_absolute_differences = |dx: f32, dy: f32| {
         let mut sum = 0.0f32;
         for y in s..n - s {
             for x in s..n - s {
@@ -233,9 +225,8 @@ pub fn motion_profile(a: &FacePatch, b: &FacePatch) -> MotionProfile {
         }
         sum
     };
-    // Changed pixels at a shift, overall and per block.
     let blocks = span / MOTION_BLOCK;
-    let changed = |dx: f32, dy: f32| {
+    let changed_overall_and_worst_block = |dx: f32, dy: f32| {
         let mut all = 0usize;
         let mut per_block = vec![0usize; blocks * blocks];
         for y in 0..span {
@@ -257,7 +248,7 @@ pub fn motion_profile(a: &FacePatch, b: &FacePatch) -> MotionProfile {
     let mut best = (f32::INFINITY, (0.0f32, 0.0f32));
     for dy in -s..=s {
         for dx in -s..=s {
-            let c = cost(dx as f32, dy as f32);
+            let c = sum_of_absolute_differences(dx as f32, dy as f32);
             if c < best.0 {
                 best = (c, (dx as f32, dy as f32));
             }
@@ -271,41 +262,33 @@ pub fn motion_profile(a: &FacePatch, b: &FacePatch) -> MotionProfile {
             if dx.abs() > limit || dy.abs() > limit {
                 continue;
             }
-            let c = cost(dx, dy);
+            let c = sum_of_absolute_differences(dx, dy);
             if c < best.0 {
                 best = (c, (dx, dy));
             }
         }
     }
 
-    let (total, _) = changed(0.0, 0.0);
-    let (residual, local) = changed(best.1 .0, best.1 .1);
+    let (total, _) = changed_overall_and_worst_block(0.0, 0.0);
+    let (residual, local) = changed_overall_and_worst_block(best.1 .0, best.1 .1);
     MotionProfile { total, residual, local, shift: best.1 }
 }
 
-/// Default CLAHE parameters. `CLIP_LIMIT` follows OpenCV's convention: the
-/// per-bin ceiling is `clip * tile_pixels / 256`, with the clipped mass
-/// redistributed. Howdy uses 2.0; 3.0 measured better on this sensor's frames
-/// without visibly amplifying noise.
+/// Default CLAHE parameters. The clip limit follows OpenCV's convention (per-bin
+/// ceiling `clip * tile_pixels / 256`). Howdy uses 2.0; 3.0 measured better on
+/// the reference sensor without visibly amplifying noise.
 pub const CLAHE_CLIP_LIMIT: f32 = 3.0;
 pub const CLAHE_TILES: u32 = 8;
 
-/// Contrast-limited adaptive histogram equalisation.
+/// Contrast-limited adaptive histogram equalisation, per tile, blended
+/// bilinearly between tiles so no seams appear.
 ///
-/// Replaces the global equalisation this used to do. Global equalisation maps
-/// one CDF over the whole frame, so a dark IR frame — where nearly all samples
-/// sit in a narrow band — gets that band stretched across the full range,
-/// turning sensor noise into hard posterised contours. Measured on this
-/// camera, the face detector scored ~0.11 on globally-equalised frames (below
-/// its 0.5 threshold, indistinguishable from an empty room) and 0.60-0.99 on
-/// the same frames under CLAHE.
+/// Not global equalisation: on a dark IR frame that stretches sensor noise
+/// into posterised contours, and on the reference camera the detector scored
+/// ~0.11 on such frames (below its 0.5 threshold) against 0.60-0.99 under
+/// CLAHE.
 ///
-/// CLAHE instead equalises per tile with a ceiling on how much any one
-/// intensity may be amplified, then bilinearly interpolates between
-/// neighbouring tiles' mappings so no tile seams appear.
-///
-/// Samples are u16 carrying 8-bit data widened by 257 (see `capture_frame`),
-/// so 256 bins are exact here.
+/// 256 bins are exact: samples are 8-bit data widened by 257.
 pub fn clahe_equalize(frame: &mut IrFrame, clip_limit: f32, tiles: u32) {
     let (w, h) = (frame.width as usize, frame.height as usize);
     if frame.data.is_empty() || w == 0 || h == 0 || frame.data.len() < w * h {
@@ -315,7 +298,6 @@ pub fn clahe_equalize(frame: &mut IrFrame, clip_limit: f32, tiles: u32) {
     let tile_w = w.div_ceil(tiles);
     let tile_h = h.div_ceil(tiles);
 
-    // One 256-entry lookup table per tile.
     let mut luts = vec![[0u8; 256]; tiles * tiles];
     for ty in 0..tiles {
         for tx in 0..tiles {
@@ -334,38 +316,13 @@ pub fn clahe_equalize(frame: &mut IrFrame, clip_limit: f32, tiles: u32) {
                 }
             }
 
-            // Clip, then hand the excess back evenly. This is what bounds the
-            // contrast gain and stops noise being amplified without limit.
             let count = ((x1 - x0) * (y1 - y0)) as f32;
-            let limit = ((clip_limit * count) / 256.0).max(1.0) as u32;
-            let mut excess: u32 = 0;
-            for b in hist.iter_mut() {
-                if *b > limit {
-                    excess += *b - limit;
-                    *b = limit;
-                }
-            }
-            let share = excess / 256;
-            let mut remainder = excess % 256;
-            for b in hist.iter_mut() {
-                *b += share;
-                if remainder > 0 {
-                    *b += 1;
-                    remainder -= 1;
-                }
-            }
-
-            let lut = &mut luts[ty * tiles + tx];
-            let total = count.max(1.0);
-            let mut cumulative = 0u32;
-            for (i, &b) in hist.iter().enumerate() {
-                cumulative += b;
-                lut[i] = ((cumulative as f32 / total) * 255.0).clamp(0.0, 255.0) as u8;
-            }
+            clip_histogram(&mut hist, ((clip_limit * count) / 256.0).max(1.0) as u32);
+            luts[ty * tiles + tx] = cumulative_lut(&hist, count.max(1.0));
         }
     }
 
-    // Bilinear blend between the four nearest tile centres.
+    // Each pixel blends the four nearest tile centres' tables.
     for y in 0..h {
         let gy = ((y as f32 - tile_h as f32 * 0.5) / tile_h as f32).max(0.0);
         let ty0 = (gy as usize).min(tiles - 1);
@@ -392,6 +349,38 @@ pub fn clahe_equalize(frame: &mut IrFrame, clip_limit: f32, tiles: u32) {
     }
 }
 
+/// Cap every bin at `limit` and hand the excess back evenly: what bounds the
+/// contrast gain (pinned by `tests::clahe_leaves_a_flat_frame_flat`).
+fn clip_histogram(hist: &mut [u32; 256], limit: u32) {
+    let mut excess: u32 = 0;
+    for b in hist.iter_mut() {
+        if *b > limit {
+            excess += *b - limit;
+            *b = limit;
+        }
+    }
+    let share = excess / 256;
+    let mut remainder = excess % 256;
+    for b in hist.iter_mut() {
+        *b += share;
+        if remainder > 0 {
+            *b += 1;
+            remainder -= 1;
+        }
+    }
+}
+
+/// The histogram's CDF, scaled onto 0..=255.
+fn cumulative_lut(hist: &[u32; 256], total: f32) -> [u8; 256] {
+    let mut lut = [0u8; 256];
+    let mut cumulative = 0u32;
+    for (i, &b) in hist.iter().enumerate() {
+        cumulative += b;
+        lut[i] = ((cumulative as f32 / total) * 255.0).clamp(0.0, 255.0) as u8;
+    }
+    lut
+}
+
 /// Equalise a frame for detection and encoding, using the project defaults.
 pub fn histogram_equalize(frame: &mut IrFrame) {
     clahe_equalize(frame, CLAHE_CLIP_LIMIT, CLAHE_TILES);
@@ -407,8 +396,6 @@ mod tests {
 
     #[test]
     fn rejects_frame_shorter_than_its_geometry() {
-        // Previously padded with zeros, producing a half-black image that the
-        // encoder would happily turn into an embedding.
         let f = frame(vec![0; 10], 32, 32);
         assert!(frame_to_luma16(&f).is_err());
         assert!(preprocess_ir_frame(&f).is_err());
@@ -443,8 +430,8 @@ mod tests {
 
     #[test]
     fn clahe_expands_a_low_contrast_frame() {
-        // A dark, narrow-range frame — what an unlit-ish IR capture looks like.
-        let data: Vec<u16> = (0..64 * 64).map(|i| ((i % 20) as u16 + 20) * 257).collect();
+        let dark_narrow_range = (0..64 * 64).map(|i| ((i % 20) as u16 + 20) * 257);
+        let data: Vec<u16> = dark_narrow_range.collect();
         let mut f = frame(data, 64, 64);
         let before = spread(&f);
         histogram_equalize(&mut f);
@@ -454,8 +441,6 @@ mod tests {
 
     #[test]
     fn clahe_leaves_a_flat_frame_flat() {
-        // Uniform input has no contrast to recover; it must not explode into
-        // noise, which is precisely what the clip limit is for.
         let mut f = frame(vec![128 * 257; 64 * 64], 64, 64);
         histogram_equalize(&mut f);
         let first = f.data[0];
@@ -463,12 +448,14 @@ mod tests {
     }
 
     #[test]
-    fn clahe_handles_degenerate_frames() {
+    fn clahe_leaves_an_empty_frame_alone() {
         let mut empty = frame(vec![], 0, 0);
         histogram_equalize(&mut empty);
         assert!(empty.data.is_empty());
+    }
 
-        // Short buffer must be left alone rather than indexed out of bounds.
+    #[test]
+    fn clahe_leaves_a_short_buffer_alone() {
         let mut short = frame(vec![100; 10], 32, 32);
         histogram_equalize(&mut short);
         assert_eq!(short.data.len(), 10);
@@ -536,10 +523,9 @@ mod tests {
 
     #[test]
     fn brightness_change_is_not_motion() {
-        // An auto-exposure step: same picture, different gain and black level.
         let a = scene(0, 0, 1.0, 0.0, None);
-        let b = scene(0, 0, 1.3, 2000.0, None);
-        let p = profile(&a, &b, &MIDDLE);
+        let auto_exposure_step = scene(0, 0, 1.3, 2000.0, None);
+        let p = profile(&a, &auto_exposure_step, &MIDDLE);
         assert!(p.total < 0.01, "{p:?}");
     }
 
@@ -552,9 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn rigid_translation_leaves_little_residual() {
-        // The scene moves 6px and the detection doesn't follow: the shift
-        // search has to find it.
+    fn rigid_translation_the_box_does_not_follow_leaves_little_residual() {
         let a = scene(0, 0, 1.0, 0.0, None);
         let b = scene(6, -4, 1.0, 0.0, None);
         let p = profile(&a, &b, &MIDDLE);
@@ -565,19 +549,16 @@ mod tests {
 
     #[test]
     fn subpixel_translation_leaves_little_local_residual() {
-        // 1 frame px is about half a patch px: whole-pixel alignment alone
-        // would leave residue along every edge.
         let a = scene(0, 0, 1.0, 0.0, None);
-        let b = scene(1, 1, 1.0, 0.0, None);
-        let p = profile(&a, &b, &MIDDLE);
+        let half_a_patch_pixel = scene(1, 1, 1.0, 0.0, None);
+        let p = profile(&a, &half_a_patch_pixel, &MIDDLE);
         assert!(p.local < 0.1, "{p:?}");
         assert!(p.residual < 0.01, "{p:?}");
     }
 
     #[test]
     fn blink_sized_change_is_local_not_spread() {
-        // An eyelid closing: a 16px square (8x8 in the patch, most of one
-        // block, a small share of the face) loses its texture.
+        // A 16 px square loses its texture: 8x8 in the patch, about one block.
         let a = scene(0, 0, 1.0, 0.0, None);
         let mut blink = a.clone();
         for y in 90..106u32 {

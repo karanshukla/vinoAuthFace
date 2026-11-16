@@ -409,39 +409,8 @@ impl SettingsWindow {
     pub(crate) fn show(&mut self, root: &mut egui::Ui) {
         let ctx = &root.ctx().clone();
         let focused = ctx.input(|input| input.focused);
-        if focused && !self.focused {
-            theme::follow_desktop(ctx);
-            self.kde_header = theme::kde_header();
-            self.follow_text_scale(ctx);
-            // Changed by hand, by the tray or by deploy.sh meanwhile.
-            if self.system.changes().is_empty() && !self.apply.lock().unwrap().running {
-                self.system.reload();
-            }
-            if !self.user_dirty {
-                self.user.reload();
-            }
-        }
-        if focused && !self.focused {
-            self.disk = None;
-        }
-        self.focused = focused;
-        self.take_apply_result();
-        let cleaned = self.clean_up.lock().unwrap().result.take();
-        if let Some(result) = cleaned {
-            self.notice = Some(match result {
-                Ok(said) => (Tone::Info, said),
-                Err(e) => (Tone::Error, e),
-            });
-            self.disk = None;
-        }
-        let enrolled = self.enrol.lock().unwrap().done.take();
-        if let Some(result) = enrolled {
-            self.notice = Some(match result {
-                Ok(saved) => (Tone::Info, saved),
-                Err(e) => (Tone::Error, e),
-            });
-            self.enrolled = (self.check_enrolled)();
-        }
+        self.refresh_on_focus(ctx, focused);
+        self.take_background_results();
 
         ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(TITLE));
 
@@ -451,95 +420,9 @@ impl SettingsWindow {
         let wide = window >= widgets::SIDEBAR_FROM;
 
         if wide {
-            egui::Panel::left("pages")
-                .resizable(false)
-                .show_separator_line(false)
-                .exact_size(widgets::sidebar_width(window))
-                .frame(widgets::sidebar_frame(p))
-                .show(root, |ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    // vino-ui's, which the window bar's row is centred on.
-                    let brand = ui
-                        .scope(|ui| {
-                            ui.style_mut().interaction.selectable_labels = false;
-                            widgets::sidebar_brand(ui, Some(vino_ui::logo::authface), "vinoAuthFace", "Settings");
-                        })
-                        .response
-                        .rect;
-                    if self.app_title_bar {
-                        // After the brand, so its name drags the window.
-                        let clip = ui.clip_rect();
-                        vino_ui::window::drag(
-                            ui,
-                            egui::Rect::from_x_y_ranges(clip.x_range(), clip.top()..=brand.bottom()),
-                            "brand",
-                        );
-                    }
-                    ui.add_space(14.0);
-                    a11y::tab_list(ui, "Pages");
-                    for page in Page::ALL {
-                        // Your own settings stand apart from the computer's, under a hairline.
-                        if page == Page::You {
-                            ui.add_space(8.0);
-                            let rect = ui.available_rect_before_wrap();
-                            let y = rect.top() + 0.5;
-                            ui.painter().hline((rect.left() + 8.0)..=(rect.right() - 8.0), y, egui::Stroke::new(1.0, p.rule));
-                            ui.add_space(10.0);
-                        }
-                        if widgets::nav_item(ui, page.icon(), page.title(), page.title(), self.page == page, None)
-                            .clicked()
-                        {
-                            self.page = page;
-                        }
-                    }
-                    ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                        ui.add_space(2.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(4.0);
-                            self.status_chip(ui);
-                        });
-                    });
-                    widgets::panel_rule(ui, widgets::Edge::Left);
-                });
+            self.sidebar(root, p, window);
         } else {
-            egui::Panel::top("header")
-                .show_separator_line(false)
-                .frame(widgets::header_frame(header, p).inner_margin(egui::Margin { left: 16, right: 16, top: 8, bottom: 0 }))
-                .show(root, |ui| {
-                    if self.app_title_bar {
-                        vino_ui::window::drag(ui, ui.clip_rect(), "header");
-                    }
-                    ui.horizontal(|ui| {
-                        vino_ui::logo::authface(ui, 22.0);
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new("vinoAuthFace").size(15.0).family(theme::bold()).color(header.text),
-                            )
-                            .selectable(false),
-                        );
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            // The window's buttons at the row's end, the status beside them.
-                            if self.app_title_bar {
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(vino_ui::window::controls_width(), vino_ui::window::BUTTON),
-                                    Layout::right_to_left(Align::Center),
-                                    vino_ui::window::controls,
-                                );
-                                ui.add_space(4.0);
-                            }
-                            self.status_chip(ui);
-                        });
-                    });
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(18.0, 0.0);
-                        a11y::tab_list(ui, "Pages");
-                        for page in Page::ALL {
-                            if widgets::tab(ui, page.title(), self.page == page, true, header).clicked() {
-                                self.page = page;
-                            }
-                        }
-                    });
-                });
+            self.top_bar(root, p, header);
         }
 
         let waiting = !self.system.changes().is_empty() || self.apply.lock().unwrap().running;
@@ -552,10 +435,8 @@ impl SettingsWindow {
             root.painter().hline(rect.x_range(), rect.top() + 0.5, egui::Stroke::new(1.0, p.rule));
         }
 
-        // With the app's title bar, a wide window's page title moves up out of
-        // the scroll area into a bar of its own, with the window buttons at its
-        // end: that bar is what the window is dragged by. The status chip stays
-        // at the foot of the sidebar, so nothing sits beside the buttons.
+        // A wide window with the app's title bar puts the page title in a bar
+        // of its own, beside the window buttons, and is dragged by it.
         let title_bar = wide && self.app_title_bar;
         if title_bar {
             let title = self.page.title();
@@ -581,53 +462,186 @@ impl SettingsWindow {
                 bottom: 0,
             }))
             .show(root, |ui| {
-                widgets::page_scroll(ui, self.page.title(), self.page.max_width(), |ui| {
-                    if !title_bar {
-                        widgets::title(ui, self.page.title());
+                widgets::page_scroll(ui, self.page.title(), self.page.max_width(), |ui| self.page_body(ui, title_bar));
+            });
+
+        self.save_settled_user_changes(ctx);
+    }
+
+    fn page_body(&mut self, ui: &mut egui::Ui, title_bar: bool) {
+        if !title_bar {
+            widgets::title(ui, self.page.title());
+        }
+        if !matches!(self.page, Page::You | Page::Face | Page::About) {
+            widgets::small(ui, "For everyone on this computer. Changes wait for Apply.");
+        }
+        if let Some((tone, text)) = self.notice.clone() {
+            ui.add_space(12.0);
+            if widgets::notice(ui, tone, &text) {
+                self.notice = None;
+            }
+        }
+        if !matches!(self.page, Page::You | Page::Face) {
+            if let Some(e) = &self.system.unreadable {
+                ui.add_space(12.0);
+                widgets::banner(ui, Tone::Error, &format!("{SYSTEM_CONFIG_PATH} can't be read: {e}"), |_| {});
+            } else if let (Err(e), Some(_)) = (&self.system.config, &self.system.read) {
+                ui.add_space(12.0);
+                widgets::banner(
+                    ui,
+                    Tone::Error,
+                    &format!("{SYSTEM_CONFIG_PATH} doesn't parse, so face unlock is off: {e}"),
+                    |_| {},
+                );
+            }
+        }
+        ui.add_space(16.0);
+        match self.page {
+            Page::Face => self.face(ui),
+            Page::Matching => self.matching(ui),
+            Page::Liveness => self.liveness(ui),
+            Page::Camera => self.camera_page(ui),
+            Page::Models => self.models(ui),
+            Page::Security => self.security(ui),
+            Page::You => self.you(ui),
+            // update_check = false drops the Updates row with the tray's and
+            // doctor's checks.
+            Page::About if self.system.values().update_check() => {
+                vino_ui::about::page_with_updates(ui, &mut self.updater)
+            }
+            Page::About => vino_ui::about::page(ui, vino_ui::App::AuthFace, update::CURRENT),
+        }
+    }
+
+    /// On regaining focus: follow the desktop's theme and pick up files
+    /// changed meanwhile by hand, by the tray or by deploy.sh.
+    fn refresh_on_focus(&mut self, ctx: &egui::Context, focused: bool) {
+        if focused && !self.focused {
+            theme::follow_desktop(ctx);
+            self.kde_header = theme::kde_header();
+            self.follow_text_scale(ctx);
+            if self.system.changes().is_empty() && !self.apply.lock().unwrap().running {
+                self.system.reload();
+            }
+            if !self.user_dirty {
+                self.user.reload();
+            }
+            self.disk = None;
+        }
+        self.focused = focused;
+    }
+
+    fn take_background_results(&mut self) {
+        self.take_apply_result();
+        let cleaned = self.clean_up.lock().unwrap().result.take();
+        if let Some(result) = cleaned {
+            self.notice = Some(match result {
+                Ok(said) => (Tone::Info, said),
+                Err(e) => (Tone::Error, e),
+            });
+            self.disk = None;
+        }
+        let enrolled = self.enrol.lock().unwrap().done.take();
+        if let Some(result) = enrolled {
+            self.notice = Some(match result {
+                Ok(saved) => (Tone::Info, saved),
+                Err(e) => (Tone::Error, e),
+            });
+            self.enrolled = (self.check_enrolled)();
+        }
+    }
+
+    fn sidebar(&mut self, root: &mut egui::Ui, p: &theme::Palette, window: f32) {
+        egui::Panel::left("pages")
+            .resizable(false)
+            .show_separator_line(false)
+            .exact_size(widgets::sidebar_width(window))
+            .frame(widgets::sidebar_frame(p))
+            .show(root, |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                // vino-ui's brand: the window bar's row is centred on it.
+                let brand = ui
+                    .scope(|ui| {
+                        ui.style_mut().interaction.selectable_labels = false;
+                        widgets::sidebar_brand(ui, Some(vino_ui::logo::authface), "vinoAuthFace", "Settings");
+                    })
+                    .response
+                    .rect;
+                // After the brand, so its name drags the window.
+                if self.app_title_bar {
+                    let clip = ui.clip_rect();
+                    vino_ui::window::drag(
+                        ui,
+                        egui::Rect::from_x_y_ranges(clip.x_range(), clip.top()..=brand.bottom()),
+                        "brand",
+                    );
+                }
+                ui.add_space(14.0);
+                a11y::tab_list(ui, "Pages");
+                for page in Page::ALL {
+                    if page == Page::You {
+                        hairline_above_your_own_settings(ui, p);
                     }
-                    if !matches!(self.page, Page::You | Page::Face | Page::About) {
-                        widgets::small(ui, "For everyone on this computer. Changes wait for Apply.");
+                    if widgets::nav_item(ui, page.icon(), page.title(), page.title(), self.page == page, None)
+                        .clicked()
+                    {
+                        self.page = page;
                     }
-                    if let Some((tone, text)) = self.notice.clone() {
-                        ui.add_space(12.0);
-                        if widgets::notice(ui, tone, &text) {
-                            self.notice = None;
-                        }
-                    }
-                    if !matches!(self.page, Page::You | Page::Face) {
-                        if let Some(e) = &self.system.unreadable {
-                            ui.add_space(12.0);
-                            widgets::banner(ui, Tone::Error, &format!("{SYSTEM_CONFIG_PATH} can't be read: {e}"), |_| {});
-                        } else if let (Err(e), Some(_)) = (&self.system.config, &self.system.read) {
-                            ui.add_space(12.0);
-                            widgets::banner(
-                                ui,
-                                Tone::Error,
-                                &format!("{SYSTEM_CONFIG_PATH} doesn't parse, so face unlock is off: {e}"),
-                                |_| {},
+                }
+                ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(4.0);
+                        self.status_chip(ui);
+                    });
+                });
+                widgets::panel_rule(ui, widgets::Edge::Left);
+            });
+    }
+
+    fn top_bar(&mut self, root: &mut egui::Ui, p: &theme::Palette, header: theme::Header) {
+        egui::Panel::top("header")
+            .show_separator_line(false)
+            .frame(widgets::header_frame(header, p).inner_margin(egui::Margin { left: 16, right: 16, top: 8, bottom: 0 }))
+            .show(root, |ui| {
+                if self.app_title_bar {
+                    vino_ui::window::drag(ui, ui.clip_rect(), "header");
+                }
+                ui.horizontal(|ui| {
+                    vino_ui::logo::authface(ui, 22.0);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new("vinoAuthFace").size(15.0).family(theme::bold()).color(header.text),
+                        )
+                        .selectable(false),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if self.app_title_bar {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(vino_ui::window::controls_width(), vino_ui::window::BUTTON),
+                                Layout::right_to_left(Align::Center),
+                                vino_ui::window::controls,
                             );
+                            ui.add_space(4.0);
                         }
-                    }
-                    ui.add_space(16.0);
-                    match self.page {
-                        Page::Face => self.face(ui),
-                        Page::Matching => self.matching(ui),
-                        Page::Liveness => self.liveness(ui),
-                        Page::Camera => self.camera_page(ui),
-                        Page::Models => self.models(ui),
-                        Page::Security => self.security(ui),
-                        Page::You => self.you(ui),
-                        // The release tag ("v3"), or "dev" for a local build. update_check = false
-                        // drops the Updates row with the tray's and doctor's checks.
-                        Page::About if self.system.values().update_check() => {
-                            vino_ui::about::page_with_updates(ui, &mut self.updater)
+                        self.status_chip(ui);
+                    });
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(18.0, 0.0);
+                    a11y::tab_list(ui, "Pages");
+                    for page in Page::ALL {
+                        if widgets::tab(ui, page.title(), self.page == page, true, header).clicked() {
+                            self.page = page;
                         }
-                        Page::About => vino_ui::about::page(ui, vino_ui::App::AuthFace, update::CURRENT),
                     }
                 });
             });
 
-        // Dragging or typing changes a value every frame; write once it settles.
+    }
+
+    /// Dragging or typing changes a value every frame; write once it settles.
+    fn save_settled_user_changes(&mut self, ctx: &egui::Context) {
         if self.user_dirty && ctx.dragged_id().is_none() && !ctx.egui_wants_keyboard_input() {
             self.user_dirty = false;
             if let Err(e) = self.user.save() {
@@ -635,6 +649,15 @@ impl SettingsWindow {
             }
         }
     }
+}
+
+/// Your own settings stand apart from the computer's.
+fn hairline_above_your_own_settings(ui: &mut egui::Ui, p: &theme::Palette) {
+    ui.add_space(8.0);
+    let rect = ui.available_rect_before_wrap();
+    let y = rect.top() + 0.5;
+    ui.painter().hline((rect.left() + 8.0)..=(rect.right() - 8.0), y, egui::Stroke::new(1.0, p.rule));
+    ui.add_space(10.0);
 }
 
 /// `a.onnx and b.onnx, 180 MB`: the files, then their total.

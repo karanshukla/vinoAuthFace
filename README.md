@@ -92,6 +92,7 @@ sudo vinoauthface-uninstall --purge   # templates too
 | [Security model](docs/security.md) | Trust model, spoofing, frame injection, limits |
 | [Architecture](docs/architecture.md) | Pipeline, models and licensing, layout, upstream |
 | [Releasing](docs/releasing.md) | Version tags and `scripts/release.sh` |
+| [Comment style](docs/comment-style.md) | Extract, name or test a rule before writing a comment |
 
 Changes: [CHANGELOG.md](CHANGELOG.md). Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 

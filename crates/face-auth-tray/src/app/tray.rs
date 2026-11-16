@@ -96,8 +96,7 @@ impl ksni::Tray for Tray {
         "vinoAuthFace".into()
     }
 
-    // Left click opens the menu, which is the status panel; without this
-    // it does nothing.
+    // Left click opens the menu, the status panel; otherwise it does nothing.
     const MENU_ON_ACTIVATE: bool = true;
 
     // ApplicationStatus, like vinoWhisper's tray: Plasma files Hardware

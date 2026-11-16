@@ -121,11 +121,11 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
         anyhow::bail!("--frames must be at least 1");
     }
 
-    // Canonical name: `getent passwd 0` would otherwise enrol into a directory "0".
+    // Canonical name, or `0` would enrol into a directory "0".
     let info = user::lookup(&args.user)?;
 
-    // The system store is root-owned; say so up front rather
-    // than failing on EACCES. An explicit --embeddings-dir is the caller's business.
+    // Say up front that the system store is root-owned, rather than fail on
+    // EACCES. An explicit --embeddings-dir is the caller's business.
     let euid = unsafe { libc::geteuid() };
     if euid != 0 && args.embeddings_dir.is_none() {
         anyhow::bail!(
@@ -137,10 +137,9 @@ fn run(args: Capture, improve: bool) -> anyhow::Result<()> {
         );
     }
 
-    // As root, only root's own choices count: /etc/face-auth.toml and this
-    // command line. `sudo -E` or doas `keepenv` would otherwise let the
-    // caller's ~/.config/face-auth.toml and FACE_AUTH_* pick the camera, model
-    // and store root writes templates for.
+    // As root, only /etc/face-auth.toml and this command line count: under
+    // `sudo -E` or doas `keepenv` the caller's file and FACE_AUTH_* would pick
+    // what root writes templates for.
     let mut config = if euid == 0 { FaceAuthConfig::load_system()? } else { FaceAuthConfig::load()? };
 
     if let Some(device) = args.device {
