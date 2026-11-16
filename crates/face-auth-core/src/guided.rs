@@ -319,7 +319,8 @@ pub fn steady(a: Pose, b: Pose) -> bool {
     (a.yaw - b.yaw).abs() < STEADY_YAW && (a.pitch - b.pitch).abs() < STEADY_PITCH
 }
 
-fn similarity(a: &[f32], b: &[f32]) -> f32 {
+/// The cosine of two embeddings the encoder already L2-normalised.
+fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
@@ -430,7 +431,7 @@ impl FaceAuth {
             return Ok(Err(Hint::NoFace));
         };
         let embedding = self.encoder.encode(input.view())?;
-        if kept.iter().any(|k| similarity(k, &embedding) > DUPLICATE) {
+        if kept.iter().any(|k| dot_product(k, &embedding) > DUPLICATE) {
             return Ok(Err(Hint::Same));
         }
         Ok(Ok((embedding, pose)))
