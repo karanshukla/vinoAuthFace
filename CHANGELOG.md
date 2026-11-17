@@ -5,7 +5,10 @@ the pull requests in each one; this file says what changed for you.
 
 ## [Unreleased]
 
+## [v16] - 2026-11-17
+
 - **A new icon: the IR camera.** The app and tray icons now show what does the work, a camera module with its lens and the IR emitter dot beside it, instead of a face. The tray icon sits in the same rounded frame as vinoWhisper's and vinoWatch's, with the emitter as its one colour: green when ready, amber while a scan runs, and off until setup is finished.
+- **A wide settings window puts a page's groups in two columns**, and the sidebar and page inset grow with the window.
 
 ## [v15] - 2026-11-14
 
