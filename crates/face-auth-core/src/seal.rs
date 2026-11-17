@@ -99,8 +99,8 @@ fn run(program: &str, args: &[&str], input: &[u8]) -> Result<Vec<u8>> {
 
     let out = child.wait_with_output()?;
     let written = writer.join().expect("stdin writer panicked");
-    // Status first: a child that exits early breaks the pipe, and its stderr
-    // says why.
+    // Status before the write error: a child that exits early breaks the
+    // pipe, and its stderr says why.
     anyhow::ensure!(
         out.status.success(),
         "{}",

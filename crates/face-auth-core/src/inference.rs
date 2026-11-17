@@ -195,8 +195,7 @@ impl FaceEncoder {
     /// `backend` is "tract" (pure-Rust CPU) or "openvino", which needs a build
     /// with the `npu` feature and runs on `device` ("NPU", "GPU" or "CPU").
     pub fn new(model_path: &str, backend: &str, device: &str) -> anyhow::Result<Self> {
-        // Check first: tract's own error for a missing file is opaque, and
-        // this is the most common misconfiguration.
+        // tract's own error for a missing file is opaque.
         if !std::path::Path::new(model_path).exists() {
             anyhow::bail!("face encoder model not found at {model_path}");
         }
@@ -213,9 +212,7 @@ impl FaceEncoder {
     }
 
     fn new_tract(model_path: &str) -> anyhow::Result<Self> {
-        // into_optimized() runs tract's fusion and lowering passes. Without it
-        // the graph executes op-by-op as written: this model took ~400ms per
-        // frame unoptimized, which dominated unlock latency.
+        // Unoptimised, this model took ~400 ms a frame.
         let model = onnx()
             .model_for_path(model_path)?
             .with_input_fact(
@@ -273,8 +270,7 @@ impl FaceEncoder {
 
         anyhow::ensure!(!embedding.is_empty(), "encoder returned an empty embedding");
 
-        // A zero or non-finite norm would divide into NaN/inf and produce an
-        // embedding that fails every comparison for reasons nothing reports.
+        // A zero or non-finite norm would fail every comparison silently.
         let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
         anyhow::ensure!(
             norm.is_finite() && norm > 0.0,

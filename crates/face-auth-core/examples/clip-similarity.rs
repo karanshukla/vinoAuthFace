@@ -1,6 +1,6 @@
 //! Diagnostic: how well recorded IR clips match a gallery enrolled from
 //! another clip, through the same detect → crop-or-align → encode path as a
-//! scan. For comparing detectors (and so alignment, #27) without enrolling.
+//! scan. For comparing detectors (and so alignment) without enrolling.
 //!
 //!   ffmpeg -i clip.mkv -f rawvideo -pix_fmt gray clip.gray
 //!   cargo run --release --example clip-similarity -- DETECTOR.onnx W H GALLERY.gray PROBE.gray...

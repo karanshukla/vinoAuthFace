@@ -201,9 +201,8 @@ pub fn command(verb: Verb, user: &str) -> Option<(&'static str, Vec<String>)> {
         Verb::Retrain => (FACE_ENROLL, vec!["improve".into(), "--user".into(), user.into()]),
         Verb::EnrolGuided => (FACE_ENROLL, vec!["enroll".into(), "--guided".into(), "--user".into(), user.into()]),
         Verb::RetrainGuided => (FACE_ENROLL, vec!["improve".into(), "--guided".into(), "--user".into(), user.into()]),
-        // Run as root with no SUDO_USER, so the release is downloaded and unpacked
-        // under root's home, never somewhere the caller could swap it between
-        // the checksum and deploy.sh running it.
+        // No SUDO_USER: the release unpacks under root's home, where the
+        // caller can't swap it between the checksum and deploy.sh.
         Verb::Upgrade => (bash(), vec![UPGRADER.into()]),
         Verb::LoginOff => (bash(), vec![LOGIN_MODE.into(), "off".into()]),
         Verb::LoginBoth => (bash(), vec![LOGIN_MODE.into(), "both".into()]),

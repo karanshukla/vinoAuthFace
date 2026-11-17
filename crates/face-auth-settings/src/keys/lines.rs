@@ -35,7 +35,8 @@ fn classify(line: &str, table: Option<&str>) -> Line {
     }
     if let Some(rest) = t.strip_prefix('#') {
         if let Some((name, _)) = rest.split_once('=') {
-            // Prose has spaces in it; a commented-out key is one word.
+            // A commented-out key is one word; prose has spaces (pinned by
+            // `tests::prose_that_holds_an_equals_sign_is_not_an_example_line`).
             if !name.trim().contains(' ') {
                 if let Some(name) = normal(name) {
                     return Line::Example { name };
@@ -56,6 +57,9 @@ fn classify(line: &str, table: Option<&str>) -> Line {
     Line::Other
 }
 
+/// The table an array-of-tables line opens: a name none of our keys has.
+const ARRAY_OF_TABLES: &str = "\0";
+
 /// Each line with what it is and the table it's in (`None` at the top).
 fn lines(text: &str) -> Vec<(&str, Line, Option<String>)> {
     let mut table: Option<String> = None;
@@ -63,8 +67,7 @@ fn lines(text: &str) -> Vec<(&str, Line, Option<String>)> {
     for line in text.lines() {
         let kind = classify(line, table.as_deref());
         if let Line::Header(name) = &kind {
-            // An array of tables isn't a place for any of our keys.
-            table = Some(name.clone().unwrap_or_else(|| "\0".into()));
+            table = Some(name.clone().unwrap_or_else(|| ARRAY_OF_TABLES.into()));
         }
         out.push((line, kind, table.clone()));
     }
@@ -78,6 +81,10 @@ fn names(key: Key) -> Vec<String> {
         names.push(format!("{table}.{name}"));
     }
     names
+}
+
+fn comment_out(line: &str) -> String {
+    format!("# {}", line.trim_start())
 }
 
 fn join(lines: &[String], trailing_newline: bool) -> String {
@@ -109,21 +116,20 @@ pub fn edit(text: &str, key: Key, value: Option<&str>) -> String {
 
     let Some(value) = value else {
         for i in active {
-            let line = out[i].trim_start().to_string();
-            out[i] = format!("# {line}");
+            out[i] = comment_out(&out[i]);
         }
         return join(&out, trailing);
     };
 
     if let Some((&keep, rest)) = active.split_first() {
-        // The flat spelling, if any, wins: set that one and comment out the
-        // grouped one so the file doesn't say two things.
+        // The flat spelling wins; the other is commented out so the file
+        // doesn't say two things (pinned by
+        // `tests::the_flat_spelling_wins_and_the_other_is_retired`).
         if let Line::Key { eq, .. } = parsed[keep].1 {
             out[keep] = tidy(&parsed[keep].0[..eq], value);
         }
         for &i in rest {
-            let line = out[i].trim_start().to_string();
-            out[i] = format!("# {line}");
+            out[i] = comment_out(&out[i]);
         }
         return join(&out, trailing);
     }
@@ -132,8 +138,8 @@ pub fn edit(text: &str, key: Key, value: Option<&str>) -> String {
     let header_of = |table: &str| {
         parsed.iter().position(|(_, kind, _)| matches!(kind, Line::Header(Some(name)) if name == table))
     };
-    // A table already opened with a header can't also take dotted keys from
-    // the top: write the key inside it.
+    // A table opened with a header can't also take dotted keys from the top
+    // (pinned by `tests::a_grouped_key_joins_its_table_if_it_has_a_header`).
     if let Some((table, name)) = key.group {
         if let Some(header) = header_of(table) {
             let end = parsed[header + 1..]
@@ -147,7 +153,8 @@ pub fn edit(text: &str, key: Key, value: Option<&str>) -> String {
     }
 
     let top_end = parsed.iter().position(|(_, kind, _)| matches!(kind, Line::Header(_))).unwrap_or(parsed.len());
-    // Over the example line, where the file explains it.
+    // Over the example line, where the file explains it (pinned by
+    // `tests::a_new_value_takes_its_example_line`).
     if let Some(i) = (0..top_end).find(|&i| {
         matches!(&parsed[i].1, Line::Example { name } if names.contains(name) || *name == written)
     }) {
@@ -241,7 +248,10 @@ frames = 3
         let out = edit(text, LIVENESS_MOTION, Some("0.02"));
         assert_eq!(out, "# Fraction changed.\nliveness.motion_threshold = 0.02\n\nthreshold = 0.6\n");
         assert_eq!(parse(&out).liveness_motion_threshold(), 0.02);
-        // Prose that happens to hold an "=" is left alone.
+    }
+
+    #[test]
+    fn prose_that_holds_an_equals_sign_is_not_an_example_line() {
         let prose = "# the user sets threshold = higher\n";
         assert_eq!(edit(prose, THRESHOLD, Some("0.7")), "# the user sets threshold = higher\nthreshold = 0.7\n");
     }
@@ -266,7 +276,10 @@ frames = 3
         let c = parse(&out);
         assert_eq!(c.lockout_policy().max_delay_ms, 60000);
         assert!(c.seat_check());
-        // And a dotted key at the top otherwise.
+    }
+
+    #[test]
+    fn a_grouped_key_is_a_dotted_key_at_the_top_without_a_header() {
         let out = edit("threshold = 0.6\n", LOCKOUT_MAX_DELAY_MS, Some("60000"));
         assert_eq!(out, "threshold = 0.6\nlockout.max_delay_ms = 60000\n");
     }
@@ -294,7 +307,10 @@ frames = 3
         let out = edit(text, LIVENESS_GRACE_MS, None);
         assert_eq!(out, "threshold = 0.7\n[liveness]\n# grace_ms = 2000\n");
         assert_eq!(parse(&out).liveness_grace_ms(), 4000);
-        // Then set again, it comes back where it was.
+    }
+
+    #[test]
+    fn a_commented_out_default_set_again_comes_back_where_it_was() {
         let again = edit("# threshold = 0.7\n", THRESHOLD, Some("0.8"));
         assert_eq!(again, "threshold = 0.8\n");
     }
@@ -307,7 +323,8 @@ frames = 3
     }
 
     /// Every key, set on the shipped example, reads back through the real
-    /// loader as the value written, and only that key changes.
+    /// loader as the value written, only that key changes, and unsetting it
+    /// again leaves it unset.
     #[test]
     fn every_key_edits_the_shipped_example() {
         let example = include_str!("../../../../config/face-auth.toml.example");
@@ -334,9 +351,7 @@ frames = 3
             for other in ALL.iter().filter(|o| **o != key) {
                 assert_eq!(other.value(&after), other.value(&before), "{key:?} changed {other:?}");
             }
-            // The real loader agrees, folding included.
             FaceAuthConfig::from_toml(&out).unwrap_or_else(|e| panic!("{key:?}: {e:#}"));
-            // And unset again, it reads as the example did.
             let back: toml::Table = toml::from_str(&edit(&out, key, None)).unwrap();
             assert_eq!(key.value(&back), None, "{key:?} stayed set");
         }

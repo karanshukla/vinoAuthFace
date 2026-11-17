@@ -55,8 +55,8 @@ pub fn validate_username(user: &str) -> Result<&str> {
     Ok(user)
 }
 
+/// `name:passwd:uid:gid:gecos:home:shell`
 fn parse_passwd_line(line: &str) -> Option<UserInfo> {
-    // name:passwd:uid:gid:gecos:home:shell
     let parts: Vec<&str> = line.trim_end_matches('\n').split(':').collect();
     if parts.len() < 6 {
         return None;
@@ -68,10 +68,8 @@ fn parse_passwd_line(line: &str) -> Option<UserInfo> {
     })
 }
 
-/// Look up an account by name. `getent passwd` also accepts a UID, which
-/// would silently enrol under a directory named after the number rather
-/// than the account, so the argument is validated as a name first and the
-/// canonical name is taken from the lookup result.
+/// Look up an account by name. `getent passwd` also takes a UID, so the
+/// argument must be a valid name and the result must carry that same name.
 pub fn lookup(user: &str) -> Result<UserInfo> {
     validate_username(user)?;
 
@@ -90,8 +88,6 @@ pub fn lookup(user: &str) -> Result<UserInfo> {
         .and_then(parse_passwd_line)
         .with_context(|| format!("could not parse passwd entry for '{}'", user))?;
 
-    // Guard against `getent passwd 0` resolving to root: the caller asked
-    // for a name, so the name it asked for must be what came back.
     if info.name != user {
         bail!(
             "user lookup mismatch: asked for '{}', NSS returned '{}'",

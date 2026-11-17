@@ -43,8 +43,8 @@ impl ScanPrompt {
             .or_else(|| pam_tty.and_then(|p| open_pam_tty(p, uid)));
         if tty.is_none() {
             if let Some(out) = relay {
-                // One line, flushed: each line is a separate PAM message, and
-                // stdout to a pipe is block-buffered until exit otherwise.
+                // Flushed: each line is a PAM message, and a pipe is
+                // block-buffered until exit.
                 let _ = writeln!(out, "{MESSAGE}");
                 let _ = out.flush();
             }

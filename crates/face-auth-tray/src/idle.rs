@@ -1,4 +1,4 @@
-//! When the tray icon tucks itself away (#107).
+//! When the tray icon tucks itself away.
 //!
 //! After `tray_idle_minutes` with nothing happening the icon reports itself
 //! Passive, which Plasma moves into the hidden icons behind the panel's arrow.
@@ -6,7 +6,7 @@
 //! it back and restarts the count.
 //!
 //! The delay is per user, so the Settings menu writes it to the user's own
-//! `~/.config/face-auth.toml` (#148) without pkexec.
+//! `~/.config/face-auth.toml` without pkexec.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

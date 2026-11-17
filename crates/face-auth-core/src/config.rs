@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 pub const SYSTEM_CONFIG_PATH: &str = "/etc/face-auth.toml";
 
 const MODEL_DIR: &str = crate::model_files::SHARE_DIR;
-/// SCRFD with landmarks, from InsightFace's buffalo_sc pack (#27).
+/// SCRFD with landmarks, from InsightFace's buffalo_sc pack.
 pub const DEFAULT_DETECTOR: &str = "det_500m.onnx";
 /// The box-only detector installs had before SCRFD.
 pub const LEGACY_DETECTOR: &str = "version-slim-320.onnx";
@@ -17,8 +17,7 @@ pub const LEGACY_DETECTOR: &str = "version-slim-320.onnx";
 /// `2750`) — see deploy.sh.
 pub const DEFAULT_EMBEDDINGS_DIR: &str = "/var/lib/face-auth";
 
-// Bounds applied to every config source. A threshold near zero accepts any
-// face at all, so the floor is enforced rather than merely documented.
+/// Enforced for every config source: near zero, any face matches.
 pub const THRESHOLD_RANGE: std::ops::RangeInclusive<f32> = 0.3..=1.0;
 pub const DETECTOR_THRESHOLD_RANGE: std::ops::RangeInclusive<f32> = 0.05..=1.0;
 pub const CAPTURE_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 100..=30_000;
@@ -29,6 +28,19 @@ pub const SCAN_INTERVAL_RANGE: std::ops::RangeInclusive<u64> = 0..=5_000;
 pub const LIVENESS_MOTION_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 pub const START_DELAY_RANGE: std::ops::RangeInclusive<u64> = 0..=10_000;
 pub const MIN_FACE_SIZE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.75;
+
+/// A user value that is finite, in `range` and no looser than the system's.
+fn tightens(requested: f32, current: f32, range: &std::ops::RangeInclusive<f32>) -> bool {
+    requested.is_finite() && requested >= current && range.contains(&requested)
+}
+
+fn tightened(requested: Option<f32>, current: f32, range: &std::ops::RangeInclusive<f32>) -> Option<f32> {
+    requested.filter(|&t| tightens(t, current, range))
+}
+
+fn within(requested: Option<u64>, range: &std::ops::RangeInclusive<u64>) -> Option<u64> {
+    requested.filter(|v| range.contains(v))
+}
 
 /// `[liveness]` (or `liveness.key = ...`): the motion-liveness settings as one
 /// group. Each key is the flat `liveness_<key>` field under a shorter name.
@@ -145,14 +157,11 @@ impl Default for FaceAuthConfig {
 
 const USER_CONFIG_MAX_BYTES: u64 = 64 * 1024;
 
-/// Read a user-owned file, refusing to follow a symlink at the final component.
-///
-/// Used for config files under a user's home: the authentication helper runs
-/// as root, and a symlink there would otherwise aim root's read at a file the
-/// user cannot open themselves. `O_NOFOLLOW` only covers the last component,
-/// so the owner check catches a symlinked parent (`~/.config -> /root/.config`)
-/// landing on a file the user does not own. `O_NONBLOCK` keeps a FIFO from
-/// hanging PAM.
+/// Read a file in a user's home as root, without letting a symlink aim the
+/// read at a file the user can't open. `O_NOFOLLOW` covers the last component
+/// only; the owner check catches a symlinked parent. `O_NONBLOCK` keeps a FIFO
+/// from hanging PAM (pinned by
+/// `tests::user_file_must_be_owned_by_the_user_and_not_a_symlink`).
 fn read_user_file(path: &Path, owner_uid: u32) -> std::io::Result<String> {
     use std::io::{Error, ErrorKind, Read};
     use std::os::unix::fs::MetadataExt;
@@ -189,8 +198,8 @@ impl FaceAuthConfig {
     /// `[liveness]`, an explicit value wins over `preset`.
     ///
     /// Must run on every parsed config, the user's included: the overlay
-    /// whitelist only looks at flat fields, so a group folded late would
-    /// bypass it.
+    /// whitelist only looks at flat fields (pinned by
+    /// `tests::grouped_user_keys_cannot_bypass_the_overlay`).
     pub fn fold_sections(&mut self) -> Result<()> {
         if let Some(mut s) = self.liveness.take() {
             fold!(s,
@@ -256,7 +265,7 @@ impl FaceAuthConfig {
             }
         }
 
-        // try_parsing so numeric keys coerce from their string env values.
+        // Env values are strings; try_parsing coerces the numeric keys.
         builder = builder.add_source(Environment::with_prefix("FACE_AUTH").try_parsing(true));
 
         let mut config: FaceAuthConfig = builder.build()?.try_deserialize()?;
@@ -265,18 +274,12 @@ impl FaceAuthConfig {
         Ok(config)
     }
 
-    /// Configuration for the PAM authentication path.
-    ///
-    /// Trust model: only the root-owned system file may decide *what* is
-    /// checked — camera device, models, and the embeddings directory. The
-    /// target user's own config is consulted for comfort settings, and for
-    /// thresholds it may only ever tighten the system value, never relax it.
-    /// The environment is ignored outright.
-    ///
-    /// Without this split, anything running as the user (malware that never
-    /// learned their password) could drop a `~/.config/face-auth.toml` with a
-    /// permissive threshold, or repoint `embeddings_dir` at a directory it
-    /// controls, and turn their next `sudo` into root.
+    /// Configuration for the PAM authentication path. Only the root-owned
+    /// system file decides *what* is checked (camera, models, store); the
+    /// target user's file may adjust comfort settings and only tighten
+    /// thresholds; the environment is ignored. Anything running as the user
+    /// could otherwise write a `~/.config/face-auth.toml` that turns their
+    /// next `sudo` into root.
     pub fn load_for_auth(username: &str) -> Result<Self> {
         let mut config = Self::load_system()?;
         if let Some(overlay) = load_user_overlay(username) {
@@ -327,10 +330,16 @@ impl FaceAuthConfig {
         self
     }
 
-    /// Merge the safe subset of a user's config over a system baseline.
+    /// Merge the safe subset of a user's config over a system baseline:
+    /// thresholds may only tighten, timing moves within bounds, and the camera
+    /// must be an IR sensor. Everything else (models, store, camera pin,
+    /// lockout, backend) is system policy (pinned by
+    /// `tests::user_overlay_cannot_redirect_lookups`,
+    /// `tests::user_overlay_cannot_weaken_threshold`,
+    /// `tests::user_overlay_may_tighten_threshold`).
     fn apply_user_overlay(&mut self, overlay: &FaceAuthConfig) {
         if let Some(t) = overlay.threshold {
-            if t.is_finite() && t >= self.threshold() && THRESHOLD_RANGE.contains(&t) {
+            if tightens(t, self.threshold(), &THRESHOLD_RANGE) {
                 self.threshold = Some(t);
             } else {
                 tracing::debug!(
@@ -340,68 +349,31 @@ impl FaceAuthConfig {
                 );
             }
         }
-        if let Some(t) = overlay.detector_threshold {
-            if t.is_finite()
-                && t >= self.detector_threshold()
-                && DETECTOR_THRESHOLD_RANGE.contains(&t)
-            {
-                self.detector_threshold = Some(t);
-            }
-        }
+        self.detector_threshold =
+            tightened(overlay.detector_threshold, self.detector_threshold(), &DETECTOR_THRESHOLD_RANGE)
+                .or(self.detector_threshold);
+        self.liveness_motion_threshold =
+            tightened(overlay.liveness_motion_threshold, self.liveness_motion_threshold(), &LIVENESS_MOTION_RANGE)
+                .or(self.liveness_motion_threshold);
+        self.liveness_residual_motion_threshold = tightened(
+            overlay.liveness_residual_motion_threshold,
+            self.liveness_residual_motion_threshold(),
+            &LIVENESS_MOTION_RANGE,
+        )
+        .or(self.liveness_residual_motion_threshold);
+        self.min_face_size_ratio =
+            tightened(overlay.min_face_size_ratio, self.min_face_size_ratio(), &MIN_FACE_SIZE_RANGE)
+                .or(self.min_face_size_ratio);
 
-        if let Some(t) = overlay.liveness_motion_threshold {
-            if t.is_finite()
-                && t >= self.liveness_motion_threshold()
-                && LIVENESS_MOTION_RANGE.contains(&t)
-            {
-                self.liveness_motion_threshold = Some(t);
-            }
-        }
+        // Timing can't weaken a match decision.
+        self.capture_timeout_ms = within(overlay.capture_timeout_ms, &CAPTURE_TIMEOUT_RANGE).or(self.capture_timeout_ms);
+        self.scan_duration_ms = within(overlay.scan_duration_ms, &SCAN_DURATION_RANGE).or(self.scan_duration_ms);
+        self.liveness_grace_ms = within(overlay.liveness_grace_ms, &LIVENESS_GRACE_RANGE).or(self.liveness_grace_ms);
+        self.scan_interval_ms = within(overlay.scan_interval_ms, &SCAN_INTERVAL_RANGE).or(self.scan_interval_ms);
 
-        if let Some(t) = overlay.liveness_residual_motion_threshold {
-            if t.is_finite()
-                && t >= self.liveness_residual_motion_threshold()
-                && LIVENESS_MOTION_RANGE.contains(&t)
-            {
-                self.liveness_residual_motion_threshold = Some(t);
-            }
-        }
-
-        if let Some(t) = overlay.min_face_size_ratio {
-            if t.is_finite()
-                && t >= self.min_face_size_ratio()
-                && MIN_FACE_SIZE_RANGE.contains(&t)
-            {
-                self.min_face_size_ratio = Some(t);
-            }
-        }
-
-        // Timing cannot weaken a match decision, so it is honoured within bounds.
-        if let Some(v) = overlay.capture_timeout_ms {
-            if CAPTURE_TIMEOUT_RANGE.contains(&v) {
-                self.capture_timeout_ms = Some(v);
-            }
-        }
-        if let Some(v) = overlay.scan_duration_ms {
-            if SCAN_DURATION_RANGE.contains(&v) {
-                self.scan_duration_ms = Some(v);
-            }
-        }
-        if let Some(v) = overlay.liveness_grace_ms {
-            if LIVENESS_GRACE_RANGE.contains(&v) {
-                self.liveness_grace_ms = Some(v);
-            }
-        }
-        if let Some(v) = overlay.scan_interval_ms {
-            if SCAN_INTERVAL_RANGE.contains(&v) {
-                self.scan_interval_ms = Some(v);
-            }
-        }
-
-        // Which IR sensor to use is a preference on a multi-camera machine, so
-        // it is honoured — but only after confirming the path really is an IR
-        // capture device here. Taken unchecked it would let an unprivileged
-        // setting aim authentication at any video source at all.
+        // Only a real IR sensor here: unchecked, the setting could aim
+        // authentication at any video source (pinned by
+        // `tests::user_overlay_rejects_a_camera_that_is_not_an_ir_device`).
         if let Some(dev) = overlay.device.as_deref() {
             if crate::capture::is_ir_capture_device(dev) {
                 self.device = Some(dev.to_string());
@@ -409,11 +381,6 @@ impl FaceAuthConfig {
                 tracing::warn!(device = dev, "ignoring user camera: not an IR capture device");
             }
         }
-
-        // model_path, detector_model_path and embeddings_dir stay system
-        // policy: each decides what gets compared against what. So do the
-        // camera pin and the lockout policy: a user must not be able to unpin
-        // the camera or lift their own throttle.
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -472,16 +439,11 @@ impl FaceAuthConfig {
             .unwrap_or_else(|| "/usr/local/share/face-auth/w600k_mbf.onnx".to_string())
     }
 
-    /// Identity stored with saved embeddings, so changing `model_path` without
-    /// re-enrolling is a clear error instead of comparisons across two
-    /// incompatible embedding spaces. The file name only: the same model at a
-    /// different path is the same model.
-    ///
-    /// The detector is part of the identity too, unless it is the original
-    /// `version-slim-320.onnx`: SCRFD's landmarks align the face before
-    /// encoding, so the same model gives different embeddings. Templates
-    /// enrolled with the old detector keep their plain tag and keep working
-    /// with it; switching detectors means re-enrolling.
+    /// Identity stored with saved embeddings, so a changed `model_path` is a
+    /// clear error rather than a comparison across two embedding spaces. File
+    /// names only: the same model at another path is the same model. The
+    /// detector is part of it, except `version-slim-320.onnx`: aligned faces
+    /// give different embeddings (pinned by `tests::model_tag_is_the_file_name`).
     pub fn model_tag(&self) -> String {
         let name = |path: String| {
             Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(path)
@@ -581,13 +543,10 @@ impl FaceAuthConfig {
         self.liveness_motion_threshold.unwrap_or(0.01)
     }
 
-    /// Minimum fraction of the most-changed block of the face patch (about an
-    /// eye's size) still changed after undoing the best rigid shift between
-    /// consecutive face frames, required on the same frame that passes
-    /// `liveness_motion_threshold`. Stops a photo
-    /// moved by hand. See `preprocess::motion_profile`'s `local`. Zero
-    /// disables the check, and is the default: a still face may not blink
-    /// inside one scan, especially behind glasses glare.
+    /// Minimum `local` motion (`preprocess::MotionProfile`) on the frame that
+    /// passes `liveness_motion_threshold`: stops a photo moved by hand. Off
+    /// (zero) by default: a still face may not blink within one scan,
+    /// especially behind glasses glare.
     pub fn liveness_residual_motion_threshold(&self) -> f32 {
         self.liveness_residual_motion_threshold.unwrap_or(0.0)
     }
@@ -733,8 +692,8 @@ fn load_user_overlay(username: &str) -> Option<FaceAuthConfig> {
         .map_err(|e| tracing::debug!("no usable user config at {}: {e}", path.display()))
         .ok()?;
 
-    // The parse error is not logged: it quotes the offending line, and under
-    // the set-group-ID lock-screen path the caller reads our stderr.
+    // Not the parse error: it quotes the line, and on the set-group-ID
+    // lock-screen path the caller reads our stderr.
     match toml::from_str::<FaceAuthConfig>(&contents)
         .map_err(anyhow::Error::from)
         .and_then(|mut cfg| cfg.fold_sections().map(|()| cfg))
@@ -1039,8 +998,6 @@ mod tests {
 
     #[test]
     fn user_overlay_rejects_a_camera_that_is_not_an_ir_device() {
-        // No such node exists in the test environment, so the validation in
-        // is_ir_capture_device must reject it and keep the system choice.
         let mut cfg = system_baseline();
         let overlay = FaceAuthConfig {
             device: Some("/dev/video99".to_string()),
@@ -1081,6 +1038,64 @@ mod tests {
     }
 
     #[test]
+    fn user_overlay_may_only_raise_detector_threshold() {
+        let mut cfg = system_baseline();
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            detector_threshold: Some(0.1),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.detector_threshold(), 0.5);
+
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            detector_threshold: Some(0.7),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.detector_threshold(), 0.7);
+    }
+
+    #[test]
+    fn user_overlay_capture_timeout_must_be_within_bounds() {
+        let mut cfg = system_baseline();
+        let before = cfg.capture_timeout_ms();
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            capture_timeout_ms: Some(50),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.capture_timeout_ms(), before, "below the range is ignored");
+
+        cfg.apply_user_overlay(&FaceAuthConfig {
+            capture_timeout_ms: Some(5000),
+            ..FaceAuthConfig::default()
+        });
+        assert_eq!(cfg.capture_timeout_ms(), 5000);
+    }
+
+    #[test]
+    fn tightens_accepts_equal_or_stricter_values_in_range() {
+        assert!(tightens(0.6, 0.6, &THRESHOLD_RANGE));
+        assert!(tightens(0.9, 0.6, &THRESHOLD_RANGE));
+        assert!(tightens(1.0, 0.6, &THRESHOLD_RANGE));
+    }
+
+    #[test]
+    fn tightens_rejects_looser_out_of_range_and_non_finite_values() {
+        assert!(!tightens(0.59, 0.6, &THRESHOLD_RANGE));
+        assert!(!tightens(1.1, 0.6, &THRESHOLD_RANGE));
+        assert!(!tightens(f32::NAN, 0.6, &THRESHOLD_RANGE));
+        assert!(!tightens(f32::INFINITY, 0.6, &THRESHOLD_RANGE));
+    }
+
+    #[test]
+    fn tightened_and_within_pass_none_through_as_none() {
+        assert_eq!(tightened(None, 0.6, &THRESHOLD_RANGE), None);
+        assert_eq!(tightened(Some(0.7), 0.6, &THRESHOLD_RANGE), Some(0.7));
+        assert_eq!(tightened(Some(0.5), 0.6, &THRESHOLD_RANGE), None);
+        assert_eq!(within(None, &SCAN_INTERVAL_RANGE), None);
+        assert_eq!(within(Some(5000), &SCAN_INTERVAL_RANGE), Some(5000));
+        assert_eq!(within(Some(5001), &SCAN_INTERVAL_RANGE), None);
+    }
+
+    #[test]
     fn validate_rejects_permissive_threshold() {
         let cfg = FaceAuthConfig {
             threshold: Some(0.0),
@@ -1106,9 +1121,7 @@ mod tests {
 
     #[test]
     fn empty_config_deserialises_to_all_defaults() {
-        // load_for_auth builds from zero sources when /etc/face-auth.toml is
-        // absent. If that errored, face-auth would refuse to start on a system
-        // with no system config rather than falling back to defaults.
+        // What load_for_auth builds with no /etc/face-auth.toml.
         let cfg: FaceAuthConfig = Config::builder().build().unwrap().try_deserialize().unwrap();
         assert!(cfg.validate().is_ok());
         assert_eq!(cfg.threshold(), 0.6);

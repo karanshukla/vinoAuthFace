@@ -69,13 +69,14 @@ const EDGE: Rgba = Rgba(255, 255, 255, 46);
 const WHITE: Rgba = Rgba(250, 250, 250, 255);
 const GREY: Rgba = Rgba(160, 164, 172, 255);
 const GREEN: Rgba = Rgba(86, 204, 120, 255);
-// The grey at 0.6 over the tile: what the vino logos draw behind the mark.
-// Half, as the other logos have it, falls just short of 3:1 on the tile.
+/// The grey at 0.6 over the tile; the other logos' 0.5 falls just short of
+/// 3:1 on it (pinned by `tests::the_pixmap_marks_stand_out_on_any_panel`).
 const FRAME: Rgba = Rgba(102, 104, 110, 255);
 const AMBER: Rgba = Rgba(245, 184, 66, 255);
 
-// The symbolic icon sits straight on the panel, light or dark, so its accents
-// are darker shades of the two above that keep 3:1 against both.
+/// The symbolic icon has no tile, so its accents are darker shades that keep
+/// 3:1 on light and dark panels (pinned by
+/// `tests::the_symbolic_icons_show_on_light_and_dark_panels`).
 const TRAY_GREEN: Rgba = Rgba(40, 150, 80, 255);
 const TRAY_AMBER: Rgba = Rgba(184, 115, 0, 255);
 
@@ -409,7 +410,6 @@ mod tests {
                 }
             }
         }
-        // And the tile itself stands out from every light panel.
         for (panel, _) in PANELS.iter().filter(|(p, _)| luminance(*p) > 0.5) {
             assert!(contrast(TILE, *panel) >= 3.0, "the tile vanishes on {panel:?}");
         }

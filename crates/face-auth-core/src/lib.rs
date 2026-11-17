@@ -32,14 +32,12 @@ use crate::verify::verify_embedding;
 use anyhow::Result;
 use std::time::{Duration, Instant};
 
-/// Margin added around the detected face box before cropping, as a fraction of
-/// the box's own size per side, so the encoder sees forehead-to-chin framing
-/// like its training crops rather than a razor-tight box. Public so offline
-/// tooling can reproduce the exact crop.
+/// Margin around the detected box before cropping, as a fraction of the box
+/// per side: the encoder's training crops run forehead to chin.
 pub const FACE_CROP_MARGIN: f32 = 0.3;
 
 /// The encoder input for a detected face: warped onto the ArcFace template
-/// when the detector found landmarks (SCRFD), otherwise the box crop with
+/// when the detector found landmarks, otherwise the box crop with
 /// `FACE_CROP_MARGIN`. Public so offline tooling encodes exactly as auth does.
 pub fn face_input(
     frame: &crate::capture::IrFrame,
@@ -51,42 +49,119 @@ pub fn face_input(
     }
 }
 
-/// Most face frames kept for `liveness_window_ms`, whatever the camera's
-/// frame rate: about 1 s at 15 pairs a second, and a bound on memory.
+/// Most face frames kept for `liveness_window_ms` whatever the frame rate:
+/// about 1 s at 15 pairs a second.
 const MAX_LIVENESS_FRAMES: usize = 16;
 
-/// Capture errors in a row before a scan gives up and reports the error.
 const MAX_CONSECUTIVE_CAPTURE_ERRORS: u32 = 3;
 
-/// Both thresholds at zero turn motion liveness off.
+/// (pinned by `tests::liveness_is_off_only_when_both_thresholds_are_zero`)
 fn liveness_disabled(motion_threshold: f32, residual_threshold: f32) -> bool {
     motion_threshold <= 0.0 && residual_threshold <= 0.0
 }
 
 /// `total` (against the oldest face frame in the window) defeats a static
-/// photo; `local` (against the previous frame) defeats one moved by hand.
+/// photo; `local` (against the previous frame) one moved by hand (pinned by
+/// `tests::rejects_a_static_photo_below_the_total_threshold`,
+/// `tests::rejects_a_photo_moved_by_hand_below_the_local_threshold`).
 fn motion_passes(total: f32, local: f32, motion_threshold: f32, residual_threshold: f32) -> bool {
     total >= motion_threshold && local >= residual_threshold
 }
 
-/// Once per scan, a face that matched but hasn't moved enough gets `grace`
-/// more time. A scan that never matched never extends.
+/// Once per scan, a match still waiting on liveness gets `grace` more time
+/// (pinned by `tests::extends_a_pending_match_once`,
+/// `tests::never_extends_a_scan_that_has_not_matched_or_has_no_grace`).
 fn grace_extends_scan(liveness_pending: bool, already_extended: bool, grace: Duration) -> bool {
     liveness_pending && !already_extended && !grace.is_zero()
 }
 
-/// The oldest face frame is dropped once it falls outside the liveness window
-/// or the buffer is over `MAX_LIVENESS_FRAMES`; the newest is always kept as
-/// the baseline.
+/// (pinned by `tests::keeps_a_face_frame_inside_the_window`,
+/// `tests::keeps_the_baseline_frame_however_old`, `tests::caps_buffered_face_frames`)
 fn drop_oldest_face(frames_kept: usize, oldest_age: Duration, window: Duration) -> bool {
     frames_kept > 1 && (oldest_age > window || frames_kept > MAX_LIVENESS_FRAMES)
 }
 
-/// Progress reporting for the interactive enrolment paths.
-///
-/// The library never writes to stdout itself — `face-auth` runs under
-/// `pam_exec`, where stray output lands on the user's terminal on every
-/// `sudo`. Callers that *are* interactive supply a sink.
+/// A face frame as captured, before CLAHE: equalisation remaps each frame
+/// differently and would add change of its own.
+struct FaceFrame {
+    at: Instant,
+    raw: crate::capture::IrFrame,
+    face_box: FaceBox,
+}
+
+/// Motion liveness across one scan's face frames.
+struct Liveness {
+    recent_faces: std::collections::VecDeque<FaceFrame>,
+    window: Duration,
+    motion_threshold: f32,
+    residual_threshold: f32,
+    motion_seen: bool,
+}
+
+impl Liveness {
+    fn new(config: &FaceAuthConfig) -> Self {
+        let motion_threshold = config.liveness_motion_threshold();
+        let residual_threshold = config.liveness_residual_motion_threshold();
+        Self {
+            recent_faces: std::collections::VecDeque::new(),
+            window: Duration::from_millis(config.liveness_window_ms()),
+            motion_threshold,
+            residual_threshold,
+            motion_seen: liveness_disabled(motion_threshold, residual_threshold),
+        }
+    }
+
+    /// Adds a face frame. `false` for the first one, which is only a baseline
+    /// and is never encoded.
+    fn observe(&mut self, frame_num: usize, face: FaceFrame) -> Result<bool> {
+        while let Some(oldest) = self.recent_faces.front() {
+            if !drop_oldest_face(self.recent_faces.len(), face.at.duration_since(oldest.at), self.window) {
+                break;
+            }
+            self.recent_faces.pop_front();
+        }
+        let motion = match (self.recent_faces.front(), self.recent_faces.back()) {
+            (Some(oldest), Some(prev)) => {
+                let across = motion_since(oldest, &face.raw)?;
+                let consecutive = if self.recent_faces.len() > 1 { motion_since(prev, &face.raw)? } else { across };
+                Some((across, consecutive))
+            }
+            _ => None,
+        };
+        let now = face.at;
+        self.recent_faces.push_back(face);
+        let Some((across, consecutive)) = motion else {
+            return Ok(false);
+        };
+        self.motion_seen |= motion_passes(across.total, consecutive.local, self.motion_threshold, self.residual_threshold);
+        tracing::debug!(
+            frame = frame_num,
+            motion = across.total,
+            span_ms = now.duration_since(self.recent_faces[0].at).as_millis() as u64,
+            residual = consecutive.residual,
+            local = consecutive.local,
+            shift = ?consecutive.shift,
+            motion_threshold = self.motion_threshold,
+            residual_threshold = self.residual_threshold,
+            motion_seen = self.motion_seen,
+            "liveness"
+        );
+        Ok(true)
+    }
+}
+
+/// Both patches are cut with the earlier frame's box: the detector's box
+/// changes size from frame to frame, and differently scaled patches would
+/// differ everywhere.
+fn motion_since(earlier: &FaceFrame, raw: &crate::capture::IrFrame) -> Result<crate::preprocess::MotionProfile> {
+    Ok(crate::preprocess::motion_profile(
+        &crate::preprocess::face_patch(&earlier.raw, &earlier.face_box)?,
+        &crate::preprocess::face_patch(raw, &earlier.face_box)?,
+    ))
+}
+
+/// Progress for the interactive enrolment paths. The library never writes to
+/// stdout: under `pam_exec` it would land on the terminal on every `sudo`.
 pub type ProgressFn<'a> = &'a mut dyn FnMut(EnrollProgress);
 
 #[derive(Debug, Clone)]
@@ -115,8 +190,7 @@ fn scan_prelude(
         return Ok(None);
     }
     let device = config.device()?;
-    // An account with no templates fails at the load below; don't light the
-    // emitter for it.
+    // Don't light the emitter for an account with no templates.
     let enrolled = EmbeddingStore::is_enrolled(user, &embeddings_dir).unwrap_or(false);
     std::thread::scope(|s| {
         let camera = enrolled.then(|| {
@@ -170,9 +244,8 @@ impl FaceAuth {
     /// Like [`FaceAuth::new`], but loads the models while another thread runs
     /// everything `authenticate_scan` needs before its first frame: `gate`,
     /// the pin, binding and lockout checks, then the template unseal alongside
-    /// the camera's open and stream start. Those steps took turns before and
-    /// the first one dominated. Nothing touches the camera until `gate`
-    /// and the checks have passed. Hand the second value to
+    /// the camera's open and stream start. Nothing touches the camera until
+    /// `gate` and the checks have passed. Hand the second value to
     /// [`FaceAuth::authenticate_prepared`].
     pub fn new_for_scan(
         config: FaceAuthConfig,
@@ -218,8 +291,7 @@ impl FaceAuth {
     }
 
     /// Refuse a camera `user` didn't enrol on, before it is opened. An error,
-    /// not a failed attempt: nothing is recorded against the lockout, and PAM
-    /// falls through to the password. See `cameras`.
+    /// not a failed attempt: the lockout doesn't count it. See `cameras`.
     fn check_camera_binding(&self, user: &str) -> Result<()> {
         check_camera_binding(&self.config, user)
     }
@@ -312,17 +384,8 @@ impl FaceAuth {
         let mut frame_num: usize = 0;
         let mut consecutive_errors = 0u32;
         let mut last_reject: Option<FrameQuality> = None;
-        // Only a scan that saw a face counts toward lockout: an unattended
-        // `sudo` with nobody at the camera is not a failed attempt. Counted
-        // on the first face, not at the end (see `record_pending_failure`).
-        let mut counted = false;
-        // A match only counts once motion has been seen (see `motion_passes`).
-        let motion_threshold = self.config.liveness_motion_threshold();
-        let residual_threshold = self.config.liveness_residual_motion_threshold();
-        let window = Duration::from_millis(self.config.liveness_window_ms());
-        let mut recent_faces: std::collections::VecDeque<(Instant, crate::capture::IrFrame, FaceBox)> =
-            std::collections::VecDeque::new();
-        let mut motion_seen = liveness_disabled(motion_threshold, residual_threshold);
+        let mut attempt_counted = false;
+        let mut liveness = Liveness::new(&self.config);
         let grace = Duration::from_millis(self.config.liveness_grace_ms());
         let mut liveness_pending = false;
         let mut extended = false;
@@ -342,8 +405,6 @@ impl FaceAuth {
                 tracing::debug!(frames = frame_num, grace_ms = grace.as_millis() as u64, "matched, liveness pending; extending scan");
             }
             if Instant::now() >= deadline {
-                // If nothing ever reached the detector, say why: "no match" and
-                // "the illuminator never fired" need very different fixes.
                 match last_reject {
                     Some(q) => tracing::debug!(
                         frames = frame_num,
@@ -379,8 +440,6 @@ impl FaceAuth {
                 continue;
             }
 
-            // Liveness compares the frame as captured; CLAHE remaps each
-            // frame differently and would add change of its own.
             let raw = frame.clone();
             let mut frame = frame;
             crate::preprocess::histogram_equalize(&mut frame);
@@ -394,57 +453,18 @@ impl FaceAuth {
                 nap(deadline);
                 continue;
             }
-            if !counted {
-                counted = true;
+            if !attempt_counted {
+                attempt_counted = true;
                 if !record_pending_failure(user, &embeddings_dir) {
                     return Ok(false);
                 }
             }
 
-            // The first face frame is only a baseline and is never encoded.
-            // Both patches are cut with the earlier frame's box: the detector's
-            // box wobbles in size from frame to frame, and two differently
-            // scaled patches would differ everywhere.
-            let now = Instant::now();
-            while let Some(oldest) = recent_faces.front() {
-                if !drop_oldest_face(recent_faces.len(), now.duration_since(oldest.0), window) {
-                    break;
-                }
-                recent_faces.pop_front();
-            }
-            let profile = |(_, old_raw, old_box): &(Instant, crate::capture::IrFrame, FaceBox)| {
-                anyhow::Ok(crate::preprocess::motion_profile(
-                    &crate::preprocess::face_patch(old_raw, old_box)?,
-                    &crate::preprocess::face_patch(&raw, old_box)?,
-                ))
-            };
-            let motion = match (recent_faces.front(), recent_faces.back()) {
-                (Some(oldest), Some(prev)) => {
-                    let across = profile(oldest)?;
-                    let consecutive = if recent_faces.len() > 1 { profile(prev)? } else { across };
-                    Some((across, consecutive))
-                }
-                _ => None,
-            };
-            recent_faces.push_back((now, raw, face_box));
-            let Some((across, consecutive)) = motion else {
+            if !liveness.observe(frame_num, FaceFrame { at: Instant::now(), raw, face_box })? {
                 tracing::debug!(frame = frame_num, "liveness baseline");
                 nap(deadline);
                 continue;
-            };
-            motion_seen |= motion_passes(across.total, consecutive.local, motion_threshold, residual_threshold);
-            tracing::debug!(
-                frame = frame_num,
-                motion = across.total,
-                span_ms = now.duration_since(recent_faces[0].0).as_millis() as u64,
-                residual = consecutive.residual,
-                local = consecutive.local,
-                shift = ?consecutive.shift,
-                motion_threshold,
-                residual_threshold,
-                motion_seen,
-                "liveness"
-            );
+            }
 
             // Degenerate landmarks are one bad frame, not a broken setup.
             let input = match face_input(&frame, &face_box) {
@@ -458,7 +478,7 @@ impl FaceAuth {
             let embedding = self.encoder.encode(input.view())?;
 
             if verify_embedding(&embedding, &store, self.config.threshold())? {
-                if !motion_seen {
+                if !liveness.motion_seen {
                     tracing::debug!(frame = frame_num, "match without liveness motion yet; continuing");
                     liveness_pending = true;
                     nap(deadline);
@@ -533,8 +553,7 @@ impl FaceAuth {
             }
         }
 
-        // Check what *this* run produced. Testing the whole store would let an
-        // append silently succeed having captured nothing.
+        // This run's captures, not the store's: an append must capture something.
         if store.embeddings.len() == before {
             match last_reject {
                 Some(q) => anyhow::bail!(
@@ -577,8 +596,8 @@ impl FaceAuth {
             &self.config.model_tag(),
             self.config.seal_embeddings(),
         )?;
-        // Recorded whether or not `bind_camera` is on, so turning it on later
-        // needs no re-enrolment.
+        // Recorded even with `bind_camera` off, so turning it on needs no
+        // re-enrolment.
         cameras::record(user, &self.config.embeddings_dir(), cameras::camera_id(&device).as_deref(), true)?;
         Ok(saved)
     }
@@ -596,15 +615,7 @@ impl FaceAuth {
     ) -> Result<(usize, usize)> {
         self.config.verify_pinned_camera()?;
         let mut store = if append {
-            let store = match EmbeddingStore::load(user, &self.config.embeddings_dir()) {
-                Ok(s) => s,
-                Err(e) if matches!(e.downcast_ref::<FaceAuthError>(), Some(FaceAuthError::NoEmbeddings)) => {
-                    EmbeddingStore::default()
-                }
-                Err(e) => return Err(e.context("refusing to append: existing embeddings unreadable")),
-            };
-            self.check_model_tag(&store)?;
-            store
+            self.store_to_append_to(user)?
         } else {
             EmbeddingStore::default()
         };
@@ -627,8 +638,22 @@ impl FaceAuth {
         Ok((total - existing, total))
     }
 
-    /// Append to the user's enrolled embeddings, improving coverage across
-    /// lighting and angles.
+    /// The user's templates to add to. Only "nothing enrolled yet" starts
+    /// from empty: saving over a store that failed to load would discard it.
+    /// A store from another model is refused, since its vectors can't be mixed.
+    fn store_to_append_to(&self, user: &str) -> Result<EmbeddingStore> {
+        let store = match EmbeddingStore::load(user, &self.config.embeddings_dir()) {
+            Ok(s) => s,
+            Err(e) if matches!(e.downcast_ref::<FaceAuthError>(), Some(FaceAuthError::NoEmbeddings)) => {
+                EmbeddingStore::default()
+            }
+            Err(e) => return Err(e.context("refusing to append: existing embeddings unreadable")),
+        };
+        self.check_model_tag(&store)?;
+        Ok(store)
+    }
+
+    /// Add to the user's templates, for coverage across lighting and angles.
     pub fn enroll_append(
         &mut self,
         user: &str,
@@ -637,20 +662,7 @@ impl FaceAuth {
         progress: ProgressFn<'_>,
     ) -> Result<(usize, usize)> {
         self.config.verify_pinned_camera()?;
-        let mut store = match EmbeddingStore::load(user, &self.config.embeddings_dir()) {
-            Ok(s) => s,
-            // Only "nothing enrolled yet" starts from empty. Any other error
-            // (corrupt or unreadable file) must not silently discard what is
-            // already there — saving would overwrite it.
-            Err(e) if matches!(e.downcast_ref::<FaceAuthError>(), Some(FaceAuthError::NoEmbeddings)) => {
-                EmbeddingStore::default()
-            }
-            Err(e) => return Err(e.context("refusing to append: existing embeddings unreadable")),
-        };
-
-        // Appending under a different model would mix incompatible vectors
-        // into the gallery. Switching models is a fresh enrolment.
-        self.check_model_tag(&store)?;
+        let mut store = self.store_to_append_to(user)?;
 
         let existing = store.embeddings.len();
         crate::storage::check_room(existing, frames)?;
@@ -670,14 +682,15 @@ impl FaceAuth {
     }
 }
 
-/// Count the attempt as failed as soon as a face is seen, before anything can
-/// match. A scan that then errors out, or is killed (whoever runs `sudo` can
-/// kill its `pam_exec` child), has already been counted; a match resets it.
+/// Count the attempt as failed at the first face, so a scan that errors out or
+/// is killed (whoever runs `sudo` can kill its `pam_exec` child) is still
+/// counted; a match resets it. A scan with no face is never an attempt.
 ///
-/// `false` when another process holds the state lock: the scan must stop,
-/// since going on uncounted is the bypass this closes. A write that fails for
-/// any other reason never turns a result into an error; the backoff just
-/// doesn't advance this time.
+/// `false` when another process holds the state lock: going on uncounted is
+/// the parallel-scan bypass the lock closes. Any other write failure goes on
+/// uncounted rather than becoming an error (pinned by
+/// `tests::a_held_lock_declines_the_scan`,
+/// `tests::a_failed_write_proceeds_uncounted_by_design`).
 fn record_pending_failure(user: &str, embeddings_dir: &std::path::Path) -> bool {
     match lockout::record_failure(user, embeddings_dir) {
         Ok(()) => true,
@@ -734,6 +747,50 @@ mod tests {
         assert!(!liveness_disabled(0.0, RESIDUAL));
     }
 
+    fn liveness_config(motion: f32, residual: f32) -> FaceAuthConfig {
+        FaceAuthConfig {
+            liveness_motion_threshold: Some(motion),
+            liveness_residual_motion_threshold: Some(residual),
+            ..FaceAuthConfig::default()
+        }
+    }
+
+    fn face_frame(seed: u32) -> FaceFrame {
+        let (width, height) = (120u32, 120u32);
+        let data = (0..width * height)
+            .map(|i| (i.wrapping_mul(2654435761u32.wrapping_add(seed.wrapping_mul(0x9E37_79B9))) >> 16) as u16)
+            .collect();
+        FaceFrame {
+            at: Instant::now(),
+            raw: crate::capture::IrFrame { data, width, height },
+            face_box: FaceBox { x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.9, landmarks: None },
+        }
+    }
+
+    #[test]
+    fn the_first_face_frame_is_only_a_baseline() {
+        let mut liveness = Liveness::new(&liveness_config(0.05, 0.0));
+        assert!(!liveness.observe(1, face_frame(1)).unwrap());
+        assert!(liveness.observe(2, face_frame(1)).unwrap());
+    }
+
+    #[test]
+    fn motion_is_not_seen_until_a_frame_changes() {
+        let mut liveness = Liveness::new(&liveness_config(0.05, 0.0));
+        liveness.observe(1, face_frame(1)).unwrap();
+        liveness.observe(2, face_frame(1)).unwrap();
+        assert!(!liveness.motion_seen);
+
+        liveness.observe(3, face_frame(2)).unwrap();
+        assert!(liveness.motion_seen);
+    }
+
+    #[test]
+    fn liveness_with_both_thresholds_zero_starts_with_motion_seen() {
+        assert!(Liveness::new(&liveness_config(0.0, 0.0)).motion_seen);
+        assert!(!Liveness::new(&liveness_config(0.05, 0.0)).motion_seen);
+    }
+
     #[test]
     fn extends_a_pending_match_once() {
         let grace = Duration::from_millis(4000);
@@ -779,8 +836,6 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    // Fail-open by design: a write that fails for any reason but a held lock
-    // lets the scan go on uncounted, rather than turning into an error.
     #[test]
     fn a_failed_write_proceeds_uncounted_by_design() {
         let dir = crate::test_support::tmpdir("nostore");
@@ -789,8 +844,6 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    // A held lock is the one case that must stop the scan: going on
-    // uncounted is the parallel-scan bypass the lock closes.
     #[test]
     fn a_held_lock_declines_the_scan() {
         use std::os::fd::AsRawFd;

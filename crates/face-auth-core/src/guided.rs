@@ -230,8 +230,8 @@ pub fn pose(face: &FaceBox, width: u32, height: u32) -> Option<Pose> {
         return None;
     }
     let nose = (nose.0 - eyes.0, nose.1 - eyes.1);
-    // Projections onto the eye line and the eyes-to-mouth line, so a rolled
-    // head reads the same as an upright one.
+    // Projected onto the eye line and the eyes-to-mouth line (pinned by
+    // `tests::a_rolled_head_reads_as_upright`).
     let yaw = (nose.0 * along.0 + nose.1 * along.1) / (eyes_px * eyes_px);
     let pitch = (nose.0 * down.0 + nose.1 * down.1) / (down_len * down_len);
     Some(Pose { yaw, pitch, eyes_px })
@@ -335,7 +335,6 @@ impl FaceAuth {
         progress: &mut dyn FnMut(GuidedProgress),
         control: &mut dyn FnMut() -> Option<Control>,
     ) -> Result<Vec<Vec<f32>>> {
-        // Any detector with the five points will do; only the slim one has none.
         if self.detector.kind() == DetectorKind::Slim {
             bail!(
                 "guided enrolment needs a detector with the five face points, such as SCRFD (det_500m.onnx); \
@@ -422,7 +421,8 @@ impl FaceAuth {
             *held = None;
             return Ok(Err(hint));
         }
-        // The first frame in the pose only starts the count.
+        // The first frame in the pose only starts the count (pinned by
+        // `tests::a_pose_counts_once_it_is_held`).
         match held.replace(pose) {
             Some(before) if steady(before, pose) => *held = None,
             _ => return Ok(Err(Hint::Hold)),
@@ -476,7 +476,6 @@ mod tests {
 
     #[test]
     fn a_rolled_head_reads_as_upright() {
-        // The same face turned 30 degrees in the image plane.
         let (s, c) = (30f32.to_radians().sin(), 30f32.to_radians().cos());
         let rot = |(x, y): (f32, f32)| {
             let (x, y) = (x * 360.0 - 180.0, y * 360.0 - 190.0);
@@ -500,7 +499,11 @@ mod tests {
         assert_eq!(fit(Step::Straight, at(2.0, 3.0), &base), Ok(()));
         assert_eq!(fit(Step::Straight, at(16.0, 0.0), &base), Err(Hint::LookAtCamera));
         assert_eq!(fit(Step::Glasses, at(-16.0, 0.0), &base), Err(Hint::LookAtCamera));
-        // A nose above the eyes or below the mouth isn't a face looking at the camera.
+    }
+
+    #[test]
+    fn a_nose_above_the_eyes_or_below_the_mouth_is_not_looking_at_the_camera() {
+        let base = Baseline::default();
         assert_eq!(fit(Step::Straight, at(0.0, -32.0), &base), Err(Hint::LookAtCamera));
         assert_eq!(fit(Step::Straight, at(0.0, 32.0), &base), Err(Hint::LookAtCamera));
     }
@@ -516,21 +519,25 @@ mod tests {
         let mut base = straight();
         assert_eq!(fit(Step::Side, at(4.0, 0.0), &base), Err(Hint::TurnMore));
         assert_eq!(fit(Step::Side, at(40.0, 0.0), &base), Err(Hint::TurnLess));
-        // Either way will do for the first.
         assert_eq!(fit(Step::Side, at(-16.0, 0.0), &base), Ok(()));
         assert_eq!(fit(Step::Side, at(16.0, 0.0), &base), Ok(()));
         base.record(Step::Side, at(-16.0, 0.0));
         assert_eq!(fit(Step::OtherSide, at(-16.0, 0.0), &base), Err(Hint::OtherWay));
         assert_eq!(fit(Step::OtherSide, at(16.0, 0.0), &base), Ok(()));
-        // Later frames of the first side stay on it.
+    }
+
+    #[test]
+    fn later_frames_of_the_first_side_stay_on_it() {
+        let mut base = straight();
+        base.record(Step::Side, at(-16.0, 0.0));
         assert_eq!(fit(Step::Side, at(16.0, 0.0), &base), Err(Hint::OtherWay));
     }
 
     #[test]
     fn tilts_are_measured_from_the_users_own_straight_pose() {
-        // Someone whose camera sits below their eye line.
+        let camera_below_the_eye_line = at(0.0, 6.0);
         let mut base = Baseline::default();
-        base.record(Step::Straight, at(0.0, 6.0));
+        base.record(Step::Straight, camera_below_the_eye_line);
         assert_eq!(fit(Step::Up, at(0.0, 6.0), &base), Err(Hint::TiltMore));
         assert_eq!(fit(Step::Up, at(0.0, -2.0), &base), Ok(()));
         assert_eq!(fit(Step::Up, at(0.0, -30.0), &base), Err(Hint::TiltLess));

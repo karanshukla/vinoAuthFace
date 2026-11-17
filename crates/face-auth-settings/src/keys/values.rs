@@ -1,8 +1,9 @@
 //! Values, as the file spells them: the literals `edit` writes.
 
+/// The shortest form that reads back as `v`, always with a point: toml won't
+/// read an integer into an f32 field (pinned by
+/// `tests::a_whole_float_keeps_its_point`).
 pub fn float(v: f32) -> String {
-    // Shortest form that reads back as v, always with a point: `1` would be
-    // an integer, which toml won't read into an f32 field.
     let s = format!("{v}");
     if s.contains(['.', 'e', 'E']) || !v.is_finite() {
         s
@@ -41,10 +42,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn values_are_spelled_as_toml() {
-        assert_eq!(float(0.6), "0.6");
+    fn a_whole_float_keeps_its_point() {
         assert_eq!(float(1.0), "1.0");
         assert_eq!(float(0.0), "0.0");
+    }
+
+    #[test]
+    fn values_are_spelled_as_toml() {
+        assert_eq!(float(0.6), "0.6");
         assert_eq!(string("/dev/video2"), "\"/dev/video2\"");
         assert_eq!(string("a\"b\\c"), "\"a\\\"b\\\\c\"");
         let table: toml::Table = toml::from_str(&format!("x = {}", string("tab\there\u{1}"))).unwrap();

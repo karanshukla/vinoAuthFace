@@ -23,8 +23,8 @@ pub fn build(tray: &Tray) -> Vec<MenuItem<Tray>> {
             menu.push(MenuItem::Separator);
         }
 
-        // Some hosts never show the tooltip, so the label carries the summary:
-        // pinned by `the_status_entry_says_what_the_tooltip_says`.
+        // Some hosts never show the tooltip, so the label carries the summary
+        // (pinned by `tests::the_status_entry_says_what_the_tooltip_says`).
         let plain = s.ready() && tray.busy.is_none() && !tray.scanning;
         menu.push(
             SubMenu {
@@ -254,7 +254,6 @@ mod tests {
 
     #[test]
     fn setting_labels_avoid_the_access_key_marker() {
-        // ksni treats "_" as an access-key marker.
         for setting in SETTINGS {
             assert!(!setting.title.contains('_'));
             assert!(setting.choices.iter().all(|c| !c.label.contains('_')));
@@ -279,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn the_menu_ends_with_quit_and_leaves_the_other_apps_to_the_settings_window() {
+    fn the_menu_ends_with_quit() {
         for settings_window in [true, false] {
             let mut s = status(Some("/dev/video2"), Some(true));
             s.settings_window = settings_window;
@@ -288,8 +287,16 @@ mod tests {
                 panic!("the menu should end with Quit");
             };
             assert_eq!(quit.label, "Quit");
-            // The settings window's About page links to vinopilot.ca and the
-            // other vinoPilot apps; the tray doesn't, at any level.
+        }
+    }
+
+    /// Only the settings window's About page lists the other vinoPilot apps.
+    #[test]
+    fn the_menu_leaves_the_other_apps_to_the_settings_window() {
+        for settings_window in [true, false] {
+            let mut s = status(Some("/dev/video2"), Some(true));
+            s.settings_window = settings_window;
+            let menu = tray(s).menu();
             let mut labels = Vec::new();
             all_labels(&menu, &mut labels);
             assert!(
@@ -444,7 +451,11 @@ mod tests {
                 }
             }
         }
-        // A value the menu doesn't offer selects nothing and says so.
+    }
+
+    #[test]
+    fn a_value_the_menu_does_not_offer_selects_nothing_and_says_so() {
+        let mut s = status(Some("/dev/video2"), Some(true));
         let security = SETTINGS.iter().find(|x| x.key == "security").unwrap();
         s.settings = [("security".to_string(), "custom".to_string())].into();
         let [MenuItem::Standard(heading), MenuItem::RadioGroup(group)] = setting_radio(security, &s, true) else {
@@ -452,7 +463,10 @@ mod tests {
         };
         assert_eq!(heading.label, "Security: custom");
         assert_eq!(group.selected, usize::MAX);
-        // The idle delay is a radio group on the current choice.
+    }
+
+    #[test]
+    fn the_idle_delay_is_a_radio_group_on_the_current_choice() {
         let [_, MenuItem::RadioGroup(group)] = idle_radio(60) else { panic!() };
         assert_eq!(group.selected, idle::CHOICES.iter().position(|(m, _)| *m == 60).unwrap());
     }

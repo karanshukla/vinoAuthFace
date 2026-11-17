@@ -6,8 +6,8 @@ pub fn verify_embedding(
     store: &EmbeddingStore,
     threshold: f32,
 ) -> anyhow::Result<bool> {
-    // A threshold of zero or below matches anything. Config validation should
-    // already have caught it; refuse rather than authenticate if it has not.
+    // At zero or below anything matches. Validation catches it first; this
+    // refuses anyway (pinned by `tests::rejects_non_positive_threshold`).
     if !threshold.is_finite() || threshold <= 0.0 {
         anyhow::bail!("refusing to verify against non-positive threshold {threshold}");
     }
@@ -29,8 +29,8 @@ pub fn max_similarity(probe: &[f32], store: &EmbeddingStore) -> anyhow::Result<f
         return Err(FaceAuthError::NoEmbeddings.into());
     }
 
-    // A non-finite probe makes every comparison NaN, which compares false and
-    // so fails closed — but silently. Say why instead.
+    // NaN would fail closed, but silently (pinned by
+    // `tests::rejects_non_finite_probe`).
     if !probe.iter().all(|v| v.is_finite()) {
         anyhow::bail!("probe embedding contains non-finite values");
     }

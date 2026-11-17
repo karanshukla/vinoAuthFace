@@ -1,5 +1,5 @@
 //! SCRFD face detection with five landmarks, and alignment of the face to the
-//! template the ArcFace-family encoders were trained on (#27).
+//! template the ArcFace-family encoders were trained on.
 //!
 //! `w600k_mbf` / `w600k_r50` expect a 112x112 crop warped so the eyes, nose
 //! tip and mouth corners land on fixed points. A plain box crop leaves roll,
