@@ -5,23 +5,24 @@ nav_order: 7
 
 # Tray icon
 
-An optional tray icon for the session: an icon that shows scan state, and enrol, retrain and test
-without remembering CLI flags. It replaces upstream's GTK settings GUI. It is a separate
-per-user app and is never part of authentication: `vinoauthface-auth` doesn't know it exists.
+vinoAuthFace includes an optional session tray icon that shows live scan state and provides quick
+access to enrolment, retraining, and test scans without memorizing CLI flags. It replaces upstream's
+GTK settings GUI. The tray runs as a standalone per-user application and plays no part in
+authentication—`vinoauthface-auth` does not interact with it.
 
-It's a StatusNotifierItem, and the menu entries that change anything run through pkexec, which
-needs a polkit agent in the session:
+The tray uses the StatusNotifierItem protocol, and menu items that make privileged changes invoke
+`pkexec`, which requires a polkit authentication agent in your session:
 
-| Desktop | Tray | polkit agent |
+| Desktop | Tray support | Polkit agent |
 |---|---|---|
 | KDE Plasma | Native | Built in |
-| GNOME | Needs the AppIndicator extension (Ubuntu ships it on; on Fedora install `gnome-shell-extension-appindicator`; on Fedora Atomic, `rpm-ostree install gnome-shell-extension-appindicator` or get it from extensions.gnome.org) | Built in |
-| COSMIC | The panel's status area applet | Built in |
-| sway, Hyprland and other wlroots compositors | A bar with a tray, such as waybar's `tray` module | Not built in: start one, such as `hyprpolkitagent`, `polkit-gnome` or `lxqt-policykit` |
+| GNOME | Requires the AppIndicator extension (enabled by default on Ubuntu; on Fedora install `gnome-shell-extension-appindicator`; on Fedora Atomic run `rpm-ostree install gnome-shell-extension-appindicator` or install from extensions.gnome.org) | Built in |
+| COSMIC | Panel status area applet | Built in |
+| sway, Hyprland, and other wlroots compositors | Requires a bar with a tray module (such as Waybar's `tray`) | Not built in; start one such as `hyprpolkitagent`, `polkit-gnome`, or `lxqt-policykit` |
 
-Without a tray the icon doesn't show, but the "Enrol face" launcher still works. Without a polkit
-agent pkexec fails with "No authentication agent found"; run the same thing from a terminal
-instead (`sudo vinoauthface enroll --user $USER`).
+Without a desktop tray, the icon will not appear, though the **Enrol face** application launcher
+still works. Without a polkit agent, `pkexec` fails with "No authentication agent found"; run the
+command in a terminal instead (for example, `sudo vinoauthface enroll --user $USER`).
 
 ## Install
 
@@ -29,122 +30,131 @@ instead (`sudo vinoauthface enroll --user $USER`).
 sudo ./deploy.sh
 ```
 
-The tray installs by default. Skip it with `sudo ./deploy.sh --no-tray` (or `FACE_AUTH_TRAY=0`).
+The tray is installed by default. Skip it with `sudo ./deploy.sh --no-tray` (or `FACE_AUTH_TRAY=0`).
 
-It starts at the next login, or run `vinoauthface-tray` now (it detaches from the terminal, so closing it leaves the tray running). `uninstall.sh` removes it. Only one tray runs per session: a second `vinoauthface-tray` exits at once.
+It starts automatically at your next login, or you can launch `vinoauthface-tray` immediately (it
+detaches from the terminal, so closing the terminal leaves it running). Only one instance runs per
+session; launching a second `vinoauthface-tray` exits immediately. `uninstall.sh` removes all tray
+files.
 
-| File | What |
+| Installed file | Purpose |
 |---|---|
-| `/usr/local/bin/vinoauthface-tray` | The tray. Runs as you |
-| `/usr/local/libexec/vinoauthface-helper` | Root helper that the tray runs through pkexec |
-| `/usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy` | One polkit action per helper verb. On a read-only `/usr` it goes in `/usr/local/share/polkit-1/actions` instead, which needs polkit 124 or later |
-| `/etc/xdg/autostart/vinoauthface-tray.desktop` | Starts it at login |
-| `/usr/local/share/applications/vinoauthface-{tray,enrol}.desktop` | Launchers. "Enrol face" works without the tray running |
-| `/usr/local/share/face-auth/{login,setting}-mode.sh` | What the login-screen and Settings entries run |
-| `/usr/local/share/face-auth/uninstall.sh` | Installed by every deploy (and linked as `vinoauthface-uninstall`), so uninstalling works after the repo is gone |
-| `/usr/local/bin/vinoauthface-upgrade` | Installed by every deploy (not only with the tray). The upgrade entry runs it |
+| `/usr/local/bin/vinoauthface-tray` | Tray application (runs as your user) |
+| `/usr/local/libexec/vinoauthface-helper` | Root helper invoked by the tray through `pkexec` |
+| `/usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy` | Polkit policy defining one action per helper verb (installed to `/usr/local/share/polkit-1/actions` on read-only `/usr`, requiring polkit 124+) |
+| `/etc/xdg/autostart/vinoauthface-tray.desktop` | Autostart entry for login |
+| `/usr/local/share/applications/vinoauthface-{tray,enrol}.desktop` | Desktop launchers (**Enrol face** works even when the tray is not running) |
+| `/usr/local/share/face-auth/{login,setting}-mode.sh` | Scripts invoked by the Login screen and Settings menu entries |
+| `/usr/local/share/face-auth/uninstall.sh` | Uninstaller installed by every deploy (symlinked as `vinoauthface-uninstall`) |
+| `/usr/local/bin/vinoauthface-upgrade` | Release upgrader installed by every deploy (invoked by the Update menu entry) |
 
 ## Menu
 
-| Entry | Does | Runs as |
+| Entry | Action | Runs as |
 |---|---|---|
-| Update to vN | Shown at the top only when a newer release exists (checked a minute after start, then daily; `update_check = false` disables it). Runs `vinoauthface-upgrade` (see [install.md](install.md#updating)), then restarts the tray on the new version. A notification appears once per new release | root, via pkexec |
-| Status | A submenu: the camera it would use, whether you're enrolled, the backend, the recognition and detector models and the installed version. When something is wrong, or an action or scan is running, its label says what ("Status: No IR camera found", "Status: Enrolling your face: Captured 3/30"), with a warning icon when something is wrong. For the full picture, run `sudo vinoauthface doctor` | you |
-| Enrol face | `vinoauthface enroll --user <you>`. Shown only until you're enrolled. To start over, use the [settings window](settings.md)'s Face page or `sudo vinoauthface enroll --user $USER` | root, via pkexec |
-| Retrain face | `vinoauthface improve --user <you>`: captures more frames (new lighting, glasses) and keeps the old ones | root, via pkexec |
-| Test scan | One live scan, the same way the lock screen runs it. The result is a notification | you |
-| Login screen | Only with Plasma Login or SDDM. Password only, password then face, or face: see [pam.md](pam.md#login-screen). Runs `login-mode.sh` | root, via pkexec |
-| Settings | With the [settings window](settings.md) installed, opens it. Otherwise one submenu: a Security preset and the scan time as radio lists, and the two on/off settings as checkmarks. Changes `/etc/face-auth.toml` through `setting-mode.sh` (see the table below). A value you set by hand that the menu doesn't offer shows as "custom" with nothing selected. Hide icon when idle is the exception: it writes your own `~/.config/face-auth.toml` | root, via pkexec; you, for Hide icon when idle |
+| **Update to vN** | Appears at the top when a newer GitHub release is available (checked 1 minute after startup, then daily; set `update_check = false` to disable). Runs `vinoauthface-upgrade` ([install.md](install.md#updating)), restarts the tray, and notifies once per release. | root (`pkexec`) |
+| **Status** | Submenu showing the detected camera, enrolment state, backend, recognition and detector models, and installed version. Updates its label when scanning, enrolling, or reporting an error (e.g., "Status: No IR camera found", "Status: Enrolling your face: Captured 3/30") with a warning icon on errors. Run `sudo vinoauthface doctor` for full diagnostics. | your user |
+| **Enrol face** | Runs `vinoauthface enroll --user <you>`. Shown only before you are enrolled. To re-enrol later, use the [settings window](settings.md)'s Face page or run `sudo vinoauthface enroll --user $USER`. | root (`pkexec`) |
+| **Retrain face** | Runs `vinoauthface improve --user <you>` to capture additional frames (such as new lighting or glasses) while keeping existing templates. | root (`pkexec`) |
+| **Test scan** | Runs a live verification scan the same way a lock screen does and displays the result as a desktop notification. | your user |
+| **Login screen** | Shown on Plasma Login or SDDM systems. Switches between password only, password + face, or face unlock via `login-mode.sh` (see [pam.md](pam.md#login-screen)). | root (`pkexec`) |
+| **Settings** | Opens the [settings window](settings.md) if installed. Otherwise opens a submenu with Security preset, scan duration, two system toggles (applied to `/etc/face-auth.toml` via `setting-mode.sh`), and **Hide icon when idle** (saved to `~/.config/face-auth.toml`). Hand-edited values that do not match a menu option appear as "custom". | root (`pkexec`); your user for Hide icon when idle |
 
 ### Settings
 
-This submenu shows only without the settings window, which covers every key instead.
+The built-in Settings submenu is shown only when the standalone settings window is not installed.
 
-Each choice is one polkit action (`set-<setting>-<choice>`), so there is no value the caller can
-pass. A flat key already in the file (`start_delay_ms`) is replaced too, since it would win over the
-dotted one. A threshold written in the file that no choice matches still works; the menu just calls
-it "custom".
+Each system option maps to its own fixed polkit action (`set-<setting>-<choice>`), so no arbitrary
+values are passed from the user session to root. When updating a dotted key, `setting-mode.sh` also
+replaces any legacy flat key (such as `start_delay_ms`) because flat keys take precedence. Custom
+hand-edited values continue to work normally and simply display as "custom" in the menu.
 
-| Setting | Key | Choices |
+| Setting | Config key | Choices |
 |---|---|---|
-| Security | four keys, below | Convenient, Balanced (default), Strict |
-| Scan time | `scan_duration_ms` | 3 s, 5 s (default), 8 s, 12 s |
-| Confirm sudo with Enter | `guards.require_confirmation_elevation` | Checkmark, off by default |
-| Check for updates | `update_check` | Checkmark, on by default. Restart the tray after turning it off |
+| **Security** | Four keys (see table below) | Convenient, Balanced (default), Strict |
+| **Scan time** | `scan_duration_ms` | 3 s, 5 s (default), 8 s, 12 s |
+| **Confirm sudo with Enter** | `guards.require_confirmation_elevation` | Toggle (off by default) |
+| **Check for updates** | `update_check` | Toggle (on by default; restart tray after disabling) |
 
-Security sets four keys together:
+The **Security** preset updates four keys together:
 
 | Preset | `liveness.preset` | `threshold` | `min_face_size_ratio` | `guards.start_delay_ms` |
 |---|---|---|---|---|
-| Convenient | standard | 0.5 | 0.0 (any size) | 0 |
-| Balanced | standard | 0.6 | 0.0 (any size) | 2000 |
-| Strict | strict | 0.7 | 0.1 (fairly close) | 5000 |
+| **Convenient** | `standard` | `0.5` | `0.0` (any size) | `0` |
+| **Balanced** | `standard` | `0.6` | `0.0` (any size) | `2000` |
+| **Strict** | `strict` | `0.7` | `0.1` (fairly close) | `5000` |
 
-Security shows "custom" when the four keys don't all match one preset, for instance after
-setting one of them by hand. Convenient matches more easily (so does a lookalike) and scans the lock
-screen at once; Strict may fail if you sit very still or far back. The notification says so. An
-explicit `liveness.*` threshold in the file still overrides the liveness preset.
+If the four keys do not match one of these presets (for instance after a manual edit), the menu
+shows "custom". **Convenient** matches more easily (which also raises lookalike risk) and scans lock
+screens immediately; **Strict** may fail if you sit far away or hold completely still. The desktop
+notification notes these trade-offs when switching presets. Any explicit `liveness.*` threshold in
+`/etc/face-auth.toml` still overrides `liveness.preset`.
 
-Deliberately not in the menu, because a wrong value locks you out, breaks enrolment or
-loosens the system: liveness off, the four security keys one at a time, the camera and its pin,
-the models and backend, the template directory and sealing, `bind_camera`, `lockout.*`, the other
-`guards.*`, `liveness.window_ms`, `detector_threshold`, and the capture timeout and scan interval.
-Edit `/etc/face-auth.toml` for those ([configuration.md](configuration.md)).
+Settings that can lock you out, break enrolment, or weaken system security are intentionally
+excluded from the tray menu: disabling liveness, individual security keys, camera selection and
+pinning, models and backend, template directory and TPM sealing, `bind_camera`, `lockout.*`, other
+`guards.*` options, `liveness.window_ms`, `detector_threshold`, `capture_timeout_ms`, and
+`scan_interval_ms`. Edit `/etc/face-auth.toml` directly (or use the settings window) for those
+options (see [configuration.md](configuration.md)).
 
-Settings also has **Hide icon when idle** (10 minutes, 30 minutes, 1 hour or Never), which is
-yours rather than the system's: it is saved as `tray_idle_minutes` in your own
-`~/.config/face-auth.toml`, with no password, and applies at once.
+**Hide icon when idle** (10 minutes, 30 minutes, 1 hour, or Never) is a per-user preference saved as
+`tray_idle_minutes` in `~/.config/face-auth.toml`. It requires no password and takes effect
+immediately.
 
-Enrolment progress ("Capturing frame 3/30", "Face too small: move closer") shows in the tooltip
-and a notification. The tray reads it from `vinoauthface enroll`'s normal output.
+### Icon state and idle hiding
 
-The icon is an IR camera, a lens and the emitter dot beside it, in a rounded frame, drawn like the
-other vino trays' icons and in your Plasma theme's colour. The emitter is green when ready. Until
-you're enrolled with a camera found, the lens is dimmed and the emitter is off.
-Left click opens the menu, which doubles as the status panel.
+Enrolment progress (such as "Capturing frame 3/30" or "Face too small: move closer") is parsed from
+`vinoauthface enroll`'s output and shown in both the tray tooltip and desktop notifications.
 
-The emitter turns amber while any face scan is running: `sudo`,
-a polkit prompt, or a test scan. It
-checks for a running `vinoauthface-auth` process in `/proc` every 200 ms. It can't show on the KDE lock
-screen, which has no tray. With `/proc` mounted `hidepid=1` or `2`, root's scans are invisible and
-the icon doesn't change.
+The icon depicts an IR camera lens and emitter dot inside a rounded frame, styled to match your
+Plasma theme. Left-clicking opens the status and action menu:
 
-After 30 minutes with nothing happening, the icon reports itself Passive, which Plasma moves into
-the hidden icons behind the panel's arrow. The tray keeps running. A scan, a change of status (ready,
-not enrolled, no camera), a new release or a click on a menu entry brings it back and restarts the
-count. The 30 minutes include time spent suspended. Change the delay from Settings > Hide icon
-when idle, or set `tray_idle_minutes` in `~/.config/face-auth.toml` or `/etc/face-auth.toml`; 0
-keeps the icon in view. A value edited by hand is read at startup, so restart the tray after
-changing it. Other trays may ignore Passive and keep showing the icon.
+- **Ready:** Emitter dot is green once you are enrolled and an IR camera is detected.
+- **Not ready:** Lens is dimmed and the emitter is off until enrolled with a working camera.
+- **Scanning:** Emitter turns amber during any `sudo`, polkit, or test scan. The tray detects active
+  scans by polling `/proc` for `vinoauthface-auth` every 200 ms. It cannot appear on the KDE lock
+  screen (which has no system tray), and if `/proc` is mounted with `hidepid=1` or `hidepid=2`,
+  root-owned scans are hidden so the icon does not turn amber.
+
+After 30 minutes of inactivity (including time spent suspended), the icon sets its StatusNotifier
+status to `Passive`, which Plasma moves into the panel's hidden-icons drawer while keeping the tray
+running. Any scan, status change (ready, not enrolled, no camera), new release notification, or menu
+click restores it to active and resets the timer. Change the timeout via **Settings → Hide icon when
+idle** or by setting `tray_idle_minutes` in `~/.config/face-auth.toml` or `/etc/face-auth.toml`
+(`0` keeps the icon visible permanently; manual edits take effect after restarting the tray). Other
+desktop trays may ignore the `Passive` hint and keep the icon visible.
 
 ## Privileges
 
-- **Nothing root-owned writes to your session.** The scanning icon comes from `/proc`. Upstream's
-  GNOME indicator had root write a status file in `/run/user/<uid>`, which could be pointed
-  elsewhere with a symlink. That approach isn't used here.
-- **pkexec runs a fixed helper, never `vinoauthface enroll`.** polkit's `exec.path` pins a binary but not
-  its arguments, so `pkexec vinoauthface enroll --embeddings-dir …` would let the caller choose where
-  root writes. `vinoauthface-helper` takes exactly one verb (`enrol`, `retrain`,
-  `upgrade`, `login-off`, `login-both`, `login-face`, or `set-<setting>-<choice>`, one per choice in the Settings table) and no flags. The policy pins each verb
-  with `exec.argv1`, so the login-screen mode is one action per mode rather than an argument. The
-  target user comes from `PKEXEC_UID`, which pkexec sets, so there's no way to name another
-  account. All 17 actions are `auth_admin`.
-- **Upgrade never touches your home.** It runs as plain root with no `SUDO_USER`, so
-  the upgrade downloads and unpacks the release under root's home, where nothing you run can swap
-  it between the checksum check and `deploy.sh` running it. Upgrade only installs the newest
-  release: no version can be named.
-- **Enrolment status without reading the store.** The store is closed to you, so the tray asks
-  `vinoauthface-auth --enrolled`, which runs with the `face-auth` group and only answers for your own
-  user ID.
-- **Test scan counts toward the lockout**, like any other scan. Otherwise it would be an
-  unthrottled way to try faces.
+- **No root-to-user status channel.** Scan state is observed by reading `/proc`. Unlike upstream's
+  GNOME indicator (which had root write a status file inside `/run/user/<uid>`, risking symlink
+  attacks), nothing running as root writes into your user session.
+- **Fixed root helper instead of arbitrary `pkexec` arguments.** Polkit's `exec.path` restricts the
+  binary path but not arbitrary flags, so allowing `pkexec vinoauthface enroll --embeddings-dir ...`
+  would let an unprivileged caller pick where root writes. Instead, `vinoauthface-helper` accepts
+  exactly one verb (`enrol`, `retrain`, `upgrade`, `login-off`, `login-both`, `login-face`, or
+  `set-<setting>-<choice>`) with no flags. Each verb is pinned via `exec.argv1` in the polkit
+  policy, and the target user is always taken from `PKEXEC_UID` set by `pkexec`. All 17 actions
+  require `auth_admin`.
+- **Isolated upgrades.** Running `upgrade` through the helper executes as plain root with no
+  `SUDO_USER`, downloading and unpacking the release under root's home directory so an unprivileged
+  process cannot tamper with files between checksum verification and running `deploy.sh`. Upgrades
+  through the tray always install the latest release and do not accept a version argument.
+- **Enrolment checks without store access.** Because `/var/lib/face-auth` is unreadable by normal
+  users, the tray queries `vinoauthface-auth --enrolled`, which uses the `face-auth` group and only
+  reports status for the caller's own UID.
+- **Test scans count toward lockout.** Running **Test scan** increments the failed-attempt lockout
+  counter just like a real authentication attempt, preventing it from being used as an unthrottled
+  oracle.
 
 ### A face can approve enrol and retrain
 
-The polkit password prompt goes through the `polkit-1` PAM stack, and `deploy.sh` adds
-vinoAuthFace to that stack. So a face match can approve the tray's enrol, retrain and
-upgrade actions, the same way it can approve `sudo`. polkit can't send one action through a different PAM
-service. Someone who spoofs your face (see [security.md](security.md#presentation-attacks-something-held-up-to-the-real-camera))
-could add their own frames with Retrain. They could do that anyway through
-`sudo vinoauthface enroll`, since a face also satisfies `sudo`, so the tray grants nothing new. To require
-a password for these actions, remove vinoAuthFace from `polkit-1` (see [pam.md](pam.md)).
+Polkit prompts authenticate through the `polkit-1` PAM stack, which `deploy.sh` patches with
+vinoAuthFace. As a result, a face match can approve the tray's enrol, retrain, and upgrade prompts,
+just as it can approve `sudo` (polkit cannot route a single action through a separate PAM service).
+
+Someone who manages to spoof your face (see
+[security.md](security.md#presentation-attacks-something-held-up-to-the-real-camera)) could therefore
+add their own frames using **Retrain face**, though they could already do the same via
+`sudo vinoauthface enroll`. If you want to require a password for polkit actions, remove
+vinoAuthFace from `/etc/pam.d/polkit-1` (see [pam.md](pam.md)).

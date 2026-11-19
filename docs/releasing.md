@@ -5,23 +5,28 @@ nav_order: 11
 
 # Releasing
 
-Versions are consecutive numbers (`v2`, `v3`, ...), not semver: a release is main at that point,
-and the number only says which one is newer. Older tags (`v1.0.0`, `v1.1`) count by their first
-number, so the first release under this scheme is `v2`.
+vinoAuthFace uses sequential integer version tags (`v2`, `v3`, `v4`, ...) instead of semantic
+versioning. Each tag simply marks a snapshot of `main`, where higher numbers are newer. Legacy tags
+(`v1.0.0`, `v1.1`) are ordered by their leading number, making `v2` the first release under this
+scheme.
 
 ```bash
-scripts/release.sh --dry-run   # next tag and the PRs merged since the last one
-scripts/release.sh             # from an up-to-date main: tag origin/main's head, push the tag
+scripts/release.sh --dry-run   # show the next tag and PRs merged since the last release
+scripts/release.sh             # from an up-to-date main: tag origin/main HEAD and push the tag
 ```
 
-Pushing the tag runs `release.yml`, which builds the static musl binaries and the glibc settings
-window with `VINOAUTHFACE_VERSION` set to the tag (shown by `vinoauthface --version` and `doctor`;
-local builds say `dev`) and publishes them as a GitHub release with generated notes, beside the
-source bundle, `install.sh` and `SHA256SUMS`. The README's one-line install fetches
-`releases/latest/download/install.sh`, so a release is what it installs. v2 onwards are full
-releases, so GitHub's "latest" and the repo sidebar point at the newest one (earlier tags were
-pre-releases). `deploy.sh` asks the API for the newest release of any kind, so it works either way.
+Pushing a tag triggers `.github/workflows/release.yml`, which compiles the static musl binaries,
+OpenVINO binaries, and the glibc settings window with `VINOAUTHFACE_VERSION` set to the tag (printed
+by `vinoauthface --version` and `vinoauthface doctor`; local builds report `dev`). The workflow
+publishes a GitHub release with auto-generated release notes alongside `vinoauthface-source.tar.gz`,
+`install.sh`, and `SHA256SUMS`.
 
-When to cut one: whenever main has a user-facing change worth installing. There's no schedule.
-A tagged checkout's `deploy.sh` installs that tag's binaries, so a release is also what makes a
-change reach users who install without a Rust toolchain.
+The one-line installer in the README downloads `releases/latest/download/install.sh`, so cutting a
+release updates what new users install. From `v2` onward, all tags are published as full releases
+(earlier tags were pre-releases) so GitHub's "latest" endpoint and repository sidebar always point
+to the newest version. `deploy.sh` queries the GitHub API for the most recent release regardless of
+pre-release status.
+
+There is no fixed release schedule—cut a new release whenever `main` has user-facing changes worth
+shipping. Because running `deploy.sh` in a tagged checkout installs that tag's binaries, cutting a
+release is also how changes reach users who install without a Rust toolchain.
