@@ -5,33 +5,41 @@ nav_order: 3
 
 # Configuration and enrolment
 
-Every key is documented in [`config/face-auth.toml.example`](https://github.com/karanshukla/vinoAuthFace/blob/main/config/face-auth.toml.example),
-which is grouped: everyday settings, liveness, lockout, guards, install/hardware, advanced. This
-page covers which config sources are trusted where, enrolment, and choosing a recognition model.
-The [settings window](settings.md) edits both files without opening either.
+Every configuration key is documented in
+[`config/face-auth.toml.example`](https://github.com/karanshukla/vinoAuthFace/blob/main/config/face-auth.toml.example),
+organized into everyday settings, liveness, lockout, guards, install/hardware, and advanced options.
+This page explains which config files are trusted in each context, how enrolment works, and how to
+choose between recognition models. If you prefer a GUI, the [settings window](settings.md) lets you
+edit both system and user configs directly.
 
 ## Config sources
 
-The authentication path and the unprivileged tools trust different things.
+The PAM authentication path and the unprivileged offline tools follow different trust rules.
 
-**During PAM authentication** (`vinoauthface-auth`: sudo, lock screen, login, polkit):
+### PAM authentication (`vinoauthface-auth`)
+
+Applies to `sudo`, lock screens, login screens, and polkit prompts:
 
 | Source | Effect |
-|--------|--------|
-| `/etc/face-auth.toml` (root-owned) | Authoritative for everything |
-| `~/.config/face-auth.toml` | May only make authentication **stricter**, see below |
-| `FACE_AUTH_*` environment | **Ignored entirely** |
+|---|---|
+| `/etc/face-auth.toml` (root-owned) | Authoritative for all settings |
+| `~/.config/face-auth.toml` | May only make authentication **stricter** (see [user overrides](#what-a-user-may-override-at-the-login-prompt)) |
+| `FACE_AUTH_*` environment variables | **Ignored entirely** |
 
-**For `vinoauthface enroll` and `improve` run as root** (the normal case), only
-`/etc/face-auth.toml` and the command-line flags count: a `~/.config/face-auth.toml` or `FACE_AUTH_*`
-carried over by `sudo -E` or doas `keepenv` is ignored. A `--device` must be an IR capture node, or
-the `device` already set in `/etc/face-auth.toml`.
+### Root enrolment (`vinoauthface enroll` and `improve`)
 
-**For the offline tools, and enrolment as a normal user into your own `--embeddings-dir`**, the
-usual layering applies: environment variables, then `~/.config/face-auth.toml`, then
-`/etc/face-auth.toml`. Environment variable names follow the flat field names, so the capture
-timeout is `FACE_AUTH_CAPTURE_TIMEOUT_MS` and the liveness motion threshold is
-`FACE_AUTH_LIVENESS_MOTION_THRESHOLD`.
+When run as root (the standard workflow), only `/etc/face-auth.toml` and explicit command-line flags
+are read. Any `~/.config/face-auth.toml` or `FACE_AUTH_*` variables preserved by `sudo -E` or
+`doas` `keepenv` are ignored. Any `--device` argument must point to an IR capture node or match the
+`device` already configured in `/etc/face-auth.toml`.
+
+### Offline tools and non-root enrolment
+
+For offline diagnostic tools, or when enrolling as a normal user into a custom `--embeddings-dir`,
+standard configuration layering applies in order of precedence: `FACE_AUTH_*` environment variables,
+then `~/.config/face-auth.toml`, then `/etc/face-auth.toml`. Environment variable names match the
+flat key names (for example, `FACE_AUTH_CAPTURE_TIMEOUT_MS` for the capture timeout and
+`FACE_AUTH_LIVENESS_MOTION_THRESHOLD` for the liveness motion threshold).
 
 Example `/etc/face-auth.toml`:
 
@@ -44,105 +52,110 @@ guards.start_delay_ms = 100
 
 ### Grouped keys
 
-Related settings share a prefix: `liveness.*`, `lockout.*` and `guards.*` (when a scan runs at all:
-`seat_check`, `abort_if_ssh`, `abort_if_lid_closed`, `start_delay_ms`, `start_delay_scope`,
-`require_confirmation_elevation`). Write them dotted, as the example does, rather than as `[liveness]`
-headers: `deploy.sh` and `pin-camera.sh` append plain keys to the end of the file, and after a
-table header those would land inside the table.
+Related settings use dotted prefixes: `liveness.*`, `lockout.*`, and `guards.*` (which controls when
+a scan runs: `seat_check`, `abort_if_ssh`, `abort_if_lid_closed`, `start_delay_ms`,
+`start_delay_scope`, and `require_confirmation_elevation`).
 
-The old flat names (`liveness_motion_threshold`, `lockout_threshold`, `seat_check`, ...) still work.
-If both are set, the flat key wins.
+Write these as dotted keys rather than TOML `[liveness]` table headers. `deploy.sh` and
+`pin-camera.sh` append top-level keys to the end of `/etc/face-auth.toml`, and placing a `[table]`
+header above them would put those appended keys inside that table.
 
-`liveness.preset` is the quick way to set motion liveness:
+Legacy flat key names (`liveness_motion_threshold`, `lockout_threshold`, `seat_check`, and similar)
+are still supported. If both forms are present, the flat key takes precedence.
 
-| Preset | Motion threshold | Residual threshold | Use |
-|--------|------------------|--------------------|-----|
-| `off` | 0 | 0 | No motion check. A photo or screen replay can unlock |
-| `standard` | 0.01 | 0 | The default. Still faces pass by drifting over the window |
-| `strict` | 0.01 | 0.3 | Also rejects a photo moved by hand; may fail if you sit very still |
+`liveness.preset` provides a shortcut for configuring motion liveness:
 
-An individual `liveness.*` value overrides the preset for that value.
+| Preset | Motion threshold | Residual threshold | Behaviour |
+|---|---|---|---|
+| `off` | `0` | `0` | Disables the motion check; a still photo or screen replay can unlock |
+| `standard` | `0.01` | `0` | Default; stationary faces still pass via natural drift over the liveness window |
+| `strict` | `0.01` | `0.3` | Also rejects hand-moved photos; may fail if you hold completely still |
+
+Setting an individual `liveness.*` threshold overrides that specific value from the preset.
 
 ### What a user may override at the login prompt
 
-A user's own config is read from *their* home (resolved via `getent passwd`), must be a regular
-file they own, and is applied as a narrowing overlay:
+A user's `~/.config/face-auth.toml` is resolved from their home directory via `getent passwd`, must
+be a regular file owned by that user, and is applied strictly as a narrowing overlay:
 
-| Key | At the login prompt |
-|-----|--------------------|
-| `threshold`, `detector_threshold`, `liveness.motion_threshold`, `liveness.residual_motion_threshold`, `liveness.preset`, `min_face_size_ratio` | Honoured only if **>= the system value**. A lower number is ignored, so `preset = "off"` in a user file does nothing |
-| `device` | Honoured only if the path is a real IR capture device on this machine (IR-looking sysfs name, or a physical greyscale sensor, and opens in a supported format) |
-| `scan_duration_ms`, `scan_interval_ms`, `capture_timeout_ms`, `liveness.grace_ms` | Honoured within built-in bounds |
-| `model_path`, `detector_model_path`, `embeddings_dir`, `pinned_camera_*`, `lockout.*`, `seal_embeddings`, `backend`, `npu_device`, `liveness.window_ms`, `bind_camera`, `guards.*` | **Ignored**: system policy only |
+| Keys | Behaviour during PAM authentication |
+|---|---|
+| `threshold`, `detector_threshold`, `liveness.motion_threshold`, `liveness.residual_motion_threshold`, `liveness.preset`, `min_face_size_ratio` | Applied only if **>= the system value**. Lower values are ignored, so setting `liveness.preset = "off"` in a user file has no effect. |
+| `device` | Applied only if the path is a real IR capture device on this machine (an IR-named sysfs node or physical greyscale sensor that opens in a supported format). |
+| `scan_duration_ms`, `scan_interval_ms`, `capture_timeout_ms`, `liveness.grace_ms` | Applied within built-in bounds. |
+| `model_path`, `detector_model_path`, `embeddings_dir`, `pinned_camera_*`, `lockout.*`, `seal_embeddings`, `backend`, `npu_device`, `liveness.window_ms`, `bind_camera`, `guards.*` | **Ignored** (system policy only). |
 
-This stops code running as you, which doesn't know your password, from writing a permissive
-`~/.config/face-auth.toml` and turning your next `sudo` into a root shell. To *loosen* matching,
-edit `/etc/face-auth.toml` as root.
+This prevents unprivileged code running under your user account from writing a permissive
+`~/.config/face-auth.toml` to weaken `sudo` authentication. To loosen matching thresholds, edit
+`/etc/face-auth.toml` as root.
 
 ### Leave `device` unset
 
-UVC cameras normally expose a metadata node right beside the capture node under the same name
-(`/dev/video2` captures, `/dev/video3` doesn't). Auto-detection opens each candidate and takes the
-first that really is a capture device in a supported format. A hand-written path often gets this
-wrong. `pin-camera.sh` sets `device` for you. If nothing qualifies, there's no fallback node: face
-auth declines and PAM asks for the password.
+UVC cameras typically expose a metadata node alongside the capture node under the same card name
+(for example, `/dev/video2` captures frames while `/dev/video3` is metadata-only). Auto-detection
+probes each candidate and picks the first real capture node in a supported format, whereas manual
+device paths are easy to get wrong. `pin-camera.sh` sets `device` automatically when pinning. If no
+valid IR device is found, vinoAuthFace declines authentication and PAM falls back to your password.
 
 ## Enrolment
 
-Face templates are root-owned, so enrolment needs root:
+Because face templates are owned by root, enrolment requires `sudo`:
 
 ```bash
-sudo vinoauthface enroll --user $USER    # replace templates with a new capture (30 frames)
-sudo vinoauthface improve --user $USER   # append, for other lighting or angles
-sudo vinoauthface enroll --guided --user $USER   # six measured poses, about ten templates
+sudo vinoauthface enroll --user $USER           # replace templates with a new capture (30 frames)
+sudo vinoauthface improve --user $USER          # append frames for additional lighting or angles
+sudo vinoauthface enroll --guided --user $USER  # capture six measured poses (~10 templates)
 ```
 
-`--guided` (also for `improve`) keeps only frames that show the poses it asks for. See
-[settings.md](settings.md#guided-enrolment).
+`--guided` (available for both `enroll` and `improve`) keeps only frames matching the requested
+poses; see [settings.md](settings.md#guided-enrolment).
 
-30 frames gives enough pose and expression variation from one sitting. Running `improve` in
-different lighting is the biggest gain beyond that. A user can store at most 256 embeddings;
-an enrolment or `improve` that would go past that fails before the camera opens, so re-enrol
-from scratch once the gallery is full.
+Capturing 30 frames provides good pose and expression coverage in a single sitting, and running
+`improve` in different lighting conditions is the best way to boost accuracy further. Each user can
+store up to 256 embeddings. If an `enroll` or `improve` run would exceed 256 embeddings, it aborts
+before opening the camera; re-enrol from scratch once your gallery is full.
 
-Both take `--user`, `--frames`, `--interval`, `--device`, `--threshold`, `--model` and
-`--embeddings-dir`; `-v` works on either.
+Both `enroll` and `improve` accept `--user`, `--frames`, `--interval`, `--device`, `--threshold`,
+`--model`, `--embeddings-dir`, and `-v`.
 
-The command is `vinoauthface`, but the config files (`face-auth.toml`), `FACE_AUTH_*` variables,
-`/var/lib/face-auth` and the `face-auth` group keep their names.
+> Note: While the CLI binary is named `vinoauthface`, the config files (`face-auth.toml`),
+> `FACE_AUTH_*` environment variables, `/var/lib/face-auth`, and the `face-auth` group retain their
+> `face-auth` names.
 
-**Re-enrol** after switching recognition model (vinoAuthFace refuses the old templates and says so)
-and after any change to the preprocessing pipeline. Templates from older versions of this fork or
-upstream may still match, but re-enrolling is the safer bet.
+**When to re-enrol:** Always re-enrol after switching recognition models (vinoAuthFace detects the
+mismatch and refuses old templates) or after preprocessing pipeline changes. Templates created by
+older versions of this fork or upstream may still work, though re-enrolling is recommended.
 
-Enrolment isn't user-writable on purpose: whatever can write a face template decides whose face
-unlocks that account. If your own login could rewrite it, so could anything running as you.
+Enrolment requires root by design: whoever can write a face template controls which face unlocks the
+account, so a user's own session must not be able to modify templates directly.
 
 ## Recognition model: mbf vs r50
 
-| | `mbf` | `r50` |
+| Property | `mbf` | `r50` |
 |---|---|---|
 | Backbone | MobileFaceNet | ResNet50 |
-| Pack | `buffalo_sc` | `buffalo_l` |
-| Size | ~13 MB | ~175 MB |
+| InsightFace pack | `buffalo_sc` | `buffalo_l` |
+| Model size | ~13 MB | ~175 MB |
 | Encode latency (NPU benchmark) | ~1.2 ms/frame | ~4.2 ms/frame |
 | Genuine-match similarity (same benchmark) | mean 0.815, min 0.759 | mean 0.875, min 0.830 |
 
-`r50` gives a wider match margin for a few milliseconds per frame, which the camera-paced scan
-loop hides. At the default `threshold = 0.6`, `r50` accepted none of 7.7 million stranger pairs and `mbf`
-1 in 1.9 million on a near-IR dataset; see
-[Match accuracy against strangers](security.md#match-accuracy-against-strangers). `deploy.sh` picks `r50` for an NPU (OpenVINO) build and `mbf` for a CPU (tract) build.
-An existing install keeps its model: the NPU default isn't applied when the config already sets
-`model_path` or someone is enrolled. Choose explicitly with:
+`r50` provides a noticeably wider match margin for a few extra milliseconds per frame, which is
+negligible inside the camera-paced scan loop. At the default `threshold = 0.6`, `r50` accepted 0 of
+7.7 million stranger pairs and `mbf` accepted 1 in 1.9 million on a near-IR benchmark dataset (see
+[Match accuracy against strangers](security.md#match-accuracy-against-strangers)).
+
+`deploy.sh` defaults to `r50` for NPU (OpenVINO) builds and `mbf` for CPU (`tract`) builds. On
+existing installs, `deploy.sh` keeps your current model if `model_path` is already configured or any
+user is already enrolled. To pick a model explicitly:
 
 ```bash
 sudo FACE_AUTH_RECOGNITION_MODEL=r50 ./deploy.sh   # or mbf
 ```
 
-**Switching models requires re-enrolling.** The two produce incompatible embedding spaces with the
-same 512-d shape, so comparing across them is meaningless rather than just less accurate. Every
-template file records the model that produced it, and vinoAuthFace refuses to authenticate or
-`improve` against a mismatch. Files from before this existed carry no tag and are treated as
-compatible.
+**Switching models requires re-enrolling.** Both models output 512-dimensional embeddings, but their
+embedding spaces are incompatible and cannot be compared. Each template file stores the tag of the
+model that created it, and vinoAuthFace refuses to authenticate or run `improve` when the tag does
+not match the configured model. Legacy template files created before model tagging existed carry no
+tag and are treated as compatible.
 
-Model sources and licensing: [architecture.md](architecture.md#models).
+See [architecture.md](architecture.md#models) for model sources and licensing terms.

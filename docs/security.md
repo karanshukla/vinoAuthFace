@@ -5,249 +5,274 @@ nav_order: 9
 
 # Security model and limitations
 
-Face unlock here is a convenience over a password you still have, not a stronger factor. To
-report a vulnerability, see [SECURITY.md](https://github.com/karanshukla/vinoAuthFace/blob/main/SECURITY.md).
+vinoAuthFace is designed as a convenient alternative to typing your password, with your password
+remaining available as the fallback. To report a vulnerability, see
+[SECURITY.md](https://github.com/karanshukla/vinoAuthFace/blob/main/SECURITY.md).
 
 ## Trust model
 
-- **Face templates are root-owned.** `/var/lib/face-auth` is `root:face-auth` mode `2750`, with
-  templates at `0640`. Whatever can write a template decides whose face unlocks that account, so
-  enrolment goes through `sudo`.
-- **`vinoauthface-auth` is set-group-ID `face-auth`, not set-user-ID root.** Lock screens (KScreenLocker,
-  swaylock) run PAM as the user, so the binary borrows a group that can read templates and write
-  only `<user>/lockout/` (`2770`). A bug in it exposes templates and lockout counters, never root.
-  Nothing else has the group and the store is closed to everyone else, so a user can't reach
-  their own lockout state to reset it.
-- **Borrowed privileges mean an untrusted caller.** When the real and effective user or group IDs
-  differ, `vinoauthface-auth` drops the caller's environment (keeping only what `pam_exec` sets) and only
-  lets a non-root caller authenticate its own account.
-- **The PAM path trusts only `/etc/face-auth.toml`.** A user's own config may make matching
-  stricter, never looser, and may not redirect model or template paths, unpin the camera, or lift
-  the lockout. `FACE_AUTH_*` environment variables are ignored during authentication. Enrolment
-  as root ignores both too, so `sudo -E` can't choose the camera, model or store root writes
-  templates for, and a `--device` must be an IR sensor or the configured `device`. Details:
-  [configuration.md](configuration.md).
-- **Identity comes from `PAM_USER` only.** `vinoauthface-auth` refuses to run if PAM didn't set it.
-- **Remote sessions are refused.** If `PAM_RHOST` is set to anything but `localhost` or a
-  loopback IP address (`127.0.0.0/8`, `::1`), face authentication is declined: the camera is at
-  the console, so otherwise whoever sits at the desk would authenticate an SSH session. Hostnames
-  aren't resolved, so `127.example.com` counts as remote. `sudo` over SSH doesn't set
-  `PAM_RHOST`, so vinoAuthFace also walks its own process ancestry and skips the scan if an `sshd`
-  is found (`guards.abort_if_ssh`, on by default). A `tmux` or `screen` session started over SSH
-  and reattached later isn't caught: its server's parent is init, not `sshd`. Neither is a remote
-  desktop session; `guards.seat_check` below covers that for accounts other than the one at the
-  seat.
-- **The tray acts only through a fixed root helper.** The optional tray runs as the user. For
-  enrol, retrain and upgrade it runs `vinoauthface-helper` through pkexec. The helper takes one verb,
-  no flags, and acts only for `PKEXEC_UID`. A face match can approve those polkit prompts, the same
-  as `sudo`. See [tray.md](tray.md#privileges).
-- **Only the user at the seat (opt-in).** With `guards.seat_check = true`, vinoAuthFace reads
-  logind's state in `/run/systemd` and declines unless the target account owns the active seat0
-  session, or seat0 is showing a login greeter. With fast user switching, a `sudo` in B's
-  background session won't match A's face while A is at the desk. No active session, or state it
-  can't read, declines too. Without `/run/systemd/seats` (no logind) the check is skipped. It's
-  off by default because it also declines root as the target, which is what sudo's
-  `targetpw`/`rootpw` and a polkit set to ask for root's password authenticate.
+- **Root-owned template store:** `/var/lib/face-auth` and per-user directories are `root:face-auth`
+  with mode `2750`, and template files are `0640`. Because anyone who can write a face template
+  controls which face unlocks an account, enrolment requires `sudo`.
+- **Set-group-ID `face-auth` instead of set-user-ID root:** Lock screens (such as KScreenLocker and
+  `swaylock`) run PAM as your user, so `vinoauthface-auth` uses the `face-auth` group to read
+  templates and write only `<user>/lockout/` (`2770`). A bug in `vinoauthface-auth` can expose
+  templates or lockout counters without granting root access. Because no other process holds the
+  `face-auth` group and the directory is closed to others, users cannot clear their own lockout
+  state.
+- **Environment scrubbing under elevated privileges:** Whenever real and effective user or group IDs
+  differ, `vinoauthface-auth` drops the caller's environment (retaining only variables set by
+  `pam_exec`) and restricts non-root callers to authenticating their own account.
+- **System-authoritative PAM config:** During PAM authentication, `/etc/face-auth.toml` is
+  authoritative and `FACE_AUTH_*` environment variables are ignored. A user's
+  `~/.config/face-auth.toml` may make matching stricter, but it cannot loosen thresholds, redirect
+  model or template paths, unpin the camera, or change lockout rules. Root enrolment ignores both
+  the user config and `FACE_AUTH_*` as well (so `sudo -E` cannot redirect enrolment), and any
+  `--device` must be an IR sensor or the system's configured `device`. See
+  [configuration.md](configuration.md) for the complete list.
+- **Identity strictly from `PAM_USER`:** `vinoauthface-auth` refuses to run unless PAM sets
+  `PAM_USER`.
+- **Remote sessions are rejected:** If `PAM_RHOST` is set to anything other than empty, `localhost`,
+  or a loopback IP (`127.0.0.0/8`, `::1`), face authentication is declined so someone sitting at the
+  physical console cannot authorize an incoming SSH session. Hostnames are not resolved, so
+  `127.example.com` is treated as remote. Because `sudo` over SSH does not set `PAM_RHOST`,
+  vinoAuthFace also inspects its process ancestry and aborts if `sshd` is an ancestor
+  (`guards.abort_if_ssh`, enabled by default). This check does not detect a `tmux` or `screen`
+  session started over SSH and reattached later (since its server's parent is `init`), nor remote
+  desktop sessions; `guards.seat_check` helps address remote desktop sessions for non-seat accounts.
+- **Constrained tray helper:** The optional tray runs unprivileged and delegates `enrol`, `retrain`,
+  `upgrade`, and settings changes to `vinoauthface-helper` via `pkexec`. The helper accepts a single
+  fixed verb with no flags and acts only on `PKEXEC_UID`. Note that a face match can approve these
+  polkit prompts just as it can approve `sudo` (see [tray.md](tray.md#privileges)).
+- **Seat check (opt-in):** Enabling `guards.seat_check = true` checks `systemd-logind` state under
+  `/run/systemd` and declines unless the target user owns the active `seat0` session or `seat0` is
+  displaying a login greeter. On multi-user machines with fast user switching, this prevents user A
+  at the desk from satisfying a `sudo` prompt in user B's background session. Missing or unreadable
+  session state also declines, while systems without `/run/systemd/seats` (no `logind`) skip the
+  check. It is off by default because it also declines `root` as the target account, which breaks
+  `sudo` configured with `targetpw`/`rootpw` or polkit rules requesting the root password.
 
 ## Templates at rest (TPM sealing)
 
-Off by default; set `seal_embeddings = true` in `/etc/face-auth.toml`, then enrol again (or run
-`vinoauthface improve`, which rewrites the existing templates sealed). The template
-payload is encrypted by `systemd-creds` with a key sealed to this machine's TPM, so a stolen
-laptop or a disk booted in another OS yields nothing usable. Nothing extra to install: it is part
-of systemd, and the blobs live in `/var/lib/face-auth`, which survives image updates.
+TPM sealing is off by default. To enable it, set `seal_embeddings = true` in `/etc/face-auth.toml`
+and re-enrol (or run `vinoauthface improve`, which rewrites existing templates sealed). Template
+payloads are encrypted with `systemd-creds` using a key sealed to the machine's TPM, preventing
+offline extraction from a stolen laptop or a disk booted on another system. Because `systemd-creds`
+is built into systemd and the encrypted files stay in `/var/lib/face-auth`, no extra packages are
+required and sealed templates survive immutable OS updates.
 
-- **Templates can be inverted into a face.** An embedding is not an anonymous hash. Gradient
-  descent on an image, until the recognition model's embedding of it matches the stored
-  templates, produces a recognisable likeness of the enrolled user. We tried it against
-  `w600k_mbf` with 30 templates, no face prior and no GPU (a few minutes on 2 vCPUs): the
-  result was an unmistakably human face that its owner recognised as themselves, and the
-  model scored it about 0.8 cosine against the stored templates, above the default 0.6
-  threshold. It looks like a fever dream, with noisy skin texture and warped features,
-  because nothing in that setup knows what a natural photo looks like; a pretrained face
-  generator as the prior would give a much cleaner image. Treat a leaked template as a leaked
-  picture of your face, which you can't revoke. This is a privacy risk, and it is the main
-  reason to turn sealing on. It is not shown to be a way past the camera: we did not test a
-  reconstruction against the IR sensor, the detector or liveness.
-- **It defends the powered-off case only.** On the running machine root can unseal any user's
-  templates, and each user their own (as `vinoauthface-auth` does). It is not protection against a
-  local root attacker.
-- **No PCR policy.** The key survives firmware, bootloader and `bootc`/`rpm-ostree` updates. The
-  price is that it doesn't notice a modified boot chain.
-- **Bound to the account and the model.** The user name and recognition-model tag are part of the
-  sealed credential's name, which systemd authenticates, so a blob copied to another account or
-  relabelled for another model won't unseal.
-- **No TPM: enrolment warns and stores unsealed.** Hardware without one still works.
-- **Sealed but unsealable is an error, not a fallback.** After a TPM clear or a board swap the
-  key is gone. Face auth declines, PAM falls through to your password, it doesn't count toward
-  lockout, and the message tells you to re-enrol.
-- **Downgrade guard.** With the option on, a plaintext template file is refused. Someone with
-  offline write access can also edit `/etc/face-auth.toml`, so this stops a swapped file, not a
-  determined offline attacker; only a PCR policy (deliberately not used) would.
-- **Sealed per user.** Credentials are user-scoped (`systemd-creds --uid`, systemd 256+). A lock
-  screen runs as you and unseals your own templates with no polkit prompt; `sudo` and the polkit
-  helper run as root, which can unseal anyone's. A greeter checking a *different* user (running as
-  `gdm`/`sddm`) can't, and falls through to the password. The key also mixes in the user name, UID
-  and `machine-id`: change any of them and you re-enrol. Unsealing adds to each scan's start-up;
-  check `RUST_LOG=face_auth_core=debug` "store loaded" timing on your hardware.
-- **Needs both the TPM and `/var/lib/systemd/credential.secret`.** Scoped credentials can't use
-  the TPM alone (`host+tpm2`). The host secret is root-only, and a disk without this machine's
-  TPM still can't unseal. Under SELinux only `vinoauthface-unseal`'s domain gets them, never the
-  greeter's (see [install.md](install.md#selinux)).
+Key properties and trade-offs:
+
+- **Why sealing matters (template inversion):** Face embeddings are not one-way cryptographic
+  hashes. Running gradient descent on an input image until the recognition model produces an
+  embedding close to stored templates reconstructs a recognizable likeness of the user. Testing
+  against `w600k_mbf` with 30 templates—using no face prior and no GPU, in a few minutes on 2
+  vCPUs—yielded an unmistakable human face recognized by its owner that scored ~0.8 cosine
+  similarity against the stored templates (well above the 0.6 default threshold). Although noisy
+  without a face prior, pairing this with a pretrained face generator produces much cleaner results.
+  Because you cannot revoke your face, treat leaked templates like leaked photos. (We did not test
+  whether a reconstructed image passes the IR sensor, detector, or liveness checks; the primary risk
+  is privacy.)
+- **Powered-off protection only:** While the system is booted, root can unseal any user's templates
+  and each user can unseal their own (just as `vinoauthface-auth` does). Sealing does not protect
+  against a local root attacker.
+- **No PCR binding:** Omitting PCR policy lets the key survive firmware, bootloader, and
+  `bootc`/`rpm-ostree` updates without re-enrolling, at the cost of not detecting a modified boot
+  chain.
+- **Bound to account and model:** The username and recognition-model tag are embedded in the
+  authenticated systemd credential name, so copying a sealed file to another user or relabelling it
+  for another model fails decryption.
+- **Machines without a TPM:** Enrolment logs a warning and stores templates unsealed so hardware
+  without a TPM continues to work.
+- **Unseal failures fail closed:** After a TPM clear or motherboard replacement, existing sealed
+  templates can no longer be decrypted. Face auth declines with a message asking you to re-enrol,
+  PAM falls back to your password, and the lockout counter is not incremented.
+- **Downgrade guard:** With `seal_embeddings = true`, plaintext template files are refused. (An
+  attacker with offline disk write access could also edit `/etc/face-auth.toml`, so this catches
+  accidental or partial file swaps; stopping a full offline tampering attack would require PCR
+  binding.)
+- **Per-user scoping:** Credentials use `systemd-creds --uid` (requires systemd 256+). Lock screens
+  running as your user can unseal your templates without a polkit prompt, and `sudo`/polkit running
+  as root can unseal any user's templates. A display manager greeter checking a different user (as
+  `gdm` or `sddm`) cannot unseal them directly and falls back to the password. The key also binds to
+  the username, UID, and `machine-id`, so changing any of those requires re-enrolling. Unsealing
+  adds minor startup overhead per scan; check the "store loaded" line with
+  `RUST_LOG=face_auth_core=debug` to measure it on your hardware.
+- **Requires both TPM and host secret:** User-scoped credentials use `host+tpm2` and require both
+  the TPM and the root-only `/var/lib/systemd/credential.secret`. A disk moved to another machine
+  without the original TPM still cannot unseal. Under SELinux, only `vinoauthface-unseal`'s
+  dedicated domain can access `/dev/tpmrm0` and `credential.secret`, keeping them isolated from the
+  greeter (see [install.md](install.md#selinux)).
 
 ## Presentation attacks (something held up to the real camera)
 
-- **Screens are blocked by sensor physics.** OLED and most LCD panels emit essentially no near-IR
-  and barely reflect the camera's illuminator, so a phone showing your photo produces no
-  face-shaped IR signal. Measured: zero detections across 100 attempts against a phone screen.
-- **Motion liveness** requires motion of the face against an earlier frame of the scan, up to
-  `liveness.window_ms` (default 1 s) back: a face held still barely changes in the ~130 ms between
-  consecutive frames, but drifts over a second, while a mounted photo doesn't change against any
-  frame ([#96](https://github.com/karanshukla/vinoAuthFace/issues/96)). Only the face region counts, after removing brightness and contrast changes, so a hand moving beside a still
-  photo or an auto-exposure step doesn't pass it. This defeats a rigidly held image, but not a
-  photo moved by hand. Once a face has matched and only liveness is missing, the scan runs up to
-  `liveness.grace_ms` (default 4 s) longer so a still face isn't failed; that also gives a
-  matching photo the same extra time to produce motion.
-- **Moved photos: opt-in.** `liveness.residual_motion_threshold` additionally requires motion,
-  between consecutive frames, that a single rigid shift (found to a quarter pixel) can't explain, in the most-changed eye-sized block
-  of the face: a blink, the mouth, parallax as the head turns. In software tests, synthetic clips
-  of a moved, tilted or zoomed IR photo peaked at 0.20, blinks reached 0.3-0.6, and a moving face
-  cleared 0.3 in most frame pairs. It stays off by default because a face held still can go the
-  whole scan without a qualifying blink: on one real 15 s still clip, with glasses glare covering
-  both eyes, the first came about 8.5 s in
+- **Phone and monitor screens are blocked by IR physics:** OLED and most LCD displays emit almost no
+  near-IR light and reflect little from the camera's IR illuminator, so a photo on a phone screen
+  produces no usable face signal. In testing, 100 attempts with a phone screen yielded zero face
+  detections.
+- **Motion liveness:** By default, a match requires facial motion compared against an earlier frame
+  within `liveness.window_ms` (default 1 second). Even a still live face drifts naturally over a
+  second, whereas a rigidly mounted photo stays static
+  ([#96](https://github.com/karanshukla/vinoAuthFace/issues/96)). Motion is computed only within the
+  face region after normalizing brightness and contrast, preventing auto-exposure shifts or a hand
+  waving beside a photo from passing. Once a face matches and only liveness is pending, the scan
+  extends by up to `liveness.grace_ms` (default 4 seconds) so still users are not penalized (which
+  also gives a matching photo that extra window to produce motion).
+- **Hand-moved photo detection (opt-in):** Setting `liveness.residual_motion_threshold` requires
+  frame-to-frame non-rigid motion—movement inside the most-changed eye-sized region that cannot be
+  explained by a single rigid shift (estimated to quarter-pixel precision), such as blinking, mouth
+  movement, or 3D parallax during a head turn. In software tests on synthetic clips, moved, tilted,
+  or zoomed IR photos peaked at 0.20, while blinks scored 0.3–0.6 and moving faces exceeded 0.3 on
+  most frame pairs. This check is off by default because a still person can easily go through an
+  entire scan without a qualifying blink (in one 15-second real clip with glasses glare covering
+  both eyes, the first qualifying blink occurred at 8.5 seconds; see
+  [#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
+- **Printed IR photos and 3D masks are an accepted risk:** On a default install, a laser-printed IR
+  photo moved by hand can unlock the system because paper reflects near-IR and residual motion
+  checking is off by default. This limitation also affects other IR systems (such as Windows Hello,
+  SySS-2017-027) and requires obtaining an IR image of your face rather than an ordinary colour
+  photo. Note that the liveness metrics above were evaluated in software against synthetic prints
+  rather than physical prints on a real sensor, and a flexed paper print introduces non-rigid
+  motion. Because there is no depth sensing or structured light, 3D masks are also out of scope
   ([#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
-- **Printed photos are an accepted risk.** A laser print of an IR photo of you, moved by hand,
-  can pass on a default install: paper reflects NIR, and the moved-photo check above is off by
-  default. This has beaten other IR face unlock too (Windows Hello, SySS-2017-027), and it needs
-  an IR capture of your face, not an ordinary photo. The defenses above were measured in software
-  against synthetic prints, not against real prints on a real sensor, and a print flexed as it
-  moves isn't rigid. There's no structured-light or depth check, so 3D masks are out of scope too.
-  Accepted because face unlock here is a convenience over a password you still have, not a
-  stronger factor ([#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
 
 ## Frame injection (a fake camera)
 
-**Camera binding (default on).** Each enrolment records the camera's USB vendor:product ID in the
-user's store (`<user>/cameras`), and a scan from any other camera is refused before it opens:
-another webcam, or a camera with no USB identity such as a v4l2loopback node, can't stand in for
-the IR sensor. It's an error, not a failed attempt, so PAM falls through to the password and the
-lockout isn't touched. Accounts enrolled before this existed, or on a camera with no USB ID (MIPI),
-accept any camera until their next enrolment; `sudo vinoauthface doctor` says which. `bind_camera =
-false` turns it off. Adapted from [facelock](https://github.com/tyvsmith/facelock)'s device
-coupling.
+### Camera binding (enabled by default)
 
-That ID is just a string, though: a programmable USB device can claim the real camera's VID/PID and
-feed replayed frames.
-`pin-camera.sh` closes this by pinning the camera's physical USB port path and V4L2 index, read
-from sysfs, which a spoofed device can't occupy at the same time as the real one. vinoAuthFace
-re-verifies that identity on every authentication and enrolment, independent of the udev rule.
-Opt-in ([install.md](install.md#pinning-the-camera-recommended)). This is separate from the
-presentation defences above; you want both.
+During enrolment, vinoAuthFace records the camera's USB `VID:PID` in `<user>/cameras`. Before
+opening a camera for authentication, it verifies that the device matches an enrolled USB ID. This
+prevents another webcam or a virtual `v4l2loopback` device (which has no USB identity) from
+substituting for your IR sensor. A mismatch is treated as an error—PAM falls back to your password
+without incrementing the lockout counter. Accounts enrolled before camera binding was added, or on
+cameras lacking a USB ID (such as MIPI), accept any camera until re-enrolled (`sudo vinoauthface
+doctor` reports this status). Set `bind_camera = false` to disable it. This design is adapted from
+[facelock](https://github.com/tyvsmith/facelock)'s device coupling.
 
-Auto-detect only ever considers physical IR-named or greyscale nodes, and never virtual
-(v4l2loopback) nodes, whose frames any local user can write and whose name is just a module
-parameter. A user's own `device` setting is held to the same rule. Only `device` in
-`/etc/face-auth.toml` can name a virtual node, for testing.
+### Physical USB port pinning (opt-in)
+
+Because a programmable USB device can spoof a camera's `VID:PID` string and replay recorded frames,
+`pin-camera.sh` locks authentication to the camera's physical USB bus port path and V4L2 index as
+reported by sysfs. A rogue device plugged into another port cannot claim the same physical path
+while the built-in camera is present. `vinoauthface-auth` re-verifies this sysfs identity on every
+scan and enrolment independently of the udev symlink. See
+[install.md](install.md#pinning-the-camera-recommended).
+
+### Virtual device filtering
+
+Auto-detection only considers physical IR-named or greyscale capture nodes and ignores virtual
+`v4l2loopback` devices (whose frames any local user can write and whose card names are arbitrary
+module parameters). A user's `~/.config/face-auth.toml` `device` setting enforces the same rule.
+Only `/etc/face-auth.toml` can explicitly point `device` at a virtual node for testing.
 
 ## Other limitations
 
-- **Rate limiting covers the face factor only.** The lockout throttles repeated face attempts;
-  PAM's password fallback is untouched, so wire `pam_faillock` for that separately. A scan is
-  counted as failed the moment it sees a face and reset only by a match, so killing it (Ctrl-C at
-  `sudo`) or running several at once doesn't dodge the count.
-- **`sufficient` bypasses the rest of the auth stack.** A successful match satisfies
-  authentication outright, so the strength of the stack becomes the strength of the face match.
-  The vinoAuthFace line currently sits above `pam_nologin` and `pam_faillock`
+- **Lockout applies to face auth only:** Exponential backoff throttles face scans, while password
+  fallback remains governed by PAM (configure `pam_faillock` separately if you want password rate
+  limiting). A scan counts as failed the moment a face is detected and resets only on a successful
+  match, so cancelling (`Ctrl+C` on `sudo`) or running concurrent scans cannot bypass the counter.
+- **`sufficient` ends the PAM auth stack:** A successful face match completes authentication
+  immediately. In current PAM files, the vinoAuthFace line can sit above `pam_nologin` and
+  `pam_faillock` depending on the distro's stack layout
   ([#31](https://github.com/karanshukla/vinoAuthFace/issues/31)).
-- **SELinux policy scope:** the greeter policy grants `xdm_t` mmap access to all V4L2
-  devices, and labels the NPU as a GPU (`dri_device_t`), so every domain allowed the GPU can
-  open it. Narrowing either requires custom udev device types. Only `xdm_t` is covered: TTY
-  `login` (`local_login_t`) isn't wired by `deploy.sh`, and confined users' `sudo_t` is untested.
-- **Model integrity:** both models are pinned by SHA-256 and the detector URL is pinned to a
-  commit. They're verified at install, where `deploy.sh` aborts on a mismatch, and by
-  `vinoauthface doctor`, not each time they're loaded: a model swapped in place afterwards (which
-  takes root) runs until doctor flags it. Release binaries, and the source bundle `vinoauthface-upgrade` installs from, are verified
-  against the release's `SHA256SUMS`. That catches a corrupted or truncated download, not a
-  compromised release: `SHA256SUMS` is published alongside the files it covers, so the trust
-  anchor is GitHub over TLS.
+- **SELinux policy scope:** The greeter policy grants `xdm_t` `map` access to all V4L2 devices and
+  labels `/dev/accel/*` as `dri_device_t` (allowing any domain with GPU access to open the NPU).
+  Tightening either would require custom udev device types. Only `xdm_t` is covered; TTY `login`
+  (`local_login_t`) is not wired by `deploy.sh`, and confined users' `sudo_t` is untested.
+- **Model and release integrity:** Models are pinned by SHA-256 (with the detector URL pinned to a
+  commit) and checked by `deploy.sh` during installation and by `vinoauthface doctor`. They are not
+  re-hashed on every scan, so a root attacker replacing a model in place would not be caught until
+  `doctor` is run. Release binaries and source bundles downloaded by `install.sh` and
+  `vinoauthface-upgrade` are verified against the release's `SHA256SUMS`, protecting against
+  corrupted or truncated downloads with GitHub over TLS as the trust anchor.
 
 ## Match accuracy against strangers
 
-How often each stock model accepts someone else's face, measured in November 2026 on
-[CBSR NIR Face](https://huggingface.co/datasets/EricJaebeom/CBSR-NIR-Face) (197 people, 3,940
-near-IR images, MIT). Each image went through the same steps as a live scan (CLAHE 3.0 with 8x8
-tiles, SCRFD `det_500m`, five-point alignment, encode) and was compared with every other image:
+Both shipped models were benchmarked in November 2026 against the
+[CBSR NIR Face](https://huggingface.co/datasets/EricJaebeom/CBSR-NIR-Face) dataset (197 subjects,
+3,940 near-IR images, MIT license). Every image ran through the live scan pipeline (CLAHE 3.0 with
+8x8 tiles, SCRFD `det_500m`, five-point alignment, and encoding) and was compared pairwise across
 37,430 same-person pairs and 7,722,000 different-person pairs.
 
 At the default `threshold = 0.6`:
 
-| | `mbf` | `r50` | Windows Hello requirement |
+| Metric | `mbf` | `r50` | Windows Hello requirement |
 |---|---|---|---|
-| Strangers accepted | 4 pairs, 1 in 1.9 million | none of 7.7 million | under 1 in 100,000 |
-| Same person accepted | 95.8% | 99.1% | over 95% |
+| Strangers accepted (FAR) | 4 pairs (1 in 1.9 million) | 0 of 7.7 million | < 1 in 100,000 |
+| Same person accepted (TAR) | 95.8% | 99.1% | > 95% |
 
-Both stock models meet Hello's false-accept bar at the default threshold on this data. Held to
-exactly 1 in 100,000 strangers, `r50` is the stronger model:
+When tuned to exactly 1 in 100,000 strangers accepted, `r50` maintains a higher genuine-accept rate:
 
-| | `mbf` | `r50` |
+| Metric | `mbf` | `r50` |
 |---|---|---|
-| Threshold needed | 0.56 | 0.51 |
-| Same person accepted | 97.5% | 99.8% |
+| Threshold required for 1 in 100,000 FAR | `0.56` | `0.51` |
+| Same person accepted (TAR) | 97.5% | 99.8% |
 
-These numbers need the detector to pick the face nearest the camera
-([#193](https://github.com/karanshukla/vinoAuthFace/pull/193)). Before that, it took the most
-confident face, which on 11 CBSR images was a person standing behind the subject. Those misaligned
-crops let `r50` accept 124 stranger pairs at 0.6 and `mbf` 39.
+These results depend on selecting the face closest to the camera
+([#193](https://github.com/karanshukla/vinoAuthFace/pull/193)). Earlier versions picked the highest
+detector confidence score, which selected a background bystander on 11 CBSR images and caused `r50`
+to accept 124 stranger pairs (and `mbf` 39) at threshold 0.6.
 
-What the numbers don't say:
+Important caveats when interpreting these numbers:
 
-- **It isn't your camera's false-accept rate.** CBSR was captured on a different sensor, and the
-  1 in 100,000 figures rest on the top ~77 stranger pairs. It's a fair comparison between models.
-- **It's one image against one image.** A live scan tries several frames per attempt, and the
-  lockout allows 5 attempts, so a stranger's odds per unlock are several times the per-pair rate.
-- **CBSR IDs 19 and 101 look like one person** photographed in two sessions, so pairs between them
-  are left out. Counted as strangers, they alone push the `r50` threshold for 1 in 100,000 to 0.86.
-- **The Hello column is Microsoft's minimum**, from its
+- **Dataset-specific sensor:** CBSR was captured on different hardware than your laptop, and the
+  1-in-100,000 threshold rests on the top ~77 stranger pairs. Treat these numbers as a controlled
+  model comparison rather than your exact real-world FAR.
+- **Single-image comparisons:** A live unlock evaluates multiple frames per scan and permits 5
+  attempts before lockout, multiplying a stranger's per-unlock odds relative to single-pair FAR.
+- **Duplicate subject in CBSR:** Subject IDs 19 and 101 appear to be the same person photographed in
+  two sessions and were excluded from impostor pairs. Counting them as strangers alone would push
+  `r50`'s 1-in-100,000 threshold to 0.86.
+- **Windows Hello baseline:** The Windows Hello column reflects Microsoft's published minimum
   [biometric requirements](https://learn.microsoft.com/en-us/windows-hardware/design/device-experiences/windows-hello-biometric-requirements),
-  not a measured Hello result.
+  not a benchmark of Windows Hello itself.
 
 ## What has been tested, and what hasn't
 
-A review in October 2026 ran against a deployed install on an Ubuntu 24.04 VM, with a
-`v4l2loopback` device standing in for the IR camera. It found nothing exploitable. What it covered:
+A security review in October 2026 audited a deployed installation on an Ubuntu 24.04 VM using
+`v4l2loopback` in place of a physical IR camera and found no exploitable vulnerabilities.
 
-- **Code read:** the set-group-ID entrypoint (environment scrub, `PATH`/`HOME` pinning, the
-  caller-may-only-test-themselves check), username validation and NSS lookup, the user-config
-  overlay (`O_NOFOLLOW`, owner and size checks, `fold_sections` before the whitelist) and the V4L2
-  capture path (`bytesused` and buffer index clamped to the mapping). `cargo deny` passes.
-- **Fail-closed behaviour through PAM (`pamtester`):** no camera feed, a stalled feed, a feed that
-  dies mid-scan, and a non-IR pixel format all fall through to the password within the scan window.
-  So do a truncated, empty, random, trailing-byte, NaN, symlinked or missing template. An active
-  lockout skips the camera after a bounded tarpit, even for a matching face.
-- **Parser mutation:** about 424,000 corrupted templates, lockout files, camera lists and config
-  files, with no panic, no slow load, and nothing accepted that breaks the format's limits. The
-  template case is now a unit test (`corrupted_templates_never_panic_or_break_the_format_limits`).
-  This is mutation without coverage feedback: it is not a substitute for `cargo-fuzz`, and it
-  doesn't reach the camera ioctls, the ONNX models or sealed (v3) templates.
+### Covered in the review
 
-Worth knowing, none of it a vulnerability:
+- **Code audit:** Inspected the set-group-ID entrypoint (environment scrubbing, `PATH`/`HOME`
+  pinning, self-only check for non-root callers), username validation and NSS lookup, user-config
+  overlay (`O_NOFOLLOW`, ownership and size checks, `fold_sections` applied before the allow-list),
+  and V4L2 capture bounds (`bytesused` and buffer index clamped to mapped memory). Verified
+  `cargo deny` passes.
+- **PAM fail-closed testing (`pamtester`):** Confirmed that a missing camera feed, stalled feed,
+  feed dying mid-scan, and non-IR pixel format all fall through to the password within the scan
+  timeout. Also confirmed that truncated, empty, random, trailing-byte, `NaN`, symlinked, and
+  missing templates all fail closed, and that an active lockout skips the camera after a bounded
+  tarpit even when a matching face is presented.
+- **Parser mutation testing:** Tested ~424,000 mutated template files, lockout files, camera lists,
+  and config files with zero panics, no slow loads, and no format-limit violations. The template
+  suite is now a unit test (`corrupted_templates_never_panic_or_break_the_format_limits`). Because
+  this is unguided mutation without coverage feedback, it does not replace `cargo-fuzz` and does not
+  exercise V4L2 ioctls, ONNX inference, or sealed (v3) templates.
 
-- **A corrupt or missing `lockout/state.bin` resets the backoff** (documented in `lockout.rs`).
-  Corrupting it needs the `face-auth` group, which can already read every template.
-- **Lockout files are owned by the calling user** when a lock screen runs the helper as that user.
-  That is only safe while the parent directories stay `root:face-auth 2750`, which keeps the user
-  out of the path. Don't loosen them.
-- **Upgrading from the old world-writable store** (`deploy.sh`): the re-securing pass removes
-  strays, then runs `chmod` through `find -exec`, and `chmod` follows symlinks. A file swapped for a
-  link in that gap could be re-moded. It needs a local attacker, a one-time upgrade from a 1777
-  store, and a race; the script already tells those users to wipe the store and re-enrol.
-- **A commented-out `pam_exec ... face-auth` line counts as "already installed"** to `deploy.sh`.
-  It fails safe: face unlock is skipped, not granted.
+### Known operational notes
 
-Not tested, because the VM can't:
+These behaviours were noted during review and are not vulnerabilities:
 
-- Real IR liveness and spoof resistance. A recorded clip replayed into the loopback is a replay,
-  so passing proves nothing about presentation attacks.
-- `uvcvideo` specifics: camera pinning by USB port, the IR emitter.
-- NPU and OpenVINO behaviour, latency and power.
-- GNOME and KDE lock screens, and portal-based push-to-talk.
+- **Corrupt or missing `lockout/state.bin` resets backoff** (documented in `lockout.rs`). Modifying
+  it requires `face-auth` group membership, which already grants read access to all templates.
+- **Lockout file ownership:** When a lock screen runs `vinoauthface-auth` as your user, created
+  lockout files are owned by that user. This remains safe as long as parent directories keep
+  `root:face-auth` `2750` permissions preventing users from traversing into them; do not loosen
+  those permissions.
+- **Legacy 1777 store upgrade race:** When upgrading from an old world-writable store, `deploy.sh`
+  removes stray files and runs `chmod` via `find -exec` (which follows symlinks). A local attacker
+  racing that one-time upgrade could redirect `chmod`; `deploy.sh` already advises legacy users to
+  wipe the old store and re-enrol.
+- **Commented PAM lines:** A commented-out `pam_exec ... face-auth` line is treated by `deploy.sh`
+  as already present. This fails safe by skipping face unlock instead of granting access.
+
+### Not covered by VM testing
+
+The following areas require real hardware and were outside the scope of the VM review:
+
+- Live IR liveness and physical presentation attacks (replaying a recording into `v4l2loopback`
+  cannot validate real sensor spoof resistance).
+- `uvcvideo` hardware specifics such as USB port pinning and IR illuminator strobing.
+- Intel NPU and OpenVINO runtime behaviour, latency, and power usage.
+- Real GNOME and KDE lock screens and portal-based desktop flows.
