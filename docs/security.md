@@ -111,8 +111,9 @@ Key properties and trade-offs:
   produces no usable face signal. In testing, 100 attempts with a phone screen yielded zero face
   detections.
 - **Motion liveness:** By default, a match requires facial motion compared against an earlier frame
-  within `liveness.window_ms` (default 1 second). Even a still live face drifts naturally over a
-  second, whereas a rigidly mounted photo stays static
+  within `liveness.window_ms` (default 1 second). Only frames that match the enrolled face count, so
+  motion from someone else's live face can't carry over to a photo held up after it. Even a still
+  live face drifts naturally over a second, whereas a rigidly mounted photo stays static
   ([#96](https://github.com/karanshukla/vinoAuthFace/issues/96)). Motion is computed only within the
   face region after normalizing brightness and contrast, preventing auto-exposure shifts or a hand
   waving beside a photo from passing. Once a face matches and only liveness is pending, the scan

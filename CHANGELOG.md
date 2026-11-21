@@ -5,6 +5,10 @@ the pull requests in each one; this file says what changed for you.
 
 ## [Unreleased]
 
+- **With `require_confirmation_elevation` on, sudo, su and doas need a terminal to confirm on.** Without one (a GUI tool using `SUDO_ASKPASS`, or a background `setsid sudo`) the face no longer counts and the password is asked; before, a missing terminal skipped the confirmation. polkit dialogs are unchanged.
+- **Only frames that match your face count towards liveness**, so motion from another person's face can't carry over to a photo of you.
+- **The settings window refuses a model or template path that goes through a symlink or directory you could change**, not just one whose target is yours.
+
 ## [v16] - 2026-11-17
 
 - **A new icon: the IR camera.** The app and tray icons now show what does the work, a camera module with its lens and the IR emitter dot beside it, instead of a face. The tray icon sits in the same rounded frame as vinoWhisper's and vinoWatch's, with the emitter as its one colour: green when ready, amber while a scan runs, and off until setup is finished.

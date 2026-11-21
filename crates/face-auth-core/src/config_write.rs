@@ -111,6 +111,11 @@ pub fn trusted_path_for(path: &Path, dir: bool, owner: u32) -> Result<()> {
     if !path.is_absolute() {
         bail!("not an absolute path");
     }
+    for component in path.components() {
+        if matches!(component, std::path::Component::ParentDir | std::path::Component::CurDir) {
+            bail!("{} must not contain '.' or '..' components", path.display());
+        }
+    }
     let real = std::fs::canonicalize(path).context("not found")?;
     let meta = std::fs::metadata(&real)?;
     if dir && !meta.is_dir() {
@@ -118,6 +123,15 @@ pub fn trusted_path_for(path: &Path, dir: bool, owner: u32) -> Result<()> {
     }
     if !dir && !meta.is_file() {
         bail!("{} is not a regular file", real.display());
+    }
+    for here in path.ancestors() {
+        let meta = std::fs::symlink_metadata(here)?;
+        if meta.uid() != owner && meta.uid() != 0 {
+            bail!("{} is not owned by root", here.display());
+        }
+        if !meta.file_type().is_symlink() && meta.permissions().mode() & 0o022 != 0 {
+            bail!("{} can be changed by users other than root", here.display());
+        }
     }
     let mut at: Option<&Path> = Some(&real);
     while let Some(here) = at {
@@ -268,6 +282,23 @@ mod tests {
         assert!(err.to_string().contains("other than root"), "{err}");
         if me != 0 {
             let err = trusted_path(&file, false).unwrap_err();
+            assert!(err.to_string().contains("not owned by root"), "{err}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn symlink_in_untrusted_dir_to_trusted_target_is_refused() {
+        let dir = std::env::temp_dir().join(format!("face-auth-symlink-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let link = dir.join("model.onnx");
+        std::os::unix::fs::symlink("/usr/bin/env", &link).unwrap();
+        let me = unsafe { libc::geteuid() };
+        let err = trusted_path_for(&link, false, me).unwrap_err();
+        assert!(err.to_string().contains("other than root"), "{err}");
+        if me != 0 {
+            let err = trusted_path(&link, false).unwrap_err();
             assert!(err.to_string().contains("not owned by root"), "{err}");
         }
         std::fs::remove_dir_all(&dir).unwrap();

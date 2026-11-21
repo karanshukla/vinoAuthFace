@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::Duration;
 
 /// How far up the process tree to look for an SSH server.
-const MAX_ANCESTRY_DEPTH: usize = 16;
+const MAX_ANCESTRY_DEPTH: usize = 64;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SkipReason {
@@ -112,7 +112,7 @@ pub fn under_ssh(proc_root: &Path, pid: u32) -> bool {
         };
         pid = ppid;
     }
-    false
+    pid > 1
 }
 
 /// Field 4 of `/proc/<pid>/stat`. Parsed after the *last* `)`, since the
@@ -243,6 +243,19 @@ mod tests {
         let root = temp_dir("gone");
         fake_process(&root, 701, "sudo", 700);
         assert!(under_ssh(&root, 701));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn deep_process_chain_beyond_limit_fails_closed_as_ssh() {
+        let root = temp_dir("deep");
+        let base = 1000u32;
+        fake_process(&root, base, "konsole", 1);
+        for i in 1..=(MAX_ANCESTRY_DEPTH as u32 + 2) {
+            fake_process(&root, base + i, "bash", base + i - 1);
+        }
+        assert!(!under_ssh(&root, base + (MAX_ANCESTRY_DEPTH as u32 - 1)));
+        assert!(under_ssh(&root, base + (MAX_ANCESTRY_DEPTH as u32 + 1)));
         std::fs::remove_dir_all(&root).unwrap();
     }
 

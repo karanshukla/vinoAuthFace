@@ -102,12 +102,28 @@ pub fn npu_preload_entries(list: &str, dir: &std::path::Path) -> Vec<std::path::
         .filter(|l| !l.is_empty())
         .filter_map(|l| {
             if l.starts_with('/') {
-                std::path::Path::new(l).file_name().map(|name| dir.join(name))
-            } else {
+                let (_, name) = l.rsplit_once('/')?;
+                is_valid_soname(name).then(|| dir.join(name))
+            } else if !l.contains('/') && is_valid_soname(l) {
                 Some(std::path::PathBuf::from(l))
+            } else {
+                None
             }
         })
         .collect()
+}
+
+/// A file name the loader takes as a library and nothing else: no `/`, no
+/// `.` or `..`, no `$ORIGIN`-style tokens (pinned by
+/// `tests::a_list_cannot_point_outside_the_prefix`).
+fn is_valid_soname(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name.contains(".so")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'+' | b'-'))
 }
 
 /// Load the NPU prefix, if `deploy.sh` installed one, before OpenVINO first
@@ -309,7 +325,20 @@ mod tests {
     #[test]
     fn a_list_cannot_point_outside_the_prefix() {
         let dir = Path::new("/usr/local/lib/face-auth/npu");
-        let entries = npu_preload_entries("/tmp/evil/libnpu_driver_compiler.so\n/\n", dir);
+        let list = "\
+            /tmp/evil/libnpu_driver_compiler.so\n\
+            /\n\
+            .\n\
+            ..\n\
+            /tmp/evil/.\n\
+            /tmp/evil/..\n\
+            ./libze_loader.so.1\n\
+            ../evil/libze_loader.so.1\n\
+            sub/libze_loader.so.1\n\
+            $ORIGIN/libze_loader.so.1\n\
+            not_a_library.txt\n\
+            libbad;name.so\n";
+        let entries = npu_preload_entries(list, dir);
         assert_eq!(entries, vec![dir.join("libnpu_driver_compiler.so")]);
     }
 

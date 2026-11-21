@@ -130,8 +130,10 @@ When `require_confirmation_elevation = true` is enabled in `/etc/face-auth.toml`
 face match for `sudo`, `su`, or polkit asks you to press Enter on the terminal before granting
 elevation. This prevents a background process that invokes `sudo` while you happen to be at your
 desk from obtaining root silently. Pressing any other key, or waiting 20 seconds without input, falls
-through to the password prompt. Lock screens, login screens, and non-terminal callers (such as
-`pkexec` from a GUI) are never prompted. Set `require_confirmation_elevation = false` to disable it.
+through to the password prompt. Lock screens, login screens, and polkit (such as `pkexec` from a GUI)
+are never prompted. `sudo`, `su` or `doas` run with no terminal (from a GUI tool through
+`SUDO_ASKPASS`, or a background `setsid sudo`) can't be confirmed, so they skip face unlock and ask
+for the password. Set `require_confirmation_elevation = false` to disable it.
 
 ## Face auth stopped being tried after a few failures
 

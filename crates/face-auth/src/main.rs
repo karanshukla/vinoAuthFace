@@ -431,10 +431,11 @@ fn main() {
 
     let scan_duration = config.scan_duration_ms();
     let scan_interval = config.scan_interval_ms();
-    let surface = environment::classify_pam_service(env::var("PAM_SERVICE").ok().as_deref());
+    let pam_service = env::var("PAM_SERVICE").ok();
+    let surface = environment::classify_pam_service(pam_service.as_deref());
     let confirm = config.require_confirmation_for(surface);
     let store_kind = if config.seal_embeddings() { "sealed" } else { "plaintext" };
-    let service = env::var("PAM_SERVICE").unwrap_or_else(|_| "?".into());
+    let service = pam_service.as_deref().unwrap_or("?");
     let outcome = |what: &str| {
         format!("{what} for '{}' (service {service}, {store_kind} templates)", info.name)
     };
@@ -461,14 +462,14 @@ fn main() {
     tracing::debug!(total = ?t0.elapsed(), "scan finished");
 
     match result {
-        Ok(true) if confirm => match confirm::ask(&info.name) {
-            confirm::Outcome::Confirmed | confirm::Outcome::NoTerminal => {
-                audit(libc::LOG_INFO, &outcome("face match, confirmed"));
+        Ok(true) if confirm => match check_confirmation(confirm::ask(&info.name), pam_service.as_deref()) {
+            Ok(audit_what) => {
+                audit(libc::LOG_INFO, &outcome(audit_what));
                 std::process::exit(0)
             }
-            confirm::Outcome::Declined => {
-                audit(libc::LOG_NOTICE, &outcome("face matched but not confirmed"));
-                fail_auth("face matched but was not confirmed")
+            Err((audit_what, fail_reason)) => {
+                audit(libc::LOG_NOTICE, &outcome(audit_what));
+                fail_auth(fail_reason)
             }
         },
         Ok(true) => {
@@ -480,6 +481,31 @@ fn main() {
             fail_auth(&format!("face not recognised for '{}'", info.name))
         }
         Err(e) => fail_setup(&outcome(&format!("face authentication error: {e:#}"))),
+    }
+}
+
+/// Evaluate confirmation outcome for a given `PAM_SERVICE`.
+///
+/// Only `polkit-1` (a desktop polkit agent dialog, which runs without a
+/// controlling terminal) may proceed on [`confirm::Outcome::NoTerminal`].
+/// CLI elevation tools (`sudo`, `su`, `doas`, `run0`, `pkexec`, etc.) must
+/// fail closed if the caller detached from `/dev/tty` via `setsid`.
+fn check_confirmation(
+    outcome: confirm::Outcome,
+    pam_service: Option<&str>,
+) -> Result<&'static str, (&'static str, &'static str)> {
+    match outcome {
+        confirm::Outcome::Confirmed => Ok("face match, confirmed"),
+        confirm::Outcome::NoTerminal if pam_service == Some("polkit-1") => {
+            Ok("face match, no terminal")
+        }
+        confirm::Outcome::NoTerminal => Err((
+            "face matched but no terminal to confirm",
+            "face matched but was not confirmed (no controlling terminal)",
+        )),
+        confirm::Outcome::Declined => {
+            Err(("face matched but not confirmed", "face matched but was not confirmed"))
+        }
     }
 }
 
@@ -592,5 +618,34 @@ mod tests {
         assert!(remote_session(Some(OsStr::new("10.0.0.5"))).is_err());
         assert!(remote_session(Some(OsStr::from_bytes(b"10.0.0.5\xff"))).is_err());
         assert!(remote_session(Some(OsStr::from_bytes(b"\xfflocalhost"))).is_err());
+    }
+
+    #[test]
+    fn confirmation_without_terminal_fails_closed_except_for_polkit() {
+        assert_eq!(
+            check_confirmation(confirm::Outcome::Confirmed, Some("sudo")),
+            Ok("face match, confirmed")
+        );
+        assert_eq!(
+            check_confirmation(confirm::Outcome::NoTerminal, Some("polkit-1")),
+            Ok("face match, no terminal")
+        );
+        for service in [
+            Some("sudo"),
+            Some("sudo-i"),
+            Some("su"),
+            Some("su-l"),
+            Some("doas"),
+            Some("run0"),
+            Some("pkexec"),
+            Some("login"),
+            None,
+        ] {
+            assert!(
+                check_confirmation(confirm::Outcome::NoTerminal, service).is_err(),
+                "NoTerminal must fail closed for {service:?}"
+            );
+        }
+        assert!(check_confirmation(confirm::Outcome::Declined, Some("polkit-1")).is_err());
     }
 }
