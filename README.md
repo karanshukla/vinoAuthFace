@@ -17,9 +17,11 @@ kept in sync with upstream. It adds motion liveness, failed-match lockout, camer
 backend, and more; see [what this fork adds](docs/architecture.md#relationship-to-upstream).
 
 > Face unlock is intended as a convenient alternative to typing your password, with your password
-> remaining available as a fallback. Active near-IR cameras reject phone screens (which is why RGB
-> webcams are unsupported), though a printed IR photo moved by hand can still pass a default
-> configuration. See [docs/security.md](docs/security.md) for the full threat model.
+> remaining available as a fallback. Active near-IR cameras reject phone screens and ordinary
+> printed photos (which is why RGB webcams are unsupported); in testing, printed photos of the
+> enrolled user scored well below the match threshold. Only sophisticated physical attacks such as a
+> realistic 3D mask remain out of scope, and they are unlikely in practice. See
+> [docs/security.md](docs/security.md) for the full threat model.
 
 ## Why this exists
 

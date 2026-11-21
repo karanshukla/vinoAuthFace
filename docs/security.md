@@ -110,6 +110,17 @@ Key properties and trade-offs:
   near-IR light and reflect little from the camera's IR illuminator, so a photo on a phone screen
   produces no usable face signal. In testing, 100 attempts with a phone screen yielded zero face
   detections.
+- **2D colour photos of the enrolled user score below threshold:** A colour photo of the legitimate
+  user—phone selfie or cropped group shot—does not reach the 0.6 match threshold even when edited to
+  mimic IR tones. In a November 2026 spot check against one enrolment (`r50`), a physical colour
+  inkjet print held to the real IR camera scored 0.18–0.29; the same images as digital files,
+  converted to IR-like grayscale (red-channel weighting plus lifted skin midtones), peaked at 0.58
+  for a clean straight-on selfie and 0.55 for a casual group-photo crop—still short of 0.6, and
+  before any liveness check runs. Colour inkjet ink is largely transparent at 850 nm, so a print
+  discards most of the face signal the digital file keeps; the digital scores are a ceiling a
+  physical colour print cannot exceed. These are small single-subject checks against match score
+  alone, not a FAR benchmark, but unlike the liveness tests below the print figure is taken from a
+  real sensor rather than a synthetic clip.
 - **Motion liveness:** By default, a match requires facial motion compared against an earlier frame
   within `liveness.window_ms` (default 1 second). Only frames that match the enrolled face count, so
   motion from someone else's live face can't carry over to a photo held up after it. Even a still
@@ -128,13 +139,16 @@ Key properties and trade-offs:
   entire scan without a qualifying blink (in one 15-second real clip with glasses glare covering
   both eyes, the first qualifying blink occurred at 8.5 seconds; see
   [#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
-- **Printed IR photos and 3D masks are an accepted risk:** On a default install, a laser-printed IR
-  photo moved by hand can unlock the system because paper reflects near-IR and residual motion
-  checking is off by default. This limitation also affects other IR systems (such as Windows Hello,
-  SySS-2017-027) and requires obtaining an IR image of your face rather than an ordinary colour
-  photo. Note that the liveness metrics above were evaluated in software against synthetic prints
-  rather than physical prints on a real sensor, and a flexed paper print introduces non-rigid
-  motion. Because there is no depth sensing or structured light, 3D masks are also out of scope
+- **Printed photos fall short; only sophisticated physical attacks remain out of scope:** Across the
+  checks above, multiple tests have confirmed that printed photos of the enrolled user stay well
+  below the default 0.6 threshold—an active near-IR camera sees through the colour ink that carries
+  most of a face's detail, so an ordinary photo never reproduces a live IR face. The attacks that
+  could in principle defeat any 2D IR system—a genuine IR capture of your face carbon-printed and
+  moved by hand, or a realistic 3D mask with lifelike skin—need materials and effort far beyond a
+  grabbed social photo and are unlikely in practice. vinoAuthFace does no depth sensing or structured
+  light, so those physical attacks are out of scope and untested on a real sensor, and your password
+  remains the fallback. (2D IR print attacks are an industry-wide limitation rather than specific to
+  this project; see Windows Hello, SySS-2017-027.)
   ([#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
 
 ## Frame injection (a fake camera)
@@ -201,6 +215,16 @@ At the default `threshold = 0.6`:
 |---|---|---|---|
 | Strangers accepted (FAR) | 4 pairs (1 in 1.9 million) | 0 of 7.7 million | < 1 in 100,000 |
 | Same person accepted (TAR) | 95.8% | 99.1% | > 95% |
+
+**Why the default is 0.6.** The threshold is an operating point in the gap between two measured
+distributions: genuine matches of the enrolled user, and everything else. Genuine-match similarity
+floors sit well above it (`r50` min 0.83, `mbf` min 0.76 on the enrollment benchmark in
+[configuration.md](configuration.md#recognition-model-mbf-vs-r50)), so legitimate users clear 0.6
+with margin, while strangers and 2D photo-replays of the enrolled user fall below it (see
+[Presentation attacks](#presentation-attacks-something-held-up-to-the-real-camera)). Lowering it
+toward the 1-in-100,000 operating points below (0.51 for `r50`, 0.56 for `mbf`) trades that margin
+for a higher genuine-accept rate; 0.6 keeps a conservative buffer on the stranger side for a small
+TAR cost, and is the floor a user config can raise but not lower.
 
 When tuned to exactly 1 in 100,000 strangers accepted, `r50` maintains a higher genuine-accept rate:
 
