@@ -42,6 +42,9 @@
 
 # Cosine similarity threshold (0.3 - 1.0, HIGHER = stricter match).
 # This is the floor: a user cannot go below it, only above.
+# 0.6 sits between genuine matches (benchmark floor ~0.83 for r50, ~0.76 for mbf)
+# and strangers / 2D photo-replays of you (which stay below 0.6); see
+# docs/security.md "Match accuracy against strangers" for why.
 threshold = 0.6
 
 # How long the face scan window lasts, in milliseconds (500 - 30000, default 5000).
