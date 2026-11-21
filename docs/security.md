@@ -110,6 +110,18 @@ Key properties and trade-offs:
   near-IR light and reflect little from the camera's IR illuminator, so a photo on a phone screen
   produces no usable face signal. In testing, 100 attempts with a phone screen yielded zero face
   detections.
+- **2D colour photos of the enrolled user score below threshold:** A colour photo of the legitimate
+  user—phone selfie or cropped group shot—does not reach the 0.6 match threshold even when edited to
+  mimic IR tones. In a November 2026 spot check against one enrolment (`r50`), a physical colour
+  inkjet print held to the real IR camera scored 0.18–0.29; the same images as digital files,
+  converted to IR-like grayscale (red-channel weighting plus lifted skin midtones), peaked at 0.58
+  for a clean straight-on selfie and 0.55 for a casual group-photo crop—still short of 0.6, and
+  before any liveness check runs. Colour inkjet ink is largely transparent at 850 nm, so a print
+  discards most of the face signal the digital file keeps; the digital scores are a ceiling a
+  physical colour print cannot exceed. This is a small single-subject check against match score
+  alone, not a FAR benchmark, and unlike the liveness tests below it is one of the few numbers taken
+  from a real sensor rather than synthetic clips. A black-only (laser/toner) print of a genuine IR
+  image of the face stays the stronger, untested vector described under printed IR photos below.
 - **Motion liveness:** By default, a match requires facial motion compared against an earlier frame
   within `liveness.window_ms` (default 1 second). Only frames that match the enrolled face count, so
   motion from someone else's live face can't carry over to a photo held up after it. Even a still
@@ -201,6 +213,16 @@ At the default `threshold = 0.6`:
 |---|---|---|---|
 | Strangers accepted (FAR) | 4 pairs (1 in 1.9 million) | 0 of 7.7 million | < 1 in 100,000 |
 | Same person accepted (TAR) | 95.8% | 99.1% | > 95% |
+
+**Why the default is 0.6.** The threshold is an operating point in the gap between two measured
+distributions: genuine matches of the enrolled user, and everything else. Genuine-match similarity
+floors sit well above it (`r50` min 0.83, `mbf` min 0.76 on the enrollment benchmark in
+[configuration.md](configuration.md#recognition-model-mbf-vs-r50)), so legitimate users clear 0.6
+with margin, while strangers and 2D photo-replays of the enrolled user fall below it (see
+[Presentation attacks](#presentation-attacks-something-held-up-to-the-real-camera)). Lowering it
+toward the 1-in-100,000 operating points below (0.51 for `r50`, 0.56 for `mbf`) trades that margin
+for a higher genuine-accept rate; 0.6 keeps a conservative buffer on the stranger side for a small
+TAR cost, and is the floor a user config can raise but not lower.
 
 When tuned to exactly 1 in 100,000 strangers accepted, `r50` maintains a higher genuine-accept rate:
 
