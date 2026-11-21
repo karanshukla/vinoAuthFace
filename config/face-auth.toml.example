@@ -138,8 +138,10 @@ scan_duration_ms = 5000
 # Confirm with Enter (default false). After a face match for sudo, su or polkit,
 # vinoAuthFace asks for Enter on the terminal before it lets the caller through, so
 # a process that runs `sudo` while you sit in front of the camera cannot get
-# root unnoticed. Waits 20 s, and any other key declines. Not asked when there
-# is no terminal (pkexec from a GUI), and never on lock screens or login.
+# root unnoticed. Waits 20 s, and any other key declines. Not asked for polkit
+# (pkexec from a GUI), and never on lock screens or login. sudo, su or doas
+# with no terminal (a background `setsid sudo`) can't be confirmed, so the
+# face doesn't count there and the password is asked instead.
 # guards.require_confirmation_elevation = false
 
 # ---------------------------------------------------------------------------

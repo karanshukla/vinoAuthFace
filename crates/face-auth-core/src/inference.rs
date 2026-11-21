@@ -96,16 +96,6 @@ pub const NPU_PRELOAD_LIST: &str = "ovfetch-preload.txt";
 /// entry is re-rooted to `dir` by file name: nothing in the list can make the
 /// auth process load from outside the root-owned prefix, and a soname goes
 /// through the loader's normal search, as the driver's own `dlopen` would.
-fn is_valid_soname(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && name.contains(".so")
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'+' | b'-'))
-}
-
 pub fn npu_preload_entries(list: &str, dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     list.lines()
         .map(str::trim)
@@ -121,6 +111,19 @@ pub fn npu_preload_entries(list: &str, dir: &std::path::Path) -> Vec<std::path::
             }
         })
         .collect()
+}
+
+/// A file name the loader takes as a library and nothing else: no `/`, no
+/// `.` or `..`, no `$ORIGIN`-style tokens (pinned by
+/// `tests::a_list_cannot_point_outside_the_prefix`).
+fn is_valid_soname(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name.contains(".so")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'+' | b'-'))
 }
 
 /// Load the NPU prefix, if `deploy.sh` installed one, before OpenVINO first

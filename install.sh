@@ -94,8 +94,10 @@ main() {
     local base="${FACE_AUTH_DEPLOY_RELEASE_BASE:-https://github.com/$RELEASE_REPO/releases/download/$tag}"
     # Root's own directory, not a fixed path: nobody else may swap the bundle
     # between the checksum and the install.
+    local work
     work="$(mktemp -d)"
-    trap 'rm -rf -- "$work"' EXIT
+    # shellcheck disable=SC2064 # expand now: $work is local
+    trap "rm -rf '$work'" EXIT
 
     step "downloading $tag from $base"
     local asset
