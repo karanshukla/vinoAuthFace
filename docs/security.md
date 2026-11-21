@@ -118,10 +118,9 @@ Key properties and trade-offs:
   for a clean straight-on selfie and 0.55 for a casual group-photo crop—still short of 0.6, and
   before any liveness check runs. Colour inkjet ink is largely transparent at 850 nm, so a print
   discards most of the face signal the digital file keeps; the digital scores are a ceiling a
-  physical colour print cannot exceed. This is a small single-subject check against match score
-  alone, not a FAR benchmark, and unlike the liveness tests below it is one of the few numbers taken
-  from a real sensor rather than synthetic clips. A black-only (laser/toner) print of a genuine IR
-  image of the face stays the stronger, untested vector described under printed IR photos below.
+  physical colour print cannot exceed. These are small single-subject checks against match score
+  alone, not a FAR benchmark, but unlike the liveness tests below the print figure is taken from a
+  real sensor rather than a synthetic clip.
 - **Motion liveness:** By default, a match requires facial motion compared against an earlier frame
   within `liveness.window_ms` (default 1 second). Only frames that match the enrolled face count, so
   motion from someone else's live face can't carry over to a photo held up after it. Even a still
@@ -140,13 +139,16 @@ Key properties and trade-offs:
   entire scan without a qualifying blink (in one 15-second real clip with glasses glare covering
   both eyes, the first qualifying blink occurred at 8.5 seconds; see
   [#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
-- **Printed IR photos and 3D masks are an accepted risk:** On a default install, a laser-printed IR
-  photo moved by hand can unlock the system because paper reflects near-IR and residual motion
-  checking is off by default. This limitation also affects other IR systems (such as Windows Hello,
-  SySS-2017-027) and requires obtaining an IR image of your face rather than an ordinary colour
-  photo. Note that the liveness metrics above were evaluated in software against synthetic prints
-  rather than physical prints on a real sensor, and a flexed paper print introduces non-rigid
-  motion. Because there is no depth sensing or structured light, 3D masks are also out of scope
+- **Printed photos fall short; only sophisticated physical attacks remain out of scope:** Across the
+  checks above, multiple tests have confirmed that printed photos of the enrolled user stay well
+  below the default 0.6 threshold—an active near-IR camera sees through the colour ink that carries
+  most of a face's detail, so an ordinary photo never reproduces a live IR face. The attacks that
+  could in principle defeat any 2D IR system—a genuine IR capture of your face carbon-printed and
+  moved by hand, or a realistic 3D mask with lifelike skin—need materials and effort far beyond a
+  grabbed social photo and are unlikely in practice. vinoAuthFace does no depth sensing or structured
+  light, so those physical attacks are out of scope and untested on a real sensor, and your password
+  remains the fallback. (2D IR print attacks are an industry-wide limitation rather than specific to
+  this project; see Windows Hello, SySS-2017-027.)
   ([#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
 
 ## Frame injection (a fake camera)

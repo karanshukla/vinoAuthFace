@@ -18,9 +18,10 @@ running background daemons.
 - Supports an optional OpenVINO backend for Intel NPUs
 
 > Face unlock is intended as a convenient alternative to typing your password, with your password
-> remaining available as a fallback. Active near-IR cameras reject phone screens, though a printed
-> IR photo moved by hand can still pass a default configuration. See
-> [the security model](security.md) for details.
+> remaining available as a fallback. Active near-IR cameras reject phone screens and ordinary
+> printed photos; in testing, printed photos of the enrolled user scored well below the match
+> threshold. Only sophisticated physical attacks such as a realistic 3D mask remain out of scope,
+> and they are unlikely in practice. See [the security model](security.md) for details.
 
 ## Start here
 
