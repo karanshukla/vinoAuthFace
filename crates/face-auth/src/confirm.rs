@@ -10,6 +10,7 @@ use std::os::fd::AsRawFd;
 /// How long to wait for Enter, in tenths of a second (`VTIME` units).
 const TIMEOUT_DECISECONDS: u8 = 200;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     Confirmed,
     Declined,

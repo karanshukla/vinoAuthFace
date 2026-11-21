@@ -47,9 +47,9 @@ if [ "$USR_WRITABLE" = true ]; then
     APP_DIR="/usr/share/applications"
     GUI_DATA_DIR="/usr/local/share/face-auth-gtk"
 else
-    ICON_DIR="${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/icons/hicolor/scalable/apps"
-    APP_DIR="${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/applications"
-    GUI_DATA_DIR="${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/face-auth-gtk"
+    ICON_DIR="$ACTUAL_HOME/.local/share/icons/hicolor/scalable/apps"
+    APP_DIR="$ACTUAL_HOME/.local/share/applications"
+    GUI_DATA_DIR="$ACTUAL_HOME/.local/share/face-auth-gtk"
 fi
 
 # PAM first, while the binaries are still there. A required line (login-mode
@@ -147,13 +147,17 @@ rm -f "$CONFIG_DIR/face-auth.toml"
 
 # Release sources vinoauthface-upgrade unpacked, and its build directory. As
 # the user under sudo: the path is in their home, so root resolving it could
-# be steered elsewhere by a symlinked ~/.cache.
-if [ -n "${SUDO_USER:-}" ]; then
-    sudo -u "$SUDO_USER" -H rm -rf -- "$ACTUAL_HOME/.cache/vinoauthface" \
-        || echo "Could not remove $ACTUAL_HOME/.cache/vinoauthface; delete it by hand." >&2
-else
-    rm -rf -- "$ACTUAL_HOME/.cache/vinoauthface"
-fi
+# be steered elsewhere by a symlinked ~/.cache or ~/.local.
+run_as_user() {
+    if [ -n "${SUDO_USER:-}" ]; then
+        sudo -u "$SUDO_USER" -H "$@"
+    else
+        "$@"
+    fi
+}
+
+run_as_user rm -rf -- "$ACTUAL_HOME/.cache/vinoauthface" \
+    || echo "Could not remove $ACTUAL_HOME/.cache/vinoauthface; delete it by hand." >&2
 
 if [ -f /etc/udev/rules.d/99-face-auth-camera.rules ]; then
     echo "Removing pinned-camera udev rule..."
@@ -165,14 +169,18 @@ fi
 # clean up anything an older install left behind.
 echo "Removing any leftover GUI files from an older install..."
 rm -f "$BIN_DIR/face-auth-gtk"
-rm -f "${XDG_BIN_HOME:-$ACTUAL_HOME/.local/bin}/face-auth-gtk"
-rm -f "$APP_DIR/com.github.pfalkingham.face-auth-gtk.desktop"
-rm -f "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/applications/com.github.pfalkingham.face-auth-gtk.desktop"
-rm -f "$ICON_DIR/com.github.pfalkingham.face-auth-gtk.svg"
-rm -f "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/icons/hicolor/scalable/apps/com.github.pfalkingham.face-auth-gtk.svg"
-rm -rf "$GUI_DATA_DIR"
-rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/face-auth-gtk"
-rm -rf "${XDG_DATA_HOME:-$ACTUAL_HOME/.local/share}/gnome-shell/extensions/authface-scan-indicator@samvivan.local"
+if [ "$USR_WRITABLE" = true ]; then
+    rm -f "$APP_DIR/com.github.pfalkingham.face-auth-gtk.desktop"
+    rm -f "$ICON_DIR/com.github.pfalkingham.face-auth-gtk.svg"
+    rm -rf "$GUI_DATA_DIR"
+fi
+run_as_user rm -f -- \
+    "$ACTUAL_HOME/.local/bin/face-auth-gtk" \
+    "$ACTUAL_HOME/.local/share/applications/com.github.pfalkingham.face-auth-gtk.desktop" \
+    "$ACTUAL_HOME/.local/share/icons/hicolor/scalable/apps/com.github.pfalkingham.face-auth-gtk.svg"
+run_as_user rm -rf -- \
+    "$ACTUAL_HOME/.local/share/face-auth-gtk" \
+    "$ACTUAL_HOME/.local/share/gnome-shell/extensions/authface-scan-indicator@samvivan.local"
 
 echo "Removing SELinux policy module..."
 semodule -r face_auth 2>/dev/null || true

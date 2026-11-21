@@ -111,8 +111,16 @@ impl Liveness {
         }
     }
 
-    /// Adds a face frame. `false` for the first one, which is only a baseline
-    /// and is never encoded.
+    /// Clears buffered face frames and any latched motion when a non-matching
+    /// face is seen, so an unmatched live face cannot satisfy liveness for a
+    /// subsequent static photo of the enrolled user.
+    fn reset(&mut self) {
+        self.recent_faces.clear();
+        self.motion_seen = liveness_disabled(self.motion_threshold, self.residual_threshold);
+    }
+
+    /// Adds a verified face frame. `false` for the first one, which is only a
+    /// baseline before motion can be measured.
     fn observe(&mut self, frame_num: usize, face: FaceFrame) -> Result<bool> {
         while let Some(oldest) = self.recent_faces.front() {
             if !drop_oldest_face(self.recent_faces.len(), face.at.duration_since(oldest.at), self.window) {
@@ -460,12 +468,6 @@ impl FaceAuth {
                 }
             }
 
-            if !liveness.observe(frame_num, FaceFrame { at: Instant::now(), raw, face_box })? {
-                tracing::debug!(frame = frame_num, "liveness baseline");
-                nap(deadline);
-                continue;
-            }
-
             // Degenerate landmarks are one bad frame, not a broken setup.
             let input = match face_input(&frame, &face_box) {
                 Ok(input) => input,
@@ -477,19 +479,28 @@ impl FaceAuth {
             };
             let embedding = self.encoder.encode(input.view())?;
 
-            if verify_embedding(&embedding, &store, self.config.threshold())? {
-                if !liveness.motion_seen {
-                    tracing::debug!(frame = frame_num, "match without liveness motion yet; continuing");
-                    liveness_pending = true;
-                    nap(deadline);
-                    continue;
-                }
-                tracing::debug!(frame = frame_num, elapsed = ?t0.elapsed(), "match");
-                record_success(user, &embeddings_dir);
-                return Ok(true);
+            if !verify_embedding(&embedding, &store, self.config.threshold())? {
+                liveness.reset();
+                nap(deadline);
+                continue;
             }
 
-            nap(deadline);
+            if !liveness.observe(frame_num, FaceFrame { at: Instant::now(), raw, face_box })? {
+                tracing::debug!(frame = frame_num, "liveness baseline");
+                liveness_pending = !liveness.motion_seen;
+                nap(deadline);
+                continue;
+            }
+
+            if !liveness.motion_seen {
+                tracing::debug!(frame = frame_num, "match without liveness motion yet; continuing");
+                liveness_pending = true;
+                nap(deadline);
+                continue;
+            }
+            tracing::debug!(frame = frame_num, elapsed = ?t0.elapsed(), "match");
+            record_success(user, &embeddings_dir);
+            return Ok(true);
         }
     }
 
@@ -856,5 +867,25 @@ mod tests {
         drop(held);
         assert_eq!(lockout::peek("alice", &dir, &lockout::LockoutPolicy::default()).0, 0);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn non_matching_face_resets_liveness_and_cannot_satisfy_static_victim_photo() {
+        let mut liveness = Liveness::new(&liveness_config(0.05, 0.0));
+        // Even if motion was previously seen or a baseline existed, an
+        // unmatched face resets liveness so a static victim photo cannot pass.
+        liveness.observe(1, face_frame(1)).unwrap();
+        liveness.observe(2, face_frame(2)).unwrap();
+        assert!(liveness.motion_seen);
+
+        // Non-matching frame triggers reset.
+        liveness.reset();
+        assert!(!liveness.motion_seen);
+        assert!(liveness.recent_faces.is_empty());
+
+        // Static photo of the victim across two subsequent matching frames:
+        assert!(!liveness.observe(4, face_frame(3)).unwrap());
+        assert!(liveness.observe(5, face_frame(3)).unwrap());
+        assert!(!liveness.motion_seen);
     }
 }

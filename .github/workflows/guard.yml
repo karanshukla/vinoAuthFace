@@ -70,7 +70,7 @@ jobs:
           # export-ignore and export-subst for the source bundle) all count.
           sensitive() {
             case "$1" in
-              docs/* | README.md | CHANGELOG.md | LICENSE \
+              docs/*.md | docs/assets/* | README.md | CHANGELOG.md | LICENSE \
               | .github/ISSUE_TEMPLATE/* | .github/FUNDING.yml) return 1 ;;
               *) return 0 ;;
             esac
