@@ -18,7 +18,7 @@ vinoauthface-auth (static binary, set-group-ID face-auth)
   ├─ Load /etc/face-auth.toml + strictly narrowing user overlay
   ├─ Verify pinned camera identity (if configured) and check failed-attempt lockout
   ├─ V4L2 capture (auto-detected IR node; GREY/YUYV/Y16), keeping the brighter of each frame pair
-  │   └─ poll() with 5 s timeout; exits cleanly if the camera hangs
+  │   └─ poll() with 5 s timeout; exits if the camera hangs
   ├─ Reject dark/flat frames and apply CLAHE equalization
   ├─ Face detection (SCRFD det_500m): bounding box and five landmarks
   ├─ Align: similarity-warp landmarks onto ArcFace's 112×112 template and normalize to [-1, 1]
@@ -41,8 +41,8 @@ Face recognition uses InsightFace weights:
 
 Face detection uses InsightFace **`det_500m.onnx`** (SCRFD, ~2.5 MB, from `buffalo_sc`), which
 outputs a bounding box and five facial landmarks (eyes, nose tip, and mouth corners). Warping the
-face so those landmarks align with the reference coordinates expected by the recognition models—as
-opposed to cropping directly from the bounding box—raised median same-person similarity on recorded
+face so those landmarks align with the reference coordinates expected by the recognition models (rather
+than cropping directly from the bounding box) raised median same-person similarity on recorded
 IR clips from 0.66 to 0.86, and from 0.29 to 0.71 while wearing glasses
 ([#27](https://github.com/karanshukla/vinoAuthFace/issues/27)).
 
@@ -62,8 +62,8 @@ This rewrite remains in place on `tract` 0.23 and has not yet been re-tested for
 
 ### Licensing
 
-InsightFace's model zoo weights—both the recognition models (`w600k_mbf.onnx`, `w600k_r50.onnx`) and
-the SCRFD detector (`det_500m.onnx`)—are licensed for **non-commercial research use only** (see
+InsightFace's model zoo weights, including both the recognition models (`w600k_mbf.onnx`, `w600k_r50.onnx`)
+and the SCRFD detector (`det_500m.onnx`), are licensed for **non-commercial research use only** (see
 `model_zoo/README.md` and `python-package/README.md` in the InsightFace repository). Only
 InsightFace's library source code is MIT-licensed
 ([#83](https://github.com/karanshukla/vinoAuthFace/issues/83)).
@@ -77,14 +77,14 @@ releases and verifies pinned SHA-256 checksums before installation.
 rely on a background daemon communicating over D-Bus ([gaze](https://github.com/gundulabs/gaze),
 Visage, Biopass) or a Python runtime (Howdy), installed via the system package manager. On immutable
 systems such as Bazzite, Bluefin, Fedora Silverblue, or Kinoite, that requires package layering and
-reboots—or fails outright (for example, `gaze`'s
-[installer](https://github.com/gundulabs/gaze/blob/main/docs/public/install.sh) refuses to run on
+reboots, or fails outright (for example, `gaze`'s
+[installer](https://github.com/gundulabs/gaze/blob/main/docs/public/install.sh) does not run on
 `rpm-ostree` systems). vinoAuthFace instead ships as a standalone static musl binary in
 `/usr/local` with no daemon, systemd units, D-Bus service, or system package dependencies.
 
 **Intentionally IR-only.** There is no RGB webcam path, hybrid mode, or colour fallback. Resistance
 to phone-screen spoofing relies on active near-infrared sensing, and IR illumination also works in
-the dark—matching how Windows Hello operates. Adding optional Intel NPU inference lets the system
+the dark, matching how Windows Hello operates. Adding optional Intel NPU inference lets the system
 run stronger recognition models like `w600k_r50` quickly during unlock.
 
 If your machine does not have an IR camera, or you prefer a full enrolment wizard and daemon-based

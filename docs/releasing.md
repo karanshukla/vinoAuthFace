@@ -27,6 +27,6 @@ release updates what new users install. From `v2` onward, all tags are published
 to the newest version. `deploy.sh` queries the GitHub API for the most recent release regardless of
 pre-release status.
 
-There is no fixed release schedule—cut a new release whenever `main` has user-facing changes worth
+There is no fixed release schedule; cut a new release whenever `main` has user-facing changes worth
 shipping. Because running `deploy.sh` in a tagged checkout installs that tag's binaries, cutting a
 release is also how changes reach users who install without a Rust toolchain.

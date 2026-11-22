@@ -30,7 +30,7 @@ remaining available as the fallback. To report a vulnerability, see
   the user config and `FACE_AUTH_*` as well (so `sudo -E` cannot redirect enrolment), and any
   `--device` must be an IR sensor or the system's configured `device`. See
   [configuration.md](configuration.md) for the complete list.
-- **Identity strictly from `PAM_USER`:** `vinoauthface-auth` refuses to run unless PAM sets
+- **Identity strictly from `PAM_USER`:** `vinoauthface-auth` exits without running unless PAM sets
   `PAM_USER`.
 - **Remote sessions are rejected:** If `PAM_RHOST` is set to anything other than empty, `localhost`,
   or a loopback IP (`127.0.0.0/8`, `::1`), face authentication is declined so someone sitting at the
@@ -66,8 +66,8 @@ Key properties and trade-offs:
 - **Why sealing matters (template inversion):** Face embeddings are not one-way cryptographic
   hashes. Running gradient descent on an input image until the recognition model produces an
   embedding close to stored templates reconstructs a recognizable likeness of the user. Testing
-  against `w600k_mbf` with 30 templates—using no face prior and no GPU, in a few minutes on 2
-  vCPUs—yielded an unmistakable human face recognized by its owner that scored ~0.8 cosine
+  against `w600k_mbf` with 30 templates (using no face prior and no GPU, in a few minutes on 2
+  vCPUs) yielded an unmistakable human face recognized by its owner that scored ~0.8 cosine
   similarity against the stored templates (well above the 0.6 default threshold). Although noisy
   without a face prior, pairing this with a pretrained face generator produces much cleaner results.
   Because you cannot revoke your face, treat leaked templates like leaked photos. (We did not test
@@ -111,11 +111,11 @@ Key properties and trade-offs:
   produces no usable face signal. In testing, 100 attempts with a phone screen yielded zero face
   detections.
 - **2D colour photos of the enrolled user score below threshold:** A colour photo of the legitimate
-  user—phone selfie or cropped group shot—does not reach the 0.6 match threshold even when edited to
+  user (whether a phone selfie or a cropped group shot) does not reach the 0.6 match threshold even when edited to
   mimic IR tones. In a November 2026 spot check against one enrolment (`r50`), a physical colour
   inkjet print held to the real IR camera scored 0.18–0.29; the same images as digital files,
   converted to IR-like grayscale (red-channel weighting plus lifted skin midtones), peaked at 0.58
-  for a clean straight-on selfie and 0.55 for a casual group-photo crop—still short of 0.6, and
+  for a clean straight-on selfie and 0.55 for a casual group-photo crop, still short of 0.6, and
   before any liveness check runs. Colour inkjet ink is largely transparent at 850 nm, so a print
   discards most of the face signal the digital file keeps; the digital scores are a ceiling a
   physical colour print cannot exceed. These are small single-subject checks against match score
@@ -131,7 +131,7 @@ Key properties and trade-offs:
   extends by up to `liveness.grace_ms` (default 4 seconds) so still users are not penalized (which
   also gives a matching photo that extra window to produce motion).
 - **Hand-moved photo detection (opt-in):** Setting `liveness.residual_motion_threshold` requires
-  frame-to-frame non-rigid motion—movement inside the most-changed eye-sized region that cannot be
+  frame-to-frame non-rigid motion: movement inside the most-changed eye-sized region that cannot be
   explained by a single rigid shift (estimated to quarter-pixel precision), such as blinking, mouth
   movement, or 3D parallax during a head turn. In software tests on synthetic clips, moved, tilted,
   or zoomed IR photos peaked at 0.20, while blinks scored 0.3–0.6 and moving faces exceeded 0.3 on
@@ -141,10 +141,10 @@ Key properties and trade-offs:
   [#17](https://github.com/karanshukla/vinoAuthFace/issues/17)).
 - **Printed photos fall short; only sophisticated physical attacks remain out of scope:** Across the
   checks above, multiple tests have confirmed that printed photos of the enrolled user stay well
-  below the default 0.6 threshold—an active near-IR camera sees through the colour ink that carries
+  below the default 0.6 threshold. An active near-IR camera sees through the colour ink that carries
   most of a face's detail, so an ordinary photo never reproduces a live IR face. The attacks that
-  could in principle defeat any 2D IR system—a genuine IR capture of your face carbon-printed and
-  moved by hand, or a realistic 3D mask with lifelike skin—need materials and effort far beyond a
+  could in principle defeat any 2D IR system (a genuine IR capture of your face carbon-printed and
+  moved by hand, or a realistic 3D mask with lifelike skin) require materials and effort far beyond a
   grabbed social photo and are unlikely in practice. vinoAuthFace does no depth sensing or structured
   light, so those physical attacks are out of scope and untested on a real sensor, and your password
   remains the fallback. (2D IR print attacks are an industry-wide limitation rather than specific to
@@ -158,7 +158,7 @@ Key properties and trade-offs:
 During enrolment, vinoAuthFace records the camera's USB `VID:PID` in `<user>/cameras`. Before
 opening a camera for authentication, it verifies that the device matches an enrolled USB ID. This
 prevents another webcam or a virtual `v4l2loopback` device (which has no USB identity) from
-substituting for your IR sensor. A mismatch is treated as an error—PAM falls back to your password
+substituting for your IR sensor. A mismatch is treated as an error, and PAM falls back to your password
 without incrementing the lockout counter. Accounts enrolled before camera binding was added, or on
 cameras lacking a USB ID (such as MIPI), accept any camera until re-enrolled (`sudo vinoauthface
 doctor` reports this status). Set `bind_camera = false` to disable it. This design is adapted from

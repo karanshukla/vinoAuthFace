@@ -53,7 +53,11 @@ pub fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user
                         handle.update(|t| t.idle_minutes = minutes);
                     }
                     Err(e) => {
-                        Notifier::new().send(0, "Cannot save the idle delay", &format!("~/.config/face-auth.toml: {e}"));
+                        Notifier::new().send(
+                            0,
+                            "Could not save idle timeout",
+                            &format!("~/.config/face-auth.toml: {e}"),
+                        );
                     }
                 }
             }
@@ -64,7 +68,7 @@ pub fn event_loop(handle: Handle<Tray>, rx: Receiver<Msg>, tx: Sender<Msg>, user
                         Notifier::new().send(
                             0,
                             "vinoAuthFace update available",
-                            &format!("{tag} is out (installed {}). Click the tray icon for details.", update::CURRENT),
+                            &format!("Version {tag} is available (installed: {}). Open the tray menu to update.", update::CURRENT),
                         );
                     }
                     notified_update = latest.clone();

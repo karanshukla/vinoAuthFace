@@ -8,7 +8,7 @@ nav_order: 7
 vinoAuthFace includes an optional session tray icon that shows live scan state and provides quick
 access to enrolment, retraining, and test scans without memorizing CLI flags. It replaces upstream's
 GTK settings GUI. The tray runs as a standalone per-user application and plays no part in
-authentication—`vinoauthface-auth` does not interact with it.
+authentication; `vinoauthface-auth` does not interact with it.
 
 The tray uses the StatusNotifierItem protocol, and menu items that make privileged changes invoke
 `pkexec`, which requires a polkit authentication agent in your session:
@@ -103,7 +103,7 @@ immediately.
 
 ### Icon state and idle hiding
 
-Enrolment progress (such as "Capturing frame 3/30" or "Face too small: move closer") is parsed from
+Enrolment progress (such as "Capturing frame 3/30" or "Face too small. Move closer.") is parsed from
 `vinoauthface enroll`'s output and shown in both the tray tooltip and desktop notifications.
 
 The icon depicts an IR camera lens and emitter dot inside a rounded frame, styled to match your

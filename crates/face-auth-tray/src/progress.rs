@@ -5,8 +5,14 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// About to capture frame `frame` of `wanted`.
-    Capturing { frame: usize, wanted: usize },
-    Captured { captured: usize, wanted: usize },
+    Capturing {
+        frame: usize,
+        wanted: usize,
+    },
+    Captured {
+        captured: usize,
+        wanted: usize,
+    },
     /// Something the user can fix by moving.
     Hint(&'static str),
     /// The closing "Saved …" or "Added …" summary.
@@ -29,9 +35,9 @@ pub fn parse(line: &str) -> Option<Event> {
         return Some(Event::Finished(line.to_owned()));
     }
     let hint = match line {
-        "nothing in frame, retrying..." => "Nothing in frame: look at the camera",
-        "no face detected, retrying..." => "No face detected: look at the camera",
-        "face too small, move closer..." => "Face too small: move closer",
+        "nothing in frame, retrying..." => "Nothing in frame. Look at the camera.",
+        "no face detected, retrying..." => "No face detected. Look at the camera.",
+        "face too small, move closer..." => "Face too small. Move closer.",
         _ => return None,
     };
     Some(Event::Hint(hint))
@@ -61,17 +67,40 @@ mod tests {
     fn reads_every_progress_line_enroll_prints() {
         assert_eq!(
             parse("Capturing frame 3/30 (attempt 4)..."),
-            Some(Event::Capturing { frame: 3, wanted: 30 })
+            Some(Event::Capturing {
+                frame: 3,
+                wanted: 30
+            })
         );
-        assert_eq!(parse("  captured 3/30"), Some(Event::Captured { captured: 3, wanted: 30 }));
-        assert_eq!(parse("  face too small, move closer..."), Some(Event::Hint("Face too small: move closer")));
-        assert!(matches!(parse("  no face detected, retrying..."), Some(Event::Hint(_))));
-        assert!(matches!(parse("  nothing in frame, retrying..."), Some(Event::Hint(_))));
+        assert_eq!(
+            parse("  captured 3/30"),
+            Some(Event::Captured {
+                captured: 3,
+                wanted: 30
+            })
+        );
+        assert_eq!(
+            parse("  face too small, move closer..."),
+            Some(Event::Hint("Face too small. Move closer."))
+        );
+        assert!(matches!(
+            parse("  no face detected, retrying..."),
+            Some(Event::Hint(_))
+        ));
+        assert!(matches!(
+            parse("  nothing in frame, retrying..."),
+            Some(Event::Hint(_))
+        ));
         assert_eq!(
             parse("Added 30 embeddings for 'alice' (60 total)"),
-            Some(Event::Finished("Added 30 embeddings for 'alice' (60 total)".into()))
+            Some(Event::Finished(
+                "Added 30 embeddings for 'alice' (60 total)".into()
+            ))
         );
-        assert!(matches!(parse("Saved 30 embeddings for 'alice'"), Some(Event::Finished(_))));
+        assert!(matches!(
+            parse("Saved 30 embeddings for 'alice'"),
+            Some(Event::Finished(_))
+        ));
     }
 
     #[test]
@@ -91,6 +120,12 @@ mod tests {
 
     #[test]
     fn describes_progress_as_a_count() {
-        assert_eq!(describe(&Event::Capturing { frame: 3, wanted: 30 }), "Capturing frame 3/30");
+        assert_eq!(
+            describe(&Event::Capturing {
+                frame: 3,
+                wanted: 30
+            }),
+            "Capturing frame 3/30"
+        );
     }
 }

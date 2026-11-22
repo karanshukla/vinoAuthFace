@@ -26,12 +26,18 @@ pub enum Check {
 pub type Checks = Arc<Mutex<HashMap<(Kind, String), Check>>>;
 
 pub fn start(checks: &Checks, kind: Kind, path: String, ctx: &eframe::egui::Context) {
-    checks.lock().unwrap().insert((kind, path.clone()), Check::Running);
+    checks
+        .lock()
+        .unwrap()
+        .insert((kind, path.clone()), Check::Running);
     let checks = Arc::clone(checks);
     let ctx = ctx.clone();
     std::thread::spawn(move || {
         let result = check(kind, &path).map_err(|e| format!("{e:#}"));
-        checks.lock().unwrap().insert((kind, path), Check::Done(result));
+        checks
+            .lock()
+            .unwrap()
+            .insert((kind, path), Check::Done(result));
         ctx.request_repaint();
     });
 }
@@ -42,16 +48,24 @@ fn check(kind: Kind, path: &str) -> anyhow::Result<String> {
             let mut encoder = FaceEncoder::new(path, "tract", "CPU")?;
             let face = Array3::<f32>::zeros((3, 112, 112));
             let values = encoder.encode(face.view())?.len();
-            let note = if values == 512 { "" } else { ", where the shipped models give 512" };
-            Ok(format!("Loads, and gives {values} values per face{note}."))
+            let note = if values == 512 {
+                ""
+            } else {
+                " (shipped models output 512)"
+            };
+            Ok(format!(
+                "Loaded successfully; outputs {values}-dimensional embeddings{note}."
+            ))
         }
         Kind::Detector => {
             let detector = FaceDetector::new(path, 0.5, "tract", "CPU")?;
             // Any kind but the slim one gives the five points; matched this way
             // so a new detector format needs nothing here.
             Ok(match detector.kind() {
-                DetectorKind::Slim => "Loads as a box-only detector: faces are cropped, not aligned.".into(),
-                _with_points => "Loads, with five face points: faces are aligned by them.".into(),
+                DetectorKind::Slim => {
+                    "Loaded as a box-only detector (faces will be cropped rather than landmark-aligned).".into()
+                }
+                _with_points => "Loaded successfully with 5-point landmark alignment.".into(),
             })
         }
     }
@@ -73,9 +87,15 @@ impl Disk {
     pub fn read(share: &Path, cache: &Path, config: Option<&FaceAuthConfig>) -> Disk {
         let unused = match config {
             Some(config) => model_files::unused_models(share, config).map_err(|e| e.to_string()),
-            None => Err("the settings file doesn't parse, so which models are in use can't be told".into()),
+            None => Err(
+                "the settings file could not be parsed, so active models cannot be determined"
+                    .into(),
+            ),
         };
-        Disk { unused, cache: model_files::dir_size(cache).map_err(|e| e.to_string()) }
+        Disk {
+            unused,
+            cache: model_files::dir_size(cache).map_err(|e| e.to_string()),
+        }
     }
 }
 
@@ -85,7 +105,8 @@ mod tests {
 
     #[test]
     fn disk_lists_spare_models_and_the_cache() {
-        let dir = std::env::temp_dir().join(format!("vinoauthface-settings-disk-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("vinoauthface-settings-disk-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("share")).unwrap();
         std::fs::create_dir_all(dir.join("cache")).unwrap();
@@ -93,7 +114,14 @@ mod tests {
         std::fs::write(dir.join("cache/blob"), [0u8; 7]).unwrap();
         let config = FaceAuthConfig::from_toml("").unwrap();
         let disk = Disk::read(&dir.join("share"), &dir.join("cache"), Some(&config));
-        assert_eq!(disk.unused.unwrap().iter().map(ModelFile::name).collect::<Vec<_>>(), ["spare.onnx"]);
+        assert_eq!(
+            disk.unused
+                .unwrap()
+                .iter()
+                .map(ModelFile::name)
+                .collect::<Vec<_>>(),
+            ["spare.onnx"]
+        );
         assert_eq!(disk.cache, Ok(7));
         let broken = Disk::read(&dir.join("share"), &dir.join("cache"), None);
         assert!(broken.unused.is_err());
@@ -102,13 +130,19 @@ mod tests {
 
     #[test]
     fn a_file_that_isnt_a_model_says_so() {
-        let dir = std::env::temp_dir().join(format!("vinoauthface-settings-check-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "vinoauthface-settings-check-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let junk = dir.join("junk.onnx");
         std::fs::write(&junk, b"not a model").unwrap();
         for kind in [Kind::Encoder, Kind::Detector] {
             assert!(check(kind, junk.to_str().unwrap()).is_err());
-            assert!(check(kind, "/no/such/model.onnx").unwrap_err().to_string().contains("not found"));
+            assert!(check(kind, "/no/such/model.onnx")
+                .unwrap_err()
+                .to_string()
+                .contains("not found"));
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -118,17 +152,20 @@ mod tests {
     fn the_shipped_models_check_out() {
         let encoder = "/usr/local/share/face-auth/w600k_mbf.onnx";
         if std::path::Path::new(encoder).exists() {
-            assert_eq!(check(Kind::Encoder, encoder).unwrap(), "Loads, and gives 512 values per face.");
+            assert_eq!(
+                check(Kind::Encoder, encoder).unwrap(),
+                "Loaded successfully; outputs 512-dimensional embeddings."
+            );
         }
         let detector = "/usr/local/share/face-auth/det_500m.onnx";
         if std::path::Path::new(detector).exists() {
             assert_eq!(
                 check(Kind::Detector, detector).unwrap(),
-                "Loads, with five face points: faces are aligned by them."
+                "Loaded successfully with 5-point landmark alignment."
             );
             // A detector in the recognition slot can load, but doesn't give 512.
             let wrong = check(Kind::Encoder, detector).unwrap_or_else(|e| e.to_string());
-            assert!(!wrong.contains("gives 512 values"), "{wrong}");
+            assert!(!wrong.contains("outputs 512-dimensional"), "{wrong}");
         }
     }
 }

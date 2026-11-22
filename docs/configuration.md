@@ -126,8 +126,8 @@ Both `enroll` and `improve` accept `--user`, `--frames`, `--interval`, `--device
 mismatch and refuses old templates) or after preprocessing pipeline changes. Templates created by
 older versions of this fork or upstream may still work, though re-enrolling is recommended.
 
-Enrolment requires root by design: whoever can write a face template controls which face unlocks the
-account, so a user's own session must not be able to modify templates directly.
+Enrolment requires root because whoever can write a face template controls which face unlocks the
+account; a user's own session must not be able to modify templates directly.
 
 ## Recognition model: mbf vs r50
 
@@ -154,7 +154,7 @@ sudo FACE_AUTH_RECOGNITION_MODEL=r50 ./deploy.sh   # or mbf
 
 **Switching models requires re-enrolling.** Both models output 512-dimensional embeddings, but their
 embedding spaces are incompatible and cannot be compared. Each template file stores the tag of the
-model that created it, and vinoAuthFace refuses to authenticate or run `improve` when the tag does
+model that created it, and vinoAuthFace declines to authenticate or run `improve` when the tag does
 not match the configured model. Legacy template files created before model tagging existed carry no
 tag and are treated as compatible.
 

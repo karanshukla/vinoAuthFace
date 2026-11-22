@@ -15,8 +15,16 @@ const EXAMPLE: &str = include_str!("../../../../config/face-auth.toml.example");
 /// A window over scratch copies of both files: the shipped example as
 /// `/etc/face-auth.toml`, and `user` (if any) as the user's own. No test
 /// reaches pkexec: Apply goes to `runner`.
-fn window(page: Page, name: &str, user: Option<&str>, runner: apply::Runner) -> (SettingsWindow, PathBuf, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("vinoauthface-settings-{}-{name}", std::process::id()));
+fn window(
+    page: Page,
+    name: &str,
+    user: Option<&str>,
+    runner: apply::Runner,
+) -> (SettingsWindow, PathBuf, PathBuf) {
+    let dir = std::env::temp_dir().join(format!(
+        "vinoauthface-settings-{}-{name}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let system = dir.join("face-auth.toml");
@@ -40,9 +48,24 @@ fn window(page: Page, name: &str, user: Option<&str>, runner: apply::Runner) -> 
     w.enrolled = Some(true);
     w.ir_cameras = vec!["/dev/video2".into()];
     w.cameras = vec![
-        Cam { path: "/dev/video2".into(), name: "Integrated IR Camera".into(), ir: true, virtual_: false },
-        Cam { path: "/dev/video0".into(), name: "Integrated Camera".into(), ir: false, virtual_: false },
-        Cam { path: "/dev/video10".into(), name: "Dummy video device".into(), ir: false, virtual_: true },
+        Cam {
+            path: "/dev/video2".into(),
+            name: "Integrated IR Camera".into(),
+            ir: true,
+            virtual_: false,
+        },
+        Cam {
+            path: "/dev/video0".into(),
+            name: "Integrated Camera".into(),
+            ir: false,
+            virtual_: false,
+        },
+        Cam {
+            path: "/dev/video10".into(),
+            name: "Dummy video device".into(),
+            ir: false,
+            virtual_: true,
+        },
     ];
     (w, system, mine)
 }
@@ -64,20 +87,23 @@ fn accept(payload: &str) -> Result<String, String> {
 
 fn harness(w: SettingsWindow, size: [f32; 2], theme: Theme) -> Harness<'static, SettingsWindow> {
     let mut styled = false;
-    let mut h = Harness::builder().with_size(size).with_theme(theme).build_ui_state(
-        move |ui, w: &mut SettingsWindow| {
-            // Fonts set in a frame arrive with the next one, and the window needs its bold.
-            if !styled {
-                theme::apply(ui.ctx());
-                theme::visible_scroll_handles(ui.ctx());
-                styled = true;
-                ui.ctx().request_repaint();
-                return;
-            }
-            w.show(ui);
-        },
-        w,
-    );
+    let mut h = Harness::builder()
+        .with_size(size)
+        .with_theme(theme)
+        .build_ui_state(
+            move |ui, w: &mut SettingsWindow| {
+                // Fonts set in a frame arrive with the next one, and the window needs its bold.
+                if !styled {
+                    theme::apply(ui.ctx());
+                    theme::visible_scroll_handles(ui.ctx());
+                    styled = true;
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                w.show(ui);
+            },
+            w,
+        );
     settle(&mut h);
     h
 }
@@ -123,7 +149,11 @@ fn unnamed_controls(h: &Harness<'_, SettingsWindow>) -> Vec<String> {
         let focusable = node.data().supports_action(accesskit::Action::Focus);
         (focusable || CONTROLS.contains(&node.role())) && !node.is_hidden()
     })
-    .filter(|node: &Node<'_>| node.accesskit_node().label().is_none_or(|label| label.trim().is_empty()))
+    .filter(|node: &Node<'_>| {
+        node.accesskit_node()
+            .label()
+            .is_none_or(|label| label.trim().is_empty())
+    })
     .map(|node| format!("{node:?} at {:?}", node.rect()))
     .collect()
 }
@@ -135,7 +165,11 @@ fn every_control_on_every_page_has_a_name() {
             let (w, _, _) = window(page, "names", Some("threshold = 0.7\n"), refuse);
             let h = harness(w, size, theme);
             let unnamed = unnamed_controls(&h);
-            assert!(unnamed.is_empty(), "{} at {size:?}: unnamed controls {unnamed:#?}", page.title());
+            assert!(
+                unnamed.is_empty(),
+                "{} at {size:?}: unnamed controls {unnamed:#?}",
+                page.title()
+            );
         }
     }
 }
@@ -151,7 +185,12 @@ fn the_pages_are_tabs_and_clicking_one_shows_it() {
         settle(&mut h);
         assert!(h.state().page == page, "{} didn't open", page.title());
         let titles = h.query_all_by_role_and_label(Role::Heading, page.title());
-        assert_eq!(titles.filter(|t| t.accesskit_node().data().level() == Some(1)).count(), 1);
+        assert_eq!(
+            titles
+                .filter(|t| t.accesskit_node().data().level() == Some(1))
+                .count(),
+            1
+        );
     }
 }
 
@@ -161,7 +200,7 @@ fn a_full_screen_window_puts_a_page_s_groups_in_two_columns() {
         (Page::Matching, "Matching", "Scan"),
         (Page::Models, "Recognition", "Disk space"),
         (Page::Security, "When a scan runs", "After failed scans"),
-        (Page::You, "Stricter for you", "Timing for you"),
+        (Page::You, "Stricter thresholds", "Scan timing"),
     ] {
         let (w, _, _) = window(page, "columns", None, refuse);
         let h = harness(w, [1440.0, 900.0], Theme::Light);
@@ -169,7 +208,10 @@ fn a_full_screen_window_puts_a_page_s_groups_in_two_columns() {
             let mut found = h
                 .query_all_by_role_and_label(Role::Heading, label)
                 .filter(|n| n.accesskit_node().data().level() == Some(2));
-            found.next().unwrap_or_else(|| panic!("no group {label}")).rect()
+            found
+                .next()
+                .unwrap_or_else(|| panic!("no group {label}"))
+                .rect()
         };
         let (left, right) = (group(left), group(right));
         assert_eq!(left.top(), right.top(), "{}", page.title());
@@ -211,12 +253,17 @@ fn a_change_for_everyone_waits_for_apply() {
     let (w, system, _) = window(Page::Security, "apply", None, accept);
     ACCEPT_TO.set(system.clone()).unwrap();
     let mut h = harness(w, WIDE, Theme::Light);
-    h.get_by_role_and_label(Role::Switch, "Skip over SSH").click();
+    h.get_by_role_and_label(Role::Switch, "Skip over SSH")
+        .click();
     settle(&mut h);
     assert_eq!(h.state().system.changes(), vec![keys::ABORT_IF_SSH]);
-    h.get_by_label("1 change for everyone on this computer");
-    h.get_by_label("1 change not applied");
-    assert_eq!(std::fs::read_to_string(&system).unwrap(), EXAMPLE, "written before Apply");
+    h.get_by_label("1 system-wide change pending");
+    h.get_by_label("1 unsaved change");
+    assert_eq!(
+        std::fs::read_to_string(&system).unwrap(),
+        EXAMPLE,
+        "written before Apply"
+    );
 
     h.get_by_role_and_label(Role::Button, "Apply…").click();
     until_applied(&mut h);
@@ -226,7 +273,12 @@ fn a_change_for_everyone_waits_for_apply() {
     assert_eq!(base, config_write::fingerprint(EXAMPLE));
     assert!(new.contains("\nguards.abort_if_ssh = false\n"), "{new}");
     // What the helper would accept, and nothing else moved.
-    assert!(config_write::check(Some(EXAMPLE), &sent[0], |_, _| anyhow::bail!("no paths changed")).is_ok());
+    assert!(
+        config_write::check(Some(EXAMPLE), &sent[0], |_, _| anyhow::bail!(
+            "no paths changed"
+        ))
+        .is_ok()
+    );
     assert_eq!(new.lines().count(), EXAMPLE.lines().count());
 
     // Read back from the file the helper wrote.
@@ -240,7 +292,8 @@ fn a_change_for_everyone_waits_for_apply() {
 fn a_refused_apply_keeps_the_changes() {
     let (w, system, _) = window(Page::Matching, "refused", None, refuse);
     let mut h = harness(w, WIDE, Theme::Light);
-    h.state_mut().set(false, keys::THRESHOLD, Some("0.7".into()));
+    h.state_mut()
+        .set(false, keys::THRESHOLD, Some("0.7".into()));
     settle(&mut h);
     h.get_by_role_and_label(Role::Button, "Apply…").click();
     until_applied(&mut h);
@@ -256,7 +309,13 @@ fn discard_puts_everything_back() {
     h.get_by_role_and_label(Role::RadioButton, "Strict").click();
     settle(&mut h);
     assert_eq!(h.state().system.changes(), vec![keys::LIVENESS_PRESET]);
-    assert_eq!(h.state().system.values().liveness_residual_motion_threshold(), 0.3);
+    assert_eq!(
+        h.state()
+            .system
+            .values()
+            .liveness_residual_motion_threshold(),
+        0.3
+    );
     h.get_by_role_and_label(Role::Button, "Discard").click();
     settle(&mut h);
     assert_eq!(h.state().system.changes(), vec![]);
@@ -268,7 +327,8 @@ fn without_the_helper_there_is_no_apply() {
     let (mut w, _, _) = window(Page::Matching, "nohelper", None, refuse);
     w.helper = false;
     let mut h = harness(w, WIDE, Theme::Light);
-    h.state_mut().set(false, keys::THRESHOLD, Some("0.7".into()));
+    h.state_mut()
+        .set(false, keys::THRESHOLD, Some("0.7".into()));
     settle(&mut h);
     let apply = h.get_by_role_and_label(Role::Button, "Apply…");
     assert!(apply.accesskit_node().is_disabled());
@@ -278,21 +338,29 @@ fn without_the_helper_there_is_no_apply() {
 fn your_values_save_to_your_file_at_once() {
     let (w, system, mine) = window(Page::You, "yours", None, refuse);
     let mut h = harness(w, WIDE, Theme::Light);
-    h.get_by_label("This computer's 0.60 applies.");
+    h.get_by_label("Using system setting (0.60).");
     h.state_mut().set(true, keys::THRESHOLD, Some("0.7".into()));
     settle(&mut h);
     assert_eq!(std::fs::read_to_string(&mine).unwrap(), "threshold = 0.7\n");
     assert_eq!(std::fs::read_to_string(&system).unwrap(), EXAMPLE);
-    assert!(h.query_by_role_and_label(Role::Button, "Apply…").is_none(), "nothing for everyone changed");
-    h.get_by_label("This computer: 0.60.");
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Apply…").is_none(),
+        "nothing for everyone changed"
+    );
+    h.get_by_label("System setting: 0.60.");
 }
 
 #[test]
 fn a_looser_value_of_yours_says_it_is_ignored() {
-    let (w, _, _) = window(Page::You, "looser", Some("threshold = 0.5\ndevice = \"/dev/video0\"\n"), refuse);
+    let (w, _, _) = window(
+        Page::You,
+        "looser",
+        Some("threshold = 0.5\ndevice = \"/dev/video0\"\n"),
+        refuse,
+    );
     let h = harness(w, WIDE, Theme::Light);
-    h.get_by_label("Ignored: looser than this computer's 0.60.");
-    h.get_by_label("Ignored: not an IR sensor on this computer.");
+    h.get_by_label("Ignored: looser than the system setting (0.60).");
+    h.get_by_label("Ignored: not a valid IR sensor on this system.");
 }
 
 #[test]
@@ -301,12 +369,20 @@ fn a_new_model_says_everyone_enrols_again() {
     let mut h = harness(w, WIDE, Theme::Light);
     // The detector part of the tag depends on which models are installed here.
     let before = FaceAuthConfig::from_toml(EXAMPLE).unwrap().model_tag();
-    h.get_by_label(&format!("Made with {before}. Other models' templates are refused."));
-    h.state_mut().set(false, keys::MODEL_PATH, Some(keys::string("/usr/local/share/face-auth/mine.onnx")));
+    h.get_by_label(&format!(
+        "Created with {before}. Templates from other models are rejected."
+    ));
+    h.state_mut().set(
+        false,
+        keys::MODEL_PATH,
+        Some(keys::string("/usr/local/share/face-auth/mine.onnx")),
+    );
     settle(&mut h);
     let after = h.state().system.values().model_tag();
     assert!(after.starts_with("mine.onnx"), "{after}");
-    h.get_by_label(&format!("{before} becomes {after}: everyone enrols again after Apply."));
+    h.get_by_label(&format!(
+        "Changing from {before} to {after}. All users must re-enrol after applying."
+    ));
 }
 
 #[test]
@@ -317,25 +393,36 @@ fn the_model_paths_cannot_be_typed_in() {
     for label in ["Recognition model", "Detector model"] {
         h.get_by_role_and_label(Role::TextInput, label).click();
         settle(&mut h);
-        h.get_by_role_and_label(Role::TextInput, label).type_text("/tmp/mine.onnx");
+        h.get_by_role_and_label(Role::TextInput, label)
+            .type_text("/tmp/mine.onnx");
         h.key_press(egui::Key::Enter);
         settle(&mut h);
     }
     assert_eq!(h.state().system.values().model_tag(), before);
-    assert!(h.query_by_role_and_label(Role::Button, "Apply…").is_none(), "nothing changed");
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Apply…").is_none(),
+        "nothing changed"
+    );
 }
 
 #[test]
 fn a_model_path_users_can_write_is_flagged_before_apply() {
     let (w, _, _) = window(Page::Models, "untrusted", None, refuse);
     let mut h = harness(w, WIDE, Theme::Light);
-    let dir = std::env::temp_dir().join(format!("vinoauthface-settings-model-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "vinoauthface-settings-model-{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let model = dir.join("mine.onnx");
     std::fs::write(&model, b"x").unwrap();
-    h.state_mut().set(false, keys::MODEL_PATH, Some(keys::string(&model.display().to_string())));
+    h.state_mut().set(
+        false,
+        keys::MODEL_PATH,
+        Some(keys::string(&model.display().to_string())),
+    );
     settle(&mut h);
-    let flagged = h.query_all_by_label_contains("Apply will refuse this:");
+    let flagged = h.query_all_by_label_contains("Apply will reject this path:");
     assert_eq!(flagged.count(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -343,10 +430,14 @@ fn a_model_path_users_can_write_is_flagged_before_apply() {
 /// Stands in for `pkexec vinoauthface-helper enrol-guided`: one step, then
 /// waits for a line on stdin. Enter saves; "cancel" stops as the CLI does.
 fn fake_enrolment(append: bool) -> std::io::Result<std::process::Child> {
-    let saved = if append { "Added 1 embeddings for 'dev' (11 total)" } else { "Saved 1 embeddings for 'dev'" };
+    let saved = if append {
+        "Added 1 embeddings for 'dev' (11 total)"
+    } else {
+        "Saved 1 embeddings for 'dev'"
+    };
     let script = format!(
         "echo 'step 1/6 straight: Look straight at the camera. (Enter skips)'; echo '  hint too-far: Move closer.'; \
-         read l; if [ \"$l\" = cancel ]; then echo 'Error: enrolment cancelled; nothing was saved' >&2; exit 1; fi; \
+         read l; if [ \"$l\" = cancel ]; then echo 'Error: enrolment cancelled; no templates were saved' >&2; exit 1; fi; \
          echo '  kept 1/2'; echo \"{saved}\""
     );
     std::process::Command::new("sh")
@@ -381,9 +472,10 @@ fn guided_enrolment_shows_each_step_and_its_hint() {
     h.get_by_role_and_label(Role::Button, "Start").click();
     until_shown(&mut h, "Look straight at the camera.");
     until_shown(&mut h, "Move closer.");
-    h.get_by_label("Step 1 of 6, 0 of 2 kept.");
+    h.get_by_label("Step 1 of 6: 0 of 2 templates captured.");
     assert!(unnamed_controls(&h).is_empty());
-    h.get_by_role_and_label(Role::Button, "Skip this step").click();
+    h.get_by_role_and_label(Role::Button, "Skip this step")
+        .click();
     until_shown(&mut h, "Saved 1 embeddings for 'dev'");
     h.get_by_label("Enrolled");
 }
@@ -393,7 +485,8 @@ fn stopping_guided_enrolment_saves_nothing() {
     let (w, _, _) = window(Page::Face, "stop", None, refuse);
     let mut h = harness(w, WIDE, Theme::Light);
     // Enrolled already: adding poses is one click, replacing them two.
-    h.get_by_role_and_label(Role::Button, "Enrol again…").click();
+    h.get_by_role_and_label(Role::Button, "Enrol again…")
+        .click();
     settle(&mut h);
     h.get_by_label("Your current templates will be replaced.");
     h.get_by_role_and_label(Role::Button, "Cancel").click();
@@ -401,14 +494,23 @@ fn stopping_guided_enrolment_saves_nothing() {
     h.get_by_role_and_label(Role::Button, "Add").click();
     until_shown(&mut h, "Look straight at the camera.");
     h.get_by_role_and_label(Role::Button, "Stop").click();
-    until_shown(&mut h, "Stopped. Nothing was saved.");
+    until_shown(&mut h, "Enrolment stopped. No templates were saved.");
 }
 
 #[test]
 fn the_camera_list_puts_ir_sensors_first_and_virtual_ones_last() {
-    let cam = |path: &str, ir, virtual_| Cam { path: path.into(), name: String::new(), ir, virtual_ };
+    let cam = |path: &str, ir, virtual_| Cam {
+        path: path.into(),
+        name: String::new(),
+        ir,
+        virtual_,
+    };
     // Numeric order, as list_video_devices gives it: the loopback is video0.
-    let mut list = vec![cam("/dev/video0", false, true), cam("/dev/video1", false, false), cam("/dev/video2", true, false)];
+    let mut list = vec![
+        cam("/dev/video0", false, true),
+        cam("/dev/video1", false, false),
+        cam("/dev/video2", true, false),
+    ];
     sort_cameras(&mut list, &["/dev/video2".into()]);
     let order: Vec<_> = list.iter().map(|c| c.path.as_str()).collect();
     assert_eq!(order, ["/dev/video2", "/dev/video1", "/dev/video0"]);
@@ -420,16 +522,29 @@ fn auto_detect_names_its_pick_and_a_virtual_camera_is_flagged() {
     let mut h = harness(w, WIDE, Theme::Light);
     // The shipped example sets no device: auto-detect, and what it would pick.
     let shown = |h: &Harness<'_, SettingsWindow>| {
-        h.get_by_role_and_label(Role::ComboBox, "IR camera").accesskit_node().value().map(|v| v.to_string())
+        h.get_by_role_and_label(Role::ComboBox, "IR camera")
+            .accesskit_node()
+            .value()
+            .map(|v| v.to_string())
     };
-    assert_eq!(shown(&h).as_deref(), Some("Auto-detect: Integrated IR Camera (/dev/video2)"));
-    h.state_mut().set(false, keys::DEVICE, Some(keys::string("/dev/video10")));
+    assert_eq!(
+        shown(&h).as_deref(),
+        Some("Auto-detect: Integrated IR Camera (/dev/video2)")
+    );
+    h.state_mut()
+        .set(false, keys::DEVICE, Some(keys::string("/dev/video10")));
     settle(&mut h);
-    assert_eq!(shown(&h).as_deref(), Some("Dummy video device (/dev/video10), virtual"));
-    h.get_by_label("A virtual camera: any program can feed it frames, a photo included. For testing only.");
-    h.state_mut().set(false, keys::DEVICE, Some(keys::string("/dev/video0")));
+    assert_eq!(
+        shown(&h).as_deref(),
+        Some("Dummy video device (/dev/video10), virtual")
+    );
+    h.get_by_label(
+        "Virtual camera: any process can supply frames, including static photos. For testing only.",
+    );
+    h.state_mut()
+        .set(false, keys::DEVICE, Some(keys::string("/dev/video0")));
     settle(&mut h);
-    h.get_by_label("Not an IR sensor: face unlock needs greyscale IR frames.");
+    h.get_by_label("Not an IR sensor. Face unlock requires greyscale infrared frames.");
 }
 
 /// The clean-up verbs the window asked the helper for, across tests.
@@ -447,28 +562,49 @@ const TALL: [f32; 2] = [860.0, 1400.0];
 fn unused_models_are_listed_and_deleting_them_confirms_in_place() {
     let (w, _, _) = window(Page::Models, "unused", None, refuse);
     let mut h = harness(w, TALL, Theme::Light);
-    h.get_by_label("spare.onnx, 1.5 kB. Not the recognition or detector model above.");
-    h.get_by_label("2.5 kB of OpenVINO's compiled models. The next unlock rebuilds it and is slower once; sudo vinoauthface-auth --warm-cache rebuilds it now.");
-    h.get_by_role_and_label(Role::Button, "Delete… the unused models").click();
+    h.get_by_label(
+        "spare.onnx, 1.5 kB. Not configured as the active recognition or detector model.",
+    );
+    h.get_by_label("2.5 kB of compiled OpenVINO models. Clearing slows the next unlock while models recompile; run sudo vinoauthface-auth --warm-cache to rebuild immediately.");
+    h.get_by_role_and_label(Role::Button, "Delete… the unused models")
+        .click();
     settle(&mut h);
-    h.get_by_label("Deletes spare.onnx, 1.5 kB. The shipped ones download again with deploy.sh.");
+    h.get_by_label(
+        "Deletes spare.onnx, 1.5 kB. Shipped models can be re-downloaded with deploy.sh.",
+    );
     assert!(unnamed_controls(&h).is_empty());
     h.get_by_role_and_label(Role::Button, "Cancel").click();
     settle(&mut h);
-    assert!(h.query_by_role_and_label(Role::Button, "Delete").is_none(), "cancelled");
-    assert!(!CLEANED.lock().unwrap().iter().any(|v| v == "delete-unused-models"), "nothing ran on Cancel");
-    h.get_by_role_and_label(Role::Button, "Delete… the unused models").click();
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Delete").is_none(),
+        "cancelled"
+    );
+    assert!(
+        !CLEANED
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|v| v == "delete-unused-models"),
+        "nothing ran on Cancel"
+    );
+    h.get_by_role_and_label(Role::Button, "Delete… the unused models")
+        .click();
     settle(&mut h);
     h.get_by_role_and_label(Role::Button, "Delete").click();
     until_shown(&mut h, "Did delete-unused-models.");
-    assert!(CLEANED.lock().unwrap().iter().any(|v| v == "delete-unused-models"));
+    assert!(CLEANED
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|v| v == "delete-unused-models"));
 }
 
 #[test]
 fn the_compiled_cache_clears_without_a_confirmation() {
     let (w, _, _) = window(Page::Models, "cache", None, refuse);
     let mut h = harness(w, TALL, Theme::Dark);
-    h.get_by_role_and_label(Role::Button, "Clear the compiled cache").click();
+    h.get_by_role_and_label(Role::Button, "Clear the compiled cache")
+        .click();
     until_shown(&mut h, "Did clear-cache.");
     assert!(CLEANED.lock().unwrap().iter().any(|v| v == "clear-cache"));
 }
@@ -486,6 +622,8 @@ fn the_models_in_use_are_never_offered() {
     let mut w = w;
     w.system.reload();
     let h = harness(w, TALL, Theme::Light);
-    h.get_by_label("None: every model here is in use.");
-    assert!(h.query_by_role_and_label(Role::Button, "Delete… the unused models").is_none());
+    h.get_by_label("None. All installed models are currently in use.");
+    assert!(h
+        .query_by_role_and_label(Role::Button, "Delete… the unused models")
+        .is_none());
 }

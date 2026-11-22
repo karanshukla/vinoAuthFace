@@ -76,7 +76,7 @@ impl Tray {
             (None, _) => "No IR camera found".into(),
             (Some(_), Some(true)) => "Face unlock is ready".into(),
             (Some(_), Some(false)) => "No face enrolled yet".into(),
-            (Some(_), None) => "Cannot tell whether a face is enrolled".into(),
+            (Some(_), None) => "Unable to check enrolment status".into(),
         }
     }
 
@@ -126,9 +126,7 @@ impl ksni::Tray for Tray {
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         static ICONS: OnceLock<[Vec<ksni::Icon>; 3]> = OnceLock::new();
-        let [ready, scanning, attention] = ICONS.get_or_init(|| {
-            State::ALL.map(icon::tray_icons)
-        });
+        let [ready, scanning, attention] = ICONS.get_or_init(|| State::ALL.map(icon::tray_icons));
         match self.state() {
             State::Ready => ready.clone(),
             State::Scanning => scanning.clone(),
@@ -190,7 +188,10 @@ pub mod fixtures {
         let mut all = vec![
             ("ready", tray(ready())),
             ("no camera", tray(status(None, Some(true)))),
-            ("not enrolled", tray(status(Some("/dev/video2"), Some(false)))),
+            (
+                "not enrolled",
+                tray(status(Some("/dev/video2"), Some(false))),
+            ),
             ("enrolment unknown", tray(status(Some("/dev/video2"), None))),
         ];
         let mut t = tray(ready());
@@ -205,17 +206,31 @@ pub mod fixtures {
         // Every setting on each of its choices, plus a hand-set value.
         let mut s = ready();
         s.login = Some(LoginMode::Both);
-        s.settings = SETTINGS.iter().map(|x| (x.key.to_string(), x.choices[0].id.to_string())).collect();
+        s.settings = SETTINGS
+            .iter()
+            .map(|x| (x.key.to_string(), x.choices[0].id.to_string()))
+            .collect();
         let mut t = tray(s.clone());
         t.update = Some("v99".into());
         all.push(("settings, update", t));
-        s.settings = SETTINGS.iter().map(|x| (x.key.to_string(), x.choices[x.choices.len() - 1].id.to_string())).collect();
+        s.settings = SETTINGS
+            .iter()
+            .map(|x| {
+                (
+                    x.key.to_string(),
+                    x.choices[x.choices.len() - 1].id.to_string(),
+                )
+            })
+            .collect();
         s.backend = "OpenVINO (NPU)".into();
         let mut t = tray(s.clone());
         t.update = Some("v99".into());
         t.idle_minutes = 7;
         all.push(("other choices, OpenVINO update", t));
-        s.settings = SETTINGS.iter().map(|x| (x.key.to_string(), "custom".to_string())).collect();
+        s.settings = SETTINGS
+            .iter()
+            .map(|x| (x.key.to_string(), "custom".to_string()))
+            .collect();
         all.push(("hand-set values", tray(s)));
         all
     }
@@ -243,7 +258,10 @@ mod tests {
         let mut seen: Vec<(String, String)> = Vec::new();
         for (name, t) in situations().into_iter().take(6) {
             let tip = t.tool_tip();
-            assert!(!tip.description.trim().is_empty(), "{name} has no tooltip text");
+            assert!(
+                !tip.description.trim().is_empty(),
+                "{name} has no tooltip text"
+            );
             assert_eq!(tip.description, t.summary());
             if let Some((other, _)) = seen.iter().find(|(_, d)| *d == tip.description) {
                 panic!("{name} and {other} both read {:?}", tip.description);

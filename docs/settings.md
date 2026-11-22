@@ -41,7 +41,7 @@ run `uninstall.sh` to remove it.
 | **Camera** | `device`, `bind_camera`, and removing an existing camera pin |
 | **Models** | `model_path`, `detector_model_path`, `backend`, `npu_device`, plus [model and cache cleanup](#disk-space) |
 | **Security** | `guards.*`, `lockout.*`, `seal_embeddings`, `embeddings_dir`, `update_check` |
-| **Just you** | Per-user `~/.config/face-auth.toml`: stricter thresholds, scan timing, IR camera override, and `tray_idle_minutes` |
+| **Personal** | Per-user `~/.config/face-auth.toml`: stricter thresholds, scan timing, IR camera override, and `tray_idle_minutes` |
 | **About** | Installed version, manual **Check for updates**, and links to vinopilot.ca and other vinoPilot apps |
 
 On the **About** page, nothing contacts the network until you click **Check for updates**. When a
@@ -55,7 +55,7 @@ Every configuration key is documented in [configuration.md](configuration.md) an
 
 ## Saving
 
-Changes on the **Just you** page save immediately to `~/.config/face-auth.toml`. Any threshold
+Changes on the **Personal** page save immediately to `~/.config/face-auth.toml`. Any threshold
 looser than the system configuration is labelled "Ignored" because PAM authentication disregards it.
 
 Changes on all other pages apply system-wide and wait until you click **Apply…** (one administrator
@@ -129,7 +129,7 @@ The bottom section of the **Models** page summarizes disk usage and lets you rec
   size. Unused files accumulate when switching between shipped models (`deploy.sh` leaves older
   models on disk) or after testing custom models. Clicking **Delete…** then **Delete** runs
   `pkexec /usr/local/libexec/vinoauthface-helper delete-unused-models` (`auth_admin`). The helper
-  accepts no file paths—it computes the unused set itself from `/etc/face-auth.toml`, deletes only
+  accepts no file paths; it computes the unused set itself from `/etc/face-auth.toml`, deletes only
   regular files directly inside `/usr/local/share/face-auth` (skipping symlinks and keeping active
   models wherever they point), and deletes nothing if the config fails to load. `deploy.sh` will
   re-download a shipped model automatically if you switch back later.

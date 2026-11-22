@@ -24,7 +24,8 @@ fn main() {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let pkexec_uid = std::env::var("PKEXEC_UID").ok();
-    let (verb, uid) = helper::parse_request(&args, pkexec_uid.as_deref()).unwrap_or_else(|e| die(&e));
+    let (verb, uid) =
+        helper::parse_request(&args, pkexec_uid.as_deref()).unwrap_or_else(|e| die(&e));
 
     // By user ID, then back by name: the name becomes a path component under
     // the template store, so it goes through the same validation vinoauthface enroll
@@ -61,8 +62,12 @@ fn main() {
 fn write_config() -> ! {
     let mut payload = String::new();
     let limit = config_write::MAX_CONFIG_BYTES as u64 + 1024;
-    if std::io::stdin().take(limit).read_to_string(&mut payload).is_err() {
-        die("the new settings are not text");
+    if std::io::stdin()
+        .take(limit)
+        .read_to_string(&mut payload)
+        .is_err()
+    {
+        die("the new settings payload is not valid UTF-8 text");
     }
     let path = std::path::Path::new(SYSTEM_CONFIG_PATH);
     let current = match std::fs::read_to_string(path) {
@@ -84,8 +89,11 @@ fn write_config() -> ! {
 /// worked out here. A config that doesn't load deletes nothing: which models
 /// are in use can't be told.
 fn delete_unused_models() -> ! {
-    let config = FaceAuthConfig::load_system()
-        .unwrap_or_else(|e| die(&format!("nothing deleted: {SYSTEM_CONFIG_PATH} doesn't load: {e:#}")));
+    let config = FaceAuthConfig::load_system().unwrap_or_else(|e| {
+        die(&format!(
+            "nothing deleted: could not load {SYSTEM_CONFIG_PATH}: {e:#}"
+        ))
+    });
     let deleted = model_files::delete_unused_models(std::path::Path::new(SHARE_DIR), &config)
         .unwrap_or_else(|e| die(&format!("cannot delete from {SHARE_DIR}: {e}")));
     if deleted.is_empty() {
@@ -102,6 +110,6 @@ fn delete_unused_models() -> ! {
 fn clear_cache() -> ! {
     let freed = model_files::clear_dir(std::path::Path::new(CACHE_DIR))
         .unwrap_or_else(|e| die(&format!("cannot clear {CACHE_DIR}: {e}")));
-    println!("Cleared the compiled cache, {}.", human_size(freed));
+    println!("Cleared the compiled cache ({}).", human_size(freed));
     std::process::exit(0)
 }
