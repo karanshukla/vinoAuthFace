@@ -2,7 +2,7 @@
 Type=Application
 Name=vinoAuthFace
 GenericName=Face unlock
-Comment=Face unlock status, enrolment and test scans
+Comment=Face unlock status, enrolment, and test scans
 Exec=/usr/local/bin/vinoauthface-tray
 Icon=vinoauthface
 Terminal=false

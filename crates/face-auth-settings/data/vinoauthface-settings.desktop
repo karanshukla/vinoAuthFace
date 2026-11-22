@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=vinoAuthFace settings
-Comment=Matching, liveness, camera, models and security for face unlock
+Name=vinoAuthFace Settings
+Comment=Configure matching, liveness, camera, models, and security for face unlock
 Exec=vinoauthface-settings
 Icon=vinoauthface
 Terminal=false

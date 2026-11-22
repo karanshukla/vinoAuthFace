@@ -90,7 +90,7 @@ unreleased changes.
 `deploy.sh` handles two phases: installing files, and then running `setup.sh` to wire them into the
 system. The second phase is also installed as `vinoauthface-setup`. Run `sudo vinoauthface-setup` if
 a distro or `authselect` update resets `/etc/pam.d`, or after installing a new lock screen. It
-accepts `--login=off|both|face` and refuses to run if vinoAuthFace is not installed.
+accepts `--login=off|both|face` and exits with an error if vinoAuthFace is not installed.
 
 ### How binaries are selected
 

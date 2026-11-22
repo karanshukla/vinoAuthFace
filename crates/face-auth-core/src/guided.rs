@@ -62,7 +62,14 @@ pub enum Step {
 }
 
 impl Step {
-    pub const ALL: [Step; 6] = [Step::Straight, Step::Side, Step::OtherSide, Step::Up, Step::Down, Step::Glasses];
+    pub const ALL: [Step; 6] = [
+        Step::Straight,
+        Step::Side,
+        Step::OtherSide,
+        Step::Up,
+        Step::Down,
+        Step::Glasses,
+    ];
 
     /// The word `vinoauthface enroll --guided` prints for it.
     pub fn id(self) -> &'static str {
@@ -83,11 +90,11 @@ impl Step {
     pub fn prompt(self) -> &'static str {
         match self {
             Step::Straight => "Look straight at the camera.",
-            Step::Side => "Turn your head a little to one side.",
-            Step::OtherSide => "Now a little to the other side.",
-            Step::Up => "Tilt your chin up a little.",
-            Step::Down => "Now tilt it down a little.",
-            Step::Glasses => "Take your glasses off, or put them on. Skip if you wear none.",
+            Step::Side => "Turn your head slightly to one side.",
+            Step::OtherSide => "Turn your head slightly to the other side.",
+            Step::Up => "Tilt your chin slightly up.",
+            Step::Down => "Tilt your chin slightly down.",
+            Step::Glasses => "Remove or put on your glasses. Skip if you do not wear glasses.",
         }
     }
 
@@ -159,16 +166,16 @@ impl Hint {
 
     pub fn text(self) -> &'static str {
         match self {
-            Hint::NoContent => "Nothing in view. Is the IR emitter on?",
-            Hint::NoFace => "No face in view.",
+            Hint::NoContent => "No image detected. Check that the IR emitter is on.",
+            Hint::NoFace => "No face detected.",
             Hint::TooFar => "Move closer.",
             Hint::LookAtCamera => "Look at the camera.",
-            Hint::TurnMore => "Turn a little further.",
-            Hint::TurnLess => "Not so far.",
-            Hint::OtherWay => "The other way.",
-            Hint::TiltMore => "Tilt a little further.",
-            Hint::TiltLess => "Not so far.",
-            Hint::Same => "Move a little.",
+            Hint::TurnMore => "Turn slightly further.",
+            Hint::TurnLess => "Turn back slightly.",
+            Hint::OtherWay => "Move in the opposite direction.",
+            Hint::TiltMore => "Tilt slightly further.",
+            Hint::TiltLess => "Tilt back slightly.",
+            Hint::Same => "Move slightly to capture a different angle.",
             Hint::Waiting => "Get ready…",
             Hint::Hold => "Hold still.",
         }
@@ -178,9 +185,16 @@ impl Hint {
 #[derive(Debug, Clone)]
 pub enum GuidedProgress {
     /// Step `index` (from 1) of `total` begins.
-    Step { index: usize, total: usize, step: Step },
+    Step {
+        index: usize,
+        total: usize,
+        step: Step,
+    },
     Hint(Hint),
-    Kept { kept: usize, wanted: usize },
+    Kept {
+        kept: usize,
+        wanted: usize,
+    },
     /// The step ended with nothing kept: skipped, or it timed out.
     Skipped(Step),
 }
@@ -198,7 +212,7 @@ pub struct Cancelled;
 
 impl std::fmt::Display for Cancelled {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("enrolment cancelled; nothing was saved")
+        f.write_str("enrolment cancelled; no templates were saved")
     }
 }
 
@@ -234,7 +248,11 @@ pub fn pose(face: &FaceBox, width: u32, height: u32) -> Option<Pose> {
     // `tests::a_rolled_head_reads_as_upright`).
     let yaw = (nose.0 * along.0 + nose.1 * along.1) / (eyes_px * eyes_px);
     let pitch = (nose.0 * down.0 + nose.1 * down.1) / (down_len * down_len);
-    Some(Pose { yaw, pitch, eyes_px })
+    Some(Pose {
+        yaw,
+        pitch,
+        eyes_px,
+    })
 }
 
 /// The user's own straight-on pose, and which way their first turn and tilt went.
@@ -287,7 +305,11 @@ pub fn fit(step: Step, pose: Pose, base: &Baseline) -> Result<(), Hint> {
             Ok(())
         }
         Step::Side | Step::OtherSide => {
-            let want = if step == Step::Side { base.side } else { -base.side };
+            let want = if step == Step::Side {
+                base.side
+            } else {
+                -base.side
+            };
             if want != 0.0 && turned.signum() != want && turned.abs() >= *TURN.start() {
                 return Err(Hint::OtherWay);
             }
@@ -297,7 +319,11 @@ pub fn fit(step: Step, pose: Pose, base: &Baseline) -> Result<(), Hint> {
             if turned.abs() > TILT_YAW {
                 return Err(Hint::LookAtCamera);
             }
-            let want = if step == Step::Up { base.tilt } else { -base.tilt };
+            let want = if step == Step::Up {
+                base.tilt
+            } else {
+                -base.tilt
+            };
             if want != 0.0 && tilted.signum() != want && tilted.abs() >= *TILT.start() {
                 return Err(Hint::OtherWay);
             }
@@ -337,14 +363,18 @@ impl FaceAuth {
     ) -> Result<Vec<Vec<f32>>> {
         if self.detector.kind() == DetectorKind::Slim {
             bail!(
-                "guided enrolment needs a detector with the five face points, such as SCRFD (det_500m.onnx); \
-                 this one gives a box only"
+                "guided enrolment requires a five-point landmark detector such as SCRFD (det_500m.onnx); \
+                 the configured detector outputs bounding boxes only"
             );
         }
         let mut kept: Vec<Vec<f32>> = Vec::new();
         let mut base = Baseline::default();
         for (i, step) in Step::ALL.into_iter().enumerate() {
-            progress(GuidedProgress::Step { index: i + 1, total: Step::ALL.len(), step });
+            progress(GuidedProgress::Step {
+                index: i + 1,
+                total: Step::ALL.len(),
+                step,
+            });
             let mut hint = None;
             let start = Instant::now();
             let mut skipped = false;
@@ -376,7 +406,10 @@ impl FaceAuth {
                         kept.push(embedding);
                         this_step += 1;
                         hint = None;
-                        progress(GuidedProgress::Kept { kept: this_step, wanted: step.wanted() });
+                        progress(GuidedProgress::Kept {
+                            kept: this_step,
+                            wanted: step.wanted(),
+                        });
                     }
                     Err(h) => {
                         say(&mut hint, h, progress);
@@ -387,7 +420,10 @@ impl FaceAuth {
             if this_step == 0 {
                 progress(GuidedProgress::Skipped(step));
                 if step == Step::Straight {
-                    bail!("no straight-on frame in {} s, so nothing else can be measured", STEP_TIMEOUT.as_secs());
+                    bail!(
+                        "no straight-on frame captured within {} s; cannot measure remaining poses",
+                        STEP_TIMEOUT.as_secs()
+                    );
                 }
             }
         }
@@ -468,10 +504,23 @@ mod tests {
     #[test]
     fn pose_reads_the_landmarks() {
         let p = at(0.0, 0.0);
-        assert!(p.yaw.abs() < 1e-6 && (p.pitch - 0.5).abs() < 1e-6 && (p.eyes_px - 80.0).abs() < 1e-3, "{p:?}");
+        assert!(
+            p.yaw.abs() < 1e-6 && (p.pitch - 0.5).abs() < 1e-6 && (p.eyes_px - 80.0).abs() < 1e-3,
+            "{p:?}"
+        );
         assert!((at(16.0, 0.0).yaw - 0.2).abs() < 1e-5);
         assert!((at(0.0, 8.0).pitch - 0.6).abs() < 1e-5);
-        assert_eq!(pose(&FaceBox { landmarks: None, ..face(0.0, 0.0) }, 360, 360), None);
+        assert_eq!(
+            pose(
+                &FaceBox {
+                    landmarks: None,
+                    ..face(0.0, 0.0)
+                },
+                360,
+                360
+            ),
+            None
+        );
     }
 
     #[test]
@@ -479,12 +528,18 @@ mod tests {
         let (s, c) = (30f32.to_radians().sin(), 30f32.to_radians().cos());
         let rot = |(x, y): (f32, f32)| {
             let (x, y) = (x * 360.0 - 180.0, y * 360.0 - 190.0);
-            ((x * c - y * s + 180.0) / 360.0, (x * s + y * c + 190.0) / 360.0)
+            (
+                (x * c - y * s + 180.0) / 360.0,
+                (x * s + y * c + 190.0) / 360.0,
+            )
         };
         let mut rolled = face(16.0, 8.0);
         rolled.landmarks = rolled.landmarks.map(|p| p.map(rot));
         let p = pose(&rolled, 360, 360).unwrap();
-        assert!((p.yaw - 0.2).abs() < 1e-4 && (p.pitch - 0.6).abs() < 1e-4, "{p:?}");
+        assert!(
+            (p.yaw - 0.2).abs() < 1e-4 && (p.pitch - 0.6).abs() < 1e-4,
+            "{p:?}"
+        );
     }
 
     fn straight() -> Baseline {
@@ -497,21 +552,39 @@ mod tests {
     fn straight_on_means_the_nose_between_the_eyes() {
         let base = Baseline::default();
         assert_eq!(fit(Step::Straight, at(2.0, 3.0), &base), Ok(()));
-        assert_eq!(fit(Step::Straight, at(16.0, 0.0), &base), Err(Hint::LookAtCamera));
-        assert_eq!(fit(Step::Glasses, at(-16.0, 0.0), &base), Err(Hint::LookAtCamera));
+        assert_eq!(
+            fit(Step::Straight, at(16.0, 0.0), &base),
+            Err(Hint::LookAtCamera)
+        );
+        assert_eq!(
+            fit(Step::Glasses, at(-16.0, 0.0), &base),
+            Err(Hint::LookAtCamera)
+        );
     }
 
     #[test]
     fn a_nose_above_the_eyes_or_below_the_mouth_is_not_looking_at_the_camera() {
         let base = Baseline::default();
-        assert_eq!(fit(Step::Straight, at(0.0, -32.0), &base), Err(Hint::LookAtCamera));
-        assert_eq!(fit(Step::Straight, at(0.0, 32.0), &base), Err(Hint::LookAtCamera));
+        assert_eq!(
+            fit(Step::Straight, at(0.0, -32.0), &base),
+            Err(Hint::LookAtCamera)
+        );
+        assert_eq!(
+            fit(Step::Straight, at(0.0, 32.0), &base),
+            Err(Hint::LookAtCamera)
+        );
     }
 
     #[test]
     fn a_face_too_far_away_is_not_kept() {
-        let small = Pose { eyes_px: MIN_EYES_PX - 1.0, ..at(0.0, 0.0) };
-        assert_eq!(fit(Step::Straight, small, &Baseline::default()), Err(Hint::TooFar));
+        let small = Pose {
+            eyes_px: MIN_EYES_PX - 1.0,
+            ..at(0.0, 0.0)
+        };
+        assert_eq!(
+            fit(Step::Straight, small, &Baseline::default()),
+            Err(Hint::TooFar)
+        );
     }
 
     #[test]
@@ -522,7 +595,10 @@ mod tests {
         assert_eq!(fit(Step::Side, at(-16.0, 0.0), &base), Ok(()));
         assert_eq!(fit(Step::Side, at(16.0, 0.0), &base), Ok(()));
         base.record(Step::Side, at(-16.0, 0.0));
-        assert_eq!(fit(Step::OtherSide, at(-16.0, 0.0), &base), Err(Hint::OtherWay));
+        assert_eq!(
+            fit(Step::OtherSide, at(-16.0, 0.0), &base),
+            Err(Hint::OtherWay)
+        );
         assert_eq!(fit(Step::OtherSide, at(16.0, 0.0), &base), Ok(()));
     }
 
@@ -541,7 +617,10 @@ mod tests {
         assert_eq!(fit(Step::Up, at(0.0, 6.0), &base), Err(Hint::TiltMore));
         assert_eq!(fit(Step::Up, at(0.0, -2.0), &base), Ok(()));
         assert_eq!(fit(Step::Up, at(0.0, -30.0), &base), Err(Hint::TiltLess));
-        assert_eq!(fit(Step::Up, at(16.0, -2.0), &base), Err(Hint::LookAtCamera));
+        assert_eq!(
+            fit(Step::Up, at(16.0, -2.0), &base),
+            Err(Hint::LookAtCamera)
+        );
         base.record(Step::Up, at(0.0, -2.0));
         assert_eq!(fit(Step::Down, at(0.0, -2.0), &base), Err(Hint::OtherWay));
         assert_eq!(fit(Step::Down, at(0.0, 14.0), &base), Ok(()));

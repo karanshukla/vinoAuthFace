@@ -167,8 +167,8 @@ shown. At the login screen, it runs as the `greeter` user rather than the target
 ## Vendor-only services
 
 On image-based distributions, KDE and COSMIC PAM files often exist only as vendor defaults under
-`/usr/lib/pam.d`. On openSUSE (Tumbleweed, Leap 16, Aeon, MicroOS), all PAM services—including
-`sudo`—ship in `/usr/lib/pam.d`.
+`/usr/lib/pam.d`. On openSUSE (Tumbleweed, Leap 16, Aeon, MicroOS), all PAM services, including
+`sudo`, ship in `/usr/lib/pam.d`.
 
 For any supported service that only exists in `/usr/lib/pam.d`, `deploy.sh` copies the vendor file
 to `/etc/pam.d` before patching it (the same mechanism used for `polkit-1`). `uninstall.sh` removes

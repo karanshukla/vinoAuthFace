@@ -56,7 +56,7 @@ sudo vinoauthface-auth --warm-cache
 
 ## "reports pixel format ... expected GREY, YUYV or Y16"
 
-The configured device is not an IR capture node—it is either a standard RGB webcam or the metadata
+The configured device is not an IR capture node; it is either a standard RGB webcam or the metadata
 node paired with the real IR capture node. Unset `device` in `/etc/face-auth.toml` to let
 auto-detection choose, or inspect your nodes with `vinoauthface-camera-diag list`.
 
