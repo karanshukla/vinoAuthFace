@@ -6,9 +6,11 @@ nav_order: 12
 # Packages (deb, rpm)
 
 `release.yml` builds `.deb` and `.rpm` packages on every tag and attaches them to the GitHub release, with
-their checksums in `SHA256SUMS`. Install one with `sudo apt install ./vinoauthface_16.0.0_amd64.deb` or
-`sudo dnf install ./vinoauthface-16.0.0-1.x86_64.rpm` (add the `-tray` and `-settings` files for the
-tray and the settings window; the tray package needs the same version of the core one). There is no apt or
+their checksums in `SHA256SUMS`. Install one with `sudo apt install ./vinoauthface-x86_64.deb` or
+`sudo dnf install ./vinoauthface-x86_64.rpm` (add the `-tray` and `-settings` files for the tray and the
+settings window; each needs the same version of the one before it). The names carry no version, so
+`releases/latest/download/<name>` always works; the version is inside the package. [vinoPilot](https://github.com/karanshukla/vinoPilot)
+installs and updates them this way (`vinopilot install vinoauthface --via deb`, or `--via rpm`), checking each against `SHA256SUMS`. There is no apt or
 dnf repository yet, so updating means downloading the next release's files.
 
 `packaging/build.sh` builds them with [nfpm](https://nfpm.goreleaser.com):
@@ -39,7 +41,9 @@ script runs as root with no user session, so it can neither show a GUI nor ask. 
 
 For headless installs and testing, `touch /etc/vinoauthface-auto-setup` (or `VINOAUTHFACE_AUTO_SETUP=1`)
 before installing makes the post-install script fetch the models and run `vinoauthface-setup`; a failure
-never fails the install. Removing the package strips the PAM lines it added; upgrading leaves them.
+never fails the install. Removing the package strips the PAM lines it added, deletes the downloaded models and the compiled cache,
+and unloads the SELinux module `vinoauthface-setup` loaded; the face templates and `/etc/face-auth.toml` stay,
+as with `uninstall.sh` without `--purge`. Upgrading leaves all of it.
 
 `vinoauthface-upgrade` in a package only says to use the package manager; `installed-from` reads `package`.
 

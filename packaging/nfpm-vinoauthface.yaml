@@ -26,6 +26,7 @@ scripts:
   preinstall: scripts/preinstall.sh
   postinstall: scripts/postinstall.sh
   preremove: scripts/preremove.sh
+  postremove: scripts/postremove.sh
 contents:
   # Set-group-ID: lock screens run PAM as the user, and the group is what lets
   # this binary (and nothing else) read the template store.

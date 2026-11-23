@@ -12,10 +12,10 @@ TAG="${1:?usage: smoke-test.sh TAG [DIR]}"
 cd "${2:-$(dirname "$(readlink -f "$0")")/dist}"
 
 test "$(find . -maxdepth 1 -type f | wc -l)" = 6
-core_deb=(vinoauthface_*_amd64.deb)
-tray_deb=(vinoauthface-tray_*_amd64.deb)
-core_rpm=(vinoauthface-[0-9]*.x86_64.rpm)
-tray_rpm=(vinoauthface-tray-[0-9]*.x86_64.rpm)
+core_deb=(vinoauthface-x86_64.deb)
+tray_deb=(vinoauthface-tray-x86_64.deb)
+core_rpm=(vinoauthface-x86_64.rpm)
+tray_rpm=(vinoauthface-tray-x86_64.rpm)
 
 dpkg-deb -c "${core_deb[0]}" | grep -E '^-rwxr-sr-x root/face-auth .* \./usr/bin/vinoauthface-auth$' >/dev/null
 
@@ -29,13 +29,17 @@ for deb in *.deb; do
 done
 # The binaries themselves: only the paths this project installs to matter, not strings from a
 # dependency. The PAM binary and helper pin the install paths, so those must be /usr ones.
-for bin in "$work"/vinoauthface_*/usr/bin/vinoauthface-auth "$work"/vinoauthface-tray_*/usr/libexec/vinoauthface-helper; do
+for bin in "$work/vinoauthface-x86_64/usr/bin/vinoauthface-auth" "$work/vinoauthface-tray-x86_64/usr/libexec/vinoauthface-helper"; do
     if strings "$bin" | grep -E '/usr/local/(bin/vinoauthface|libexec/vinoauthface|share/face-auth|lib/face-auth)'; then
         echo "$bin: names the /usr/local install paths" >&2; exit 1
     fi
 done
 
 core="$work/${core_deb[0]%.deb}"
+# The unversioned file names are what vinoPilot fetches: all six must be there.
+for name in vinoauthface vinoauthface-tray vinoauthface-settings; do
+    test -f "$name-x86_64.deb" && test -f "$name-x86_64.rpm"
+done
 "$core/usr/bin/vinoauthface" --version | tee /dev/stderr | grep -qF " $TAG"
 rc=0
 env -i "$core/usr/bin/vinoauthface-auth" || rc=$?

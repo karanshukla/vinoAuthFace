@@ -3,7 +3,7 @@
 #
 #   packaging/build.sh [VERSION]        # VERSION defaults to the nearest tag, or dev
 #
-# Output: packaging/dist/*.deb *.rpm. Needs: cargo, the musl target, musl-tools,
+# Output: packaging/dist/<name>-x86_64.deb and .rpm, for vinoauthface, -tray and -settings. Needs: cargo, the musl target, musl-tools,
 # cmake, and nfpm (https://nfpm.goreleaser.com) on PATH.
 #
 # Everything installs under /usr (VINOAUTHFACE_PREFIX, read by
@@ -72,9 +72,12 @@ chmod 644 "$STAGE"/data/* "$STAGE"/share/installed-from "$STAGE"/share/face-auth
 
 # nfpm resolves src: and scripts: against its working directory.
 cd packaging
-for conf in nfpm-vinoauthface.yaml nfpm-vinoauthface-tray.yaml nfpm-vinoauthface-settings.yaml; do
+# Unversioned file names (vinoauthface-x86_64.deb), like every other release asset, so
+# releases/latest/download/<name> keeps working: vinoPilot fetches them that way. The
+# version is in the package itself.
+for name in vinoauthface vinoauthface-tray vinoauthface-settings; do
     for fmt in deb rpm; do
-        nfpm package --config "$conf" --packager "$fmt" --target dist/
+        nfpm package --config "nfpm-$name.yaml" --packager "$fmt" --target "dist/$name-x86_64.$fmt"
     done
 done
 cd ..
