@@ -45,8 +45,9 @@ install -m755 "$M/vinoauthface-auth" "$M/vinoauthface" "$G/vinoauthface-tray" "$
 install -m755 "$M/vinoauthface-unseal" "$G/vinoauthface-helper" "$STAGE/libexec/"
 install -m755 packaging/vinoauthface-upgrade packaging/vinoauthface-fetch-models "$STAGE/bin/"
 # The release binaries must carry the package's paths, not deploy.sh's.
-if strings "$STAGE/bin/vinoauthface-auth" | grep -q '/usr/local/'; then
-    echo "build: vinoauthface-auth still names /usr/local" >&2; exit 1
+# Not `grep -q`: it exits early, and under pipefail the pipeline would report strings' SIGPIPE.
+if strings "$STAGE/bin/vinoauthface-auth" | grep -E '/usr/local/(bin/vinoauthface|libexec/vinoauthface|share/face-auth|lib/face-auth)' >/dev/null; then
+    echo "build: vinoauthface-auth still names the /usr/local install paths" >&2; exit 1
 fi
 
 # Scripts, policy and desktop files: deploy.sh's, repathed.
@@ -54,7 +55,10 @@ rewrite() { sed 's#/usr/local#/usr#g' "$1" > "$2"; }
 rewrite setup.sh "$STAGE/share/setup.sh"
 rewrite login-mode.sh "$STAGE/share/login-mode.sh"
 rewrite setting-mode.sh "$STAGE/share/setting-mode.sh"
-cp selinux/face-auth.te selinux/face-auth.fc config/models.sha256 "$STAGE/share/"
+# The file-context line labels the unseal helper by path, so it has to name the packaged one.
+rewrite selinux/face-auth.te "$STAGE/share/face-auth.te"
+rewrite selinux/face-auth.fc "$STAGE/share/face-auth.fc"
+cp config/models.sha256 "$STAGE/share/"
 rewrite config/face-auth.toml.example "$STAGE/data/face-auth.toml"
 for f in crates/face-auth-tray/data/*.policy crates/face-auth-tray/data/*.desktop crates/face-auth-settings/data/*.desktop; do
     rewrite "$f" "$STAGE/data/$(basename "$f")"

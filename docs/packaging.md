@@ -5,7 +5,13 @@ nav_order: 12
 
 # Packages (deb, rpm)
 
-`packaging/build.sh` builds `.deb` and `.rpm` packages with [nfpm](https://nfpm.goreleaser.com):
+`release.yml` builds `.deb` and `.rpm` packages on every tag and attaches them to the GitHub release, with
+their checksums in `SHA256SUMS`. Install one with `sudo apt install ./vinoauthface_16.0.0_amd64.deb` or
+`sudo dnf install ./vinoauthface-16.0.0-1.x86_64.rpm` (add the `-tray` and `-settings` files for the
+tray and the settings window; the tray package needs the same version of the core one). There is no apt or
+dnf repository yet, so updating means downloading the next release's files.
+
+`packaging/build.sh` builds them with [nfpm](https://nfpm.goreleaser.com):
 
 | Package | Contents |
 |---|---|
@@ -36,3 +42,13 @@ before installing makes the post-install script fetch the models and run `vinoau
 never fails the install. Removing the package strips the PAM lines it added; upgrading leaves them.
 
 `vinoauthface-upgrade` in a package only says to use the package manager; `installed-from` reads `package`.
+
+## Building and checking locally
+
+`packaging/build.sh [VERSION]` needs `cargo`, the musl target, `musl-tools`, `cmake` and `nfpm` on `PATH`, and
+writes `packaging/dist/`. `packaging/smoke-test.sh VERSION` is what the release job runs on the result; it
+needs `dpkg-deb`, and `rpm` for the rpm checks. The release job installs nfpm pinned by version and SHA-256.
+Dev builds (a run that is not a tag) are versioned `0~dev`.
+
+The SELinux sources are copied with `/usr/local` rewritten to `/usr` like the scripts: the file-context line
+labels the unseal helper by path, so a copy that still named `/usr/local/libexec` would never label it.

@@ -17,7 +17,7 @@ scripts/release.sh             # from an up-to-date main: tag origin/main's head
 Pushing the tag runs `release.yml`, which builds the static musl binaries and the glibc settings
 window with `VINOAUTHFACE_VERSION` set to the tag (shown by `vinoauthface --version` and `doctor`;
 local builds say `dev`) and publishes them as a GitHub release with generated notes, beside the
-source bundle, `install.sh` and `SHA256SUMS`. The README's one-line install fetches
+source bundle, `install.sh`, the deb and rpm packages ([packages](packaging.md)) and `SHA256SUMS`. The README's one-line install fetches
 `releases/latest/download/install.sh`, so a release is what it installs. v2 onwards are full
 releases, so GitHub's "latest" and the repo sidebar point at the newest one (earlier tags were
 pre-releases). `deploy.sh` asks the API for the newest release of any kind, so it works either way.
