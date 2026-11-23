@@ -7,31 +7,41 @@ permalink: /
 
 # vinoAuthFace
 
-**Windows Hello-style face unlock for Linux, through PAM and an IR camera.** Works on immutable
-distros (Bazzite, Bluefin, Fedora Silverblue, Fedora Kinoite) with no system packages, daemons or
-layering.
+**Windows Hello-style face unlock for Linux using PAM and an IR camera.** It works on immutable
+distros (Bazzite, Bluefin, Fedora Silverblue, Fedora Kinoite) without layering system packages or
+running background daemons.
 
-- Face unlock for **sudo, polkit prompts, and the GNOME, KDE and Sway lock screens**
-- About 2 seconds from camera poll to authenticated
-- A static musl binary: no daemon, no systemd units, no D-Bus
-- Everything lives in `/usr/local`, `/etc` and `/var/lib`
-- Optional OpenVINO backend for Intel NPUs
+- Unlocks **`sudo`, polkit prompts, and GNOME, KDE, COSMIC, Sway, and Hyprland lock screens**
+- Authenticates in about 2 seconds from camera poll to unlock
+- Ships as a static musl binary with no daemon, systemd units, or D-Bus service
+- Keeps all installed files in `/usr/local`, `/etc`, and `/var/lib`
+- Supports an optional OpenVINO backend for Intel NPUs
 
-> Face unlock here is a convenience over a password you still have, not a stronger factor. Phone
-> screens don't fool the IR sensor, but a printed IR photo moved by hand can, and that's an
-> accepted risk. See [the security model](security.md).
+> Face unlock is intended as a convenient alternative to typing your password, with your password
+> remaining available as a fallback. Active near-IR cameras reject phone screens and ordinary
+> printed photos; in testing, printed photos of the enrolled user scored well below the match
+> threshold. Only sophisticated physical attacks such as a realistic 3D mask remain out of scope,
+> and they are unlikely in practice. See [the security model](security.md) for details.
 
 ## Start here
 
-You need an IR camera on `uvcvideo`; [check yours](hardware.md) first. Then:
+You need a Windows Hello-style IR camera supported by `uvcvideo`; [check your hardware](hardware.md)
+first. Then install the latest release:
+
+```bash
+curl -fsSL https://github.com/karanshukla/vinoAuthFace/releases/latest/download/install.sh | sudo bash
+```
+
+To build from a source checkout instead, clone the repository and run `sudo ./deploy.sh`:
 
 ```bash
 git clone https://github.com/karanshukla/vinoAuthFace && cd vinoAuthFace
 sudo ./deploy.sh
 ```
 
-[Installing](install.md) covers what `deploy.sh` does, building from source and removal.
-The [GitHub README](https://github.com/karanshukla/vinoAuthFace#readme) has the full quick start.
+See [Installing](install.md) for what `deploy.sh` does, NPU setup, building from source, and
+uninstalling. The [GitHub README](https://github.com/karanshukla/vinoAuthFace#readme) has the full
+quick-start walkthrough.
 
-A fork of [Peter Falkingham's authFace](https://github.com/pfalkingham/authFace), kept in sync with
-upstream. See [what this fork adds](architecture.md#relationship-to-upstream).
+vinoAuthFace is a fork of [Peter Falkingham's authFace](https://github.com/pfalkingham/authFace),
+kept in sync with upstream. See [what this fork adds](architecture.md#relationship-to-upstream).

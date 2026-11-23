@@ -27,7 +27,7 @@ use crate::files::{self, ConfigFile};
 use crate::keys::{self, Key};
 use crate::models::{self, Check, Checks, Disk};
 
-const TITLE: &str = "vinoAuthFace settings";
+const TITLE: &str = "vinoAuthFace Settings";
 pub const APP_ID: &str = "io.github.karanshukla.vinoauthface.Settings";
 const DEFAULT_MODEL: &str = face_auth_core::paths::DEFAULT_MODEL;
 const DEFAULT_DETECTOR: &str = face_auth_core::paths::DEFAULT_DETECTOR;
@@ -58,7 +58,9 @@ impl Page {
 
     pub fn parse(name: &str) -> Option<Page> {
         let name = name.to_ascii_lowercase();
-        Page::ALL.into_iter().find(|page| page.title().to_ascii_lowercase() == name || page.slug() == name)
+        Page::ALL
+            .into_iter()
+            .find(|page| page.title().to_ascii_lowercase() == name || page.slug() == name)
     }
 
     fn slug(self) -> &'static str {
@@ -82,7 +84,7 @@ impl Page {
             Page::Camera => "Camera",
             Page::Models => "Models",
             Page::Security => "Security",
-            Page::You => "Just you",
+            Page::You => "Personal",
             Page::About => vino_ui::about::TITLE,
         }
     }
@@ -151,7 +153,11 @@ impl Unit {
 
 fn trim(v: f64, decimals: usize) -> String {
     let s = format!("{v:.decimals$}");
-    if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
+    if s.contains('.') {
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    } else {
+        s
+    }
 }
 
 /// `widgets::columns`, with the 20 between this window's groups kept when
@@ -258,7 +264,10 @@ impl SettingsWindow {
             apply::pkexec,
             apply::helper_installed(),
         );
-        window.ir_cameras = capture::enumerate_ir_cameras().into_iter().map(|(path, _)| path).collect();
+        window.ir_cameras = capture::enumerate_ir_cameras()
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
         window.cameras = cameras(&window.ir_cameras);
         window.kde_header = theme::kde_header();
         window.enrolled = enrol::enrolled();
@@ -292,7 +301,10 @@ impl SettingsWindow {
             check_enrolled: enrol::enrolled,
             confirm_replace: false,
             disk: None,
-            disk_dirs: (PathBuf::from(model_files::SHARE_DIR), PathBuf::from(model_files::CACHE_DIR)),
+            disk_dirs: (
+                PathBuf::from(model_files::SHARE_DIR),
+                PathBuf::from(model_files::CACHE_DIR),
+            ),
             clean_up: Arc::default(),
             clean_up_runner: apply::pkexec_verb,
             confirm_delete_models: false,
@@ -333,13 +345,26 @@ impl SettingsWindow {
         match result {
             Some(Ok(_)) => {
                 let tag_changed = {
-                    let was = self.system.read.as_deref().and_then(|t| FaceAuthConfig::from_toml(t).ok());
-                    was.map(|w| w.model_tag()) != self.system.config.as_ref().ok().map(FaceAuthConfig::model_tag)
+                    let was = self
+                        .system
+                        .read
+                        .as_deref()
+                        .and_then(|t| FaceAuthConfig::from_toml(t).ok());
+                    was.map(|w| w.model_tag())
+                        != self
+                            .system
+                            .config
+                            .as_ref()
+                            .ok()
+                            .map(FaceAuthConfig::model_tag)
                 };
                 self.system.reload();
                 self.disk = None;
                 self.notice = Some(if tag_changed {
-                    (Tone::Warn, "Saved. The models changed: enrol again before face unlock works.".into())
+                    (
+                        Tone::Warn,
+                        "Saved. Because the model configuration changed, re-enrol before using face unlock.".into(),
+                    )
                 } else {
                     (Tone::Info, "Saved.".into())
                 });
@@ -360,11 +385,15 @@ impl SettingsWindow {
         let shown = if running {
             widgets::chip(ui, ChipKind::Neutral, "Applying…")
         } else if self.system.unreadable.is_some() {
-            widgets::chip(ui, ChipKind::Err, "Can't read the settings")
+            widgets::chip(ui, ChipKind::Err, "Cannot read settings")
         } else if self.system.config.is_err() {
-            widgets::chip(ui, ChipKind::Err, "Settings file broken")
+            widgets::chip(ui, ChipKind::Err, "Invalid settings file")
         } else if changes > 0 {
-            widgets::chip(ui, ChipKind::Warn, &plural(changes, "change not applied", "changes not applied"))
+            widgets::chip(
+                ui,
+                ChipKind::Warn,
+                &plural(changes, "unsaved change", "unsaved changes"),
+            )
         } else {
             widgets::chip(ui, ChipKind::Ok, "Saved")
         };
@@ -376,13 +405,26 @@ impl SettingsWindow {
         let changes = self.system.changes().len();
         let valid = FaceAuthConfig::parse_system(&self.system.text);
         let (text, can) = if running {
-            ("Waiting for the password prompt…".to_string(), false)
+            (
+                "Waiting for administrator authentication…".to_string(),
+                false,
+            )
         } else if !self.helper {
-            ("Can't apply: vinoauthface-helper isn't installed.".into(), false)
+            (
+                "Cannot apply: vinoauthface-helper is not installed.".into(),
+                false,
+            )
         } else if let Err(e) = &valid {
-            (format!("Can't apply: {e:#}"), false)
+            (format!("Cannot apply: {e:#}"), false)
         } else {
-            (plural(changes, "change for everyone on this computer", "changes for everyone on this computer"), true)
+            (
+                plural(
+                    changes,
+                    "system-wide change pending",
+                    "system-wide changes pending",
+                ),
+                true,
+            )
         };
         let mut apply = false;
         let mut discard = false;
@@ -392,7 +434,14 @@ impl SettingsWindow {
                 apply = ui.add_enabled(can, Button::primary("Apply…")).clicked();
                 discard = ui.add_enabled(!running, Button::ghost("Discard")).clicked();
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.add(egui::Label::new(RichText::new(text).size(12.5).color(theme::palette(ui.ctx()).muted)).truncate());
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(text)
+                                .size(12.5)
+                                .color(theme::palette(ui.ctx()).muted),
+                        )
+                        .truncate(),
+                    );
                 });
             });
         });
@@ -429,10 +478,18 @@ impl SettingsWindow {
         if waiting {
             let bar = egui::Panel::bottom("apply")
                 .show_separator_line(false)
-                .frame(egui::Frame::NONE.fill(p.surface).inner_margin(egui::Margin::symmetric(16, 8)))
+                .frame(
+                    egui::Frame::NONE
+                        .fill(p.surface)
+                        .inner_margin(egui::Margin::symmetric(16, 8)),
+                )
                 .show(root, |ui| self.apply_bar(ui));
             let rect = bar.response.rect;
-            root.painter().hline(rect.x_range(), rect.top() + 0.5, egui::Stroke::new(1.0, p.rule));
+            root.painter().hline(
+                rect.x_range(),
+                rect.top() + 0.5,
+                egui::Stroke::new(1.0, p.rule),
+            );
         }
 
         // A wide window with the app's title bar puts the page title in a bar
@@ -452,7 +509,11 @@ impl SettingsWindow {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin {
-                left: if wide { widgets::page_inset(window) as i8 } else { 16 },
+                left: if wide {
+                    widgets::page_inset(window) as i8
+                } else {
+                    16
+                },
                 right: 0,
                 top: match (wide, title_bar) {
                     (_, true) => 2,
@@ -462,7 +523,9 @@ impl SettingsWindow {
                 bottom: 0,
             }))
             .show(root, |ui| {
-                widgets::page_scroll(ui, self.page.title(), self.page.max_width(), |ui| self.page_body(ui, title_bar));
+                widgets::page_scroll(ui, self.page.title(), self.page.max_width(), |ui| {
+                    self.page_body(ui, title_bar)
+                });
             });
 
         self.save_settled_user_changes(ctx);
@@ -473,7 +536,7 @@ impl SettingsWindow {
             widgets::title(ui, self.page.title());
         }
         if !matches!(self.page, Page::You | Page::Face | Page::About) {
-            widgets::small(ui, "For everyone on this computer. Changes wait for Apply.");
+            widgets::small(ui, "System-wide settings. Click Apply to save changes.");
         }
         if let Some((tone, text)) = self.notice.clone() {
             ui.add_space(12.0);
@@ -484,13 +547,20 @@ impl SettingsWindow {
         if !matches!(self.page, Page::You | Page::Face) {
             if let Some(e) = &self.system.unreadable {
                 ui.add_space(12.0);
-                widgets::banner(ui, Tone::Error, &format!("{SYSTEM_CONFIG_PATH} can't be read: {e}"), |_| {});
+                widgets::banner(
+                    ui,
+                    Tone::Error,
+                    &format!("Could not read {SYSTEM_CONFIG_PATH}: {e}"),
+                    |_| {},
+                );
             } else if let (Err(e), Some(_)) = (&self.system.config, &self.system.read) {
                 ui.add_space(12.0);
                 widgets::banner(
                     ui,
                     Tone::Error,
-                    &format!("{SYSTEM_CONFIG_PATH} doesn't parse, so face unlock is off: {e}"),
+                    &format!(
+                        "Could not parse {SYSTEM_CONFIG_PATH}, so face unlock is disabled: {e}"
+                    ),
                     |_| {},
                 );
             }
@@ -563,7 +633,12 @@ impl SettingsWindow {
                 let brand = ui
                     .scope(|ui| {
                         ui.style_mut().interaction.selectable_labels = false;
-                        widgets::sidebar_brand(ui, Some(vino_ui::logo::authface), "vinoAuthFace", "Settings");
+                        widgets::sidebar_brand(
+                            ui,
+                            Some(vino_ui::logo::authface),
+                            "vinoAuthFace",
+                            "Settings",
+                        );
                     })
                     .response
                     .rect;
@@ -582,8 +657,15 @@ impl SettingsWindow {
                     if page == Page::You {
                         hairline_above_your_own_settings(ui, p);
                     }
-                    if widgets::nav_item(ui, page.icon(), page.title(), page.title(), self.page == page, None)
-                        .clicked()
+                    if widgets::nav_item(
+                        ui,
+                        page.icon(),
+                        page.title(),
+                        page.title(),
+                        self.page == page,
+                        None,
+                    )
+                    .clicked()
                     {
                         self.page = page;
                     }
@@ -602,7 +684,12 @@ impl SettingsWindow {
     fn top_bar(&mut self, root: &mut egui::Ui, p: &theme::Palette, header: theme::Header) {
         egui::Panel::top("header")
             .show_separator_line(false)
-            .frame(widgets::header_frame(header, p).inner_margin(egui::Margin { left: 16, right: 16, top: 8, bottom: 0 }))
+            .frame(widgets::header_frame(header, p).inner_margin(egui::Margin {
+                left: 16,
+                right: 16,
+                top: 8,
+                bottom: 0,
+            }))
             .show(root, |ui| {
                 if self.app_title_bar {
                     vino_ui::window::drag(ui, ui.clip_rect(), "header");
@@ -611,14 +698,20 @@ impl SettingsWindow {
                     vino_ui::logo::authface(ui, 22.0);
                     ui.add(
                         egui::Label::new(
-                            RichText::new("vinoAuthFace").size(15.0).family(theme::bold()).color(header.text),
+                            RichText::new("vinoAuthFace")
+                                .size(15.0)
+                                .family(theme::bold())
+                                .color(header.text),
                         )
                         .selectable(false),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if self.app_title_bar {
                             ui.allocate_ui_with_layout(
-                                egui::vec2(vino_ui::window::controls_width(), vino_ui::window::BUTTON),
+                                egui::vec2(
+                                    vino_ui::window::controls_width(),
+                                    vino_ui::window::BUTTON,
+                                ),
                                 Layout::right_to_left(Align::Center),
                                 vino_ui::window::controls,
                             );
@@ -631,13 +724,13 @@ impl SettingsWindow {
                     ui.spacing_mut().item_spacing = egui::vec2(18.0, 0.0);
                     a11y::tab_list(ui, "Pages");
                     for page in Page::ALL {
-                        if widgets::tab(ui, page.title(), self.page == page, true, header).clicked() {
+                        if widgets::tab(ui, page.title(), self.page == page, true, header).clicked()
+                        {
                             self.page = page;
                         }
                     }
                 });
             });
-
     }
 
     /// Dragging or typing changes a value every frame; write once it settles.
@@ -645,7 +738,7 @@ impl SettingsWindow {
         if self.user_dirty && ctx.dragged_id().is_none() && !ctx.egui_wants_keyboard_input() {
             self.user_dirty = false;
             if let Err(e) = self.user.save() {
-                self.notice = Some((Tone::Error, format!("Couldn't save your settings: {e}")));
+                self.notice = Some((Tone::Error, format!("Could not save your settings: {e}")));
             }
         }
     }
@@ -656,7 +749,11 @@ fn hairline_above_your_own_settings(ui: &mut egui::Ui, p: &theme::Palette) {
     ui.add_space(8.0);
     let rect = ui.available_rect_before_wrap();
     let y = rect.top() + 0.5;
-    ui.painter().hline((rect.left() + 8.0)..=(rect.right() - 8.0), y, egui::Stroke::new(1.0, p.rule));
+    ui.painter().hline(
+        (rect.left() + 8.0)..=(rect.right() - 8.0),
+        y,
+        egui::Stroke::new(1.0, p.rule),
+    );
     ui.add_space(10.0);
 }
 
@@ -668,7 +765,10 @@ fn listed(models: &[ModelFile]) -> String {
         [one] => one.clone(),
         [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     };
-    format!("{names}, {}", human_size(models.iter().map(|m| m.bytes).sum()))
+    format!(
+        "{names}, {}",
+        human_size(models.iter().map(|m| m.bytes).sum())
+    )
 }
 
 fn plural(n: usize, one: &str, many: &str) -> String {
@@ -697,7 +797,8 @@ fn cameras(ir: &[String]) -> Vec<Cam> {
         .into_iter()
         .map(|path| {
             let node = path.trim_start_matches("/dev/");
-            let name = std::fs::read_to_string(format!("/sys/class/video4linux/{node}/name")).unwrap_or_default();
+            let name = std::fs::read_to_string(format!("/sys/class/video4linux/{node}/name"))
+                .unwrap_or_default();
             Cam {
                 ir: ir.contains(&path),
                 virtual_: !capture::is_physical(&path),
@@ -712,7 +813,12 @@ fn cameras(ir: &[String]) -> Vec<Cam> {
 
 fn sort_cameras(list: &mut [Cam], ir: &[String]) {
     // Stable: list_video_devices already gives numeric order.
-    list.sort_by_key(|c| (ir.iter().position(|p| *p == c.path).unwrap_or(usize::MAX), c.virtual_));
+    list.sort_by_key(|c| {
+        (
+            ir.iter().position(|p| *p == c.path).unwrap_or(usize::MAX),
+            c.virtual_,
+        )
+    });
 }
 
 /// A slider and its number box, both named by the row. Right to left: the
@@ -738,7 +844,9 @@ fn slider(
         .suffix(suffix);
     let number = named(ui.add(number));
     ui.spacing_mut().slider_width = (ui.available_width() - 8.0).clamp(48.0, 200.0);
-    let bar = egui::Slider::new(value, range).show_value(false).logarithmic(log);
+    let bar = egui::Slider::new(value, range)
+        .show_value(false)
+        .logarithmic(log);
     let bar = if log { bar } else { bar.step_by(unit.step()) };
     let bar = named(ui.add(bar));
     bar | number
@@ -757,7 +865,10 @@ pub fn run(page: Option<Page>) -> ExitCode {
         ),
         // As in vinoSearch's settings: with vsync, KWin can stall a window it
         // considers hidden.
-        glow_options: eframe::egui_glow::GlowConfiguration { vsync: false, ..Default::default() },
+        glow_options: eframe::egui_glow::GlowConfiguration {
+            vsync: false,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let result = eframe::run_native(

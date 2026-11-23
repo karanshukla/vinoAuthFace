@@ -18,7 +18,10 @@ const BASH_PATHS: [&str; 2] = ["/bin/bash", "/run/current-system/sw/bin/bash"];
 
 /// The first of [`BASH_PATHS`] that exists, `/bin/bash` if none does.
 pub fn bash() -> &'static str {
-    BASH_PATHS.into_iter().find(|p| std::path::Path::new(p).is_file()).unwrap_or(BASH_PATHS[0])
+    BASH_PATHS
+        .into_iter()
+        .find(|p| std::path::Path::new(p).is_file())
+        .unwrap_or(BASH_PATHS[0])
 }
 
 /// One choice in a setting's menu. `id` is `setting-mode.sh`'s word for it.
@@ -55,13 +58,13 @@ pub const SETTINGS: &[Setting] = &[
             choice(
                 "convenient",
                 "Convenient",
-                "Matches more easily, and so does a lookalike. The lock screen scans at once, so someone at the camera when you lock it is let back in. Liveness stays on.",
+                "Lower match threshold (higher risk of false matches) and no lock-screen scan delay. Liveness checks remain enabled.",
             ),
-            choice("balanced", "Balanced", "The default."),
+            choice("balanced", "Balanced", "Default security settings."),
             choice(
                 "strict",
                 "Strict",
-                "Rejects a photo moved by hand, matches more strictly, wants your face fairly close and waits 5 seconds before scanning a lock screen. It may fail if you sit very still or far back.",
+                "Rejects hand-moved photos, raises the match threshold, requires sitting closer, and waits 5 seconds before scanning the lock screen. May fail if you sit very still or far back.",
             ),
         ],
     },
@@ -70,7 +73,7 @@ pub const SETTINGS: &[Setting] = &[
         title: "Scan time",
         choices: &[
             choice("3s", "3 seconds", ""),
-            choice("5s", "5 seconds", "The default."),
+            choice("5s", "5 seconds", "Default scan duration."),
             choice("8s", "8 seconds", ""),
             choice("12s", "12 seconds", ""),
         ],
@@ -80,15 +83,15 @@ pub const SETTINGS: &[Setting] = &[
         title: "Confirm sudo with Enter",
         choices: &[
             choice("off", "Off", ""),
-            choice("on", "On", "After a face match for sudo, su or polkit in a terminal, press Enter to let it through."),
+            choice("on", "On", "Requires pressing Enter in the terminal after a face match for sudo, su, or polkit."),
         ],
     },
     Setting {
         key: "updates",
         title: "Check for updates",
         choices: &[
-            choice("on", "On", "One anonymous request a day to GitHub's releases API."),
-            choice("off", "Off", "No update checks. Restart the tray for it to stop asking."),
+            choice("on", "On", "Checks GitHub Releases once a day with an anonymous request."),
+            choice("off", "Off", "Update checks disabled. Restart the tray to apply."),
         ],
     },
 ];
@@ -167,7 +170,9 @@ impl Verb {
 
     /// Every verb there is: the fixed ones, then one per setting choice.
     pub fn all() -> Vec<Verb> {
-        let sets = SETTINGS.iter().flat_map(|s| s.choices.iter().map(move |c| Verb::Set(s, c)));
+        let sets = SETTINGS
+            .iter()
+            .flat_map(|s| s.choices.iter().map(move |c| Verb::Set(s, c)));
         Verb::FIXED.into_iter().chain(sets).collect()
     }
 
@@ -182,7 +187,11 @@ impl Verb {
 pub fn parse_request(args: &[String], pkexec_uid: Option<&str>) -> Result<(Verb, u32), String> {
     let [arg] = args else {
         let verbs: Vec<_> = Verb::all().iter().map(|v| v.arg()).collect();
-        return Err(format!("expected exactly one of {}; got {} arguments", verbs.join(", "), args.len()));
+        return Err(format!(
+            "expected exactly one of {}; got {} arguments",
+            verbs.join(", "),
+            args.len()
+        ));
     };
     let verb = Verb::parse(arg).ok_or_else(|| format!("unknown action {arg:?}"))?;
     let uid = pkexec_uid
@@ -197,19 +206,47 @@ pub fn parse_request(args: &[String], pkexec_uid: Option<&str>) -> Result<(Verb,
 /// `DeleteUnusedModels` and `ClearCache`, which the helper does itself.
 pub fn command(verb: Verb, user: &str) -> Option<(&'static str, Vec<String>)> {
     Some(match verb {
-        Verb::Enrol => (FACE_ENROLL, vec!["enroll".into(), "--user".into(), user.into()]),
-        Verb::Retrain => (FACE_ENROLL, vec!["improve".into(), "--user".into(), user.into()]),
-        Verb::EnrolGuided => (FACE_ENROLL, vec!["enroll".into(), "--guided".into(), "--user".into(), user.into()]),
-        Verb::RetrainGuided => (FACE_ENROLL, vec!["improve".into(), "--guided".into(), "--user".into(), user.into()]),
+        Verb::Enrol => (
+            FACE_ENROLL,
+            vec!["enroll".into(), "--user".into(), user.into()],
+        ),
+        Verb::Retrain => (
+            FACE_ENROLL,
+            vec!["improve".into(), "--user".into(), user.into()],
+        ),
+        Verb::EnrolGuided => (
+            FACE_ENROLL,
+            vec![
+                "enroll".into(),
+                "--guided".into(),
+                "--user".into(),
+                user.into(),
+            ],
+        ),
+        Verb::RetrainGuided => (
+            FACE_ENROLL,
+            vec![
+                "improve".into(),
+                "--guided".into(),
+                "--user".into(),
+                user.into(),
+            ],
+        ),
         // No SUDO_USER: the release unpacks under root's home, where the
         // caller can't swap it between the checksum and deploy.sh.
         Verb::Upgrade => (bash(), vec![UPGRADER.into()]),
         Verb::LoginOff => (bash(), vec![LOGIN_MODE.into(), "off".into()]),
         Verb::LoginBoth => (bash(), vec![LOGIN_MODE.into(), "both".into()]),
         Verb::LoginFace => (bash(), vec![LOGIN_MODE.into(), "face".into()]),
-        Verb::Set(setting, choice) => {
-            (bash(), vec![SETTING_MODE.into(), "set".into(), setting.key.into(), choice.id.into()])
-        }
+        Verb::Set(setting, choice) => (
+            bash(),
+            vec![
+                SETTING_MODE.into(),
+                "set".into(),
+                setting.key.into(),
+                choice.id.into(),
+            ],
+        ),
         Verb::WriteConfig | Verb::DeleteUnusedModels | Verb::ClearCache => return None,
     })
 }
@@ -224,14 +261,35 @@ mod tests {
 
     #[test]
     fn accepts_each_verb_for_the_pkexec_caller() {
-        assert_eq!(parse_request(&args(&["enrol"]), Some("1000")), Ok((Verb::Enrol, 1000)));
-        assert_eq!(parse_request(&args(&["retrain"]), Some("1000")), Ok((Verb::Retrain, 1000)));
-        assert_eq!(parse_request(&args(&["upgrade"]), Some("1000")), Ok((Verb::Upgrade, 1000)));
-        assert_eq!(parse_request(&args(&["login-both"]), Some("1000")), Ok((Verb::LoginBoth, 1000)));
-        assert_eq!(parse_request(&args(&["write-config"]), Some("1000")), Ok((Verb::WriteConfig, 1000)));
+        assert_eq!(
+            parse_request(&args(&["enrol"]), Some("1000")),
+            Ok((Verb::Enrol, 1000))
+        );
+        assert_eq!(
+            parse_request(&args(&["retrain"]), Some("1000")),
+            Ok((Verb::Retrain, 1000))
+        );
+        assert_eq!(
+            parse_request(&args(&["upgrade"]), Some("1000")),
+            Ok((Verb::Upgrade, 1000))
+        );
+        assert_eq!(
+            parse_request(&args(&["login-both"]), Some("1000")),
+            Ok((Verb::LoginBoth, 1000))
+        );
+        assert_eq!(
+            parse_request(&args(&["write-config"]), Some("1000")),
+            Ok((Verb::WriteConfig, 1000))
+        );
         assert_eq!(command(Verb::WriteConfig, "alice"), None);
-        assert_eq!(parse_request(&args(&["delete-unused-models"]), Some("1000")), Ok((Verb::DeleteUnusedModels, 1000)));
-        assert_eq!(parse_request(&args(&["clear-cache"]), Some("1000")), Ok((Verb::ClearCache, 1000)));
+        assert_eq!(
+            parse_request(&args(&["delete-unused-models"]), Some("1000")),
+            Ok((Verb::DeleteUnusedModels, 1000))
+        );
+        assert_eq!(
+            parse_request(&args(&["clear-cache"]), Some("1000")),
+            Ok((Verb::ClearCache, 1000))
+        );
         assert_eq!(command(Verb::DeleteUnusedModels, "alice"), None);
         assert_eq!(command(Verb::ClearCache, "alice"), None);
     }
@@ -241,7 +299,10 @@ mod tests {
     #[test]
     fn the_model_verbs_take_no_path() {
         for list in [
-            &["delete-unused-models", "/usr/local/share/face-auth/w600k_mbf.onnx"][..],
+            &[
+                "delete-unused-models",
+                "/usr/local/share/face-auth/w600k_mbf.onnx",
+            ][..],
             &["delete-unused-models", "--all"],
             &["clear-cache", "/var/lib/face-auth"],
             &["delete-models"],
@@ -249,14 +310,29 @@ mod tests {
             &["delete-unused-models "],
             &["clear-templates"],
         ] {
-            assert!(parse_request(&args(list), Some("1000")).is_err(), "{list:?}");
+            assert!(
+                parse_request(&args(list), Some("1000")).is_err(),
+                "{list:?}"
+            );
         }
     }
 
     #[test]
     fn rejects_unknown_verbs_and_flags() {
-        for list in [&["enroll"][..], &["ENROL"], &["--improve"], &[""], &["enrol ", ], &["login"], &["login-status"], &["uninstall"]] {
-            assert!(parse_request(&args(list), Some("1000")).is_err(), "{list:?}");
+        for list in [
+            &["enroll"][..],
+            &["ENROL"],
+            &["--improve"],
+            &[""],
+            &["enrol "],
+            &["login"],
+            &["login-status"],
+            &["uninstall"],
+        ] {
+            assert!(
+                parse_request(&args(list), Some("1000")).is_err(),
+                "{list:?}"
+            );
         }
     }
 
@@ -264,8 +340,18 @@ mod tests {
     fn a_target_user_cannot_be_named() {
         // The only identity is PKEXEC_UID; a second argument naming someone
         // else is refused, not ignored.
-        for list in [&["enrol", "bob"][..], &["enrol", "--user", "bob"], &["retrain", "0"], &["upgrade", "v1"], &["login-face", "off"], &["write-config", "/tmp/x"]] {
-            assert!(parse_request(&args(list), Some("1000")).is_err(), "{list:?}");
+        for list in [
+            &["enrol", "bob"][..],
+            &["enrol", "--user", "bob"],
+            &["retrain", "0"],
+            &["upgrade", "v1"],
+            &["login-face", "off"],
+            &["write-config", "/tmp/x"],
+        ] {
+            assert!(
+                parse_request(&args(list), Some("1000")).is_err(),
+                "{list:?}"
+            );
         }
         assert!(parse_request(&args(&[]), Some("1000")).is_err());
     }
@@ -274,14 +360,22 @@ mod tests {
     fn requires_a_numeric_pkexec_uid() {
         assert!(parse_request(&args(&["enrol"]), None).is_err());
         for bad in ["", "alice", "-1", "1000 ", "4294967296"] {
-            assert!(parse_request(&args(&["enrol"]), Some(bad)).is_err(), "{bad:?}");
+            assert!(
+                parse_request(&args(&["enrol"]), Some(bad)).is_err(),
+                "{bad:?}"
+            );
         }
     }
 
     #[test]
     fn bash_runs_by_absolute_path() {
-        assert!(BASH_PATHS.iter().all(|p| std::path::Path::new(p).is_absolute()));
-        assert_eq!(BASH_PATHS[0], "/bin/bash", "the NixOS path must not come first");
+        assert!(BASH_PATHS
+            .iter()
+            .all(|p| std::path::Path::new(p).is_absolute()));
+        assert_eq!(
+            BASH_PATHS[0], "/bin/bash",
+            "the NixOS path must not come first"
+        );
         assert_eq!(command(Verb::LoginOff, "alice").unwrap().0, bash());
     }
 
@@ -291,18 +385,40 @@ mod tests {
             let (program, argv) = command(verb, "alice").unwrap();
             assert_eq!(program, FACE_ENROLL);
             assert_eq!(&argv[1..3], ["--user", "alice"]);
-            assert!(argv.iter().all(|a| !a.contains("dir") && !a.contains("model") && !a.contains("device")));
+            assert!(argv
+                .iter()
+                .all(|a| !a.contains("dir") && !a.contains("model") && !a.contains("device")));
         }
-        assert_eq!(command(Verb::EnrolGuided, "alice").unwrap().1, ["enroll", "--guided", "--user", "alice"]);
-        assert_eq!(command(Verb::RetrainGuided, "alice").unwrap().1, ["improve", "--guided", "--user", "alice"]);
+        assert_eq!(
+            command(Verb::EnrolGuided, "alice").unwrap().1,
+            ["enroll", "--guided", "--user", "alice"]
+        );
+        assert_eq!(
+            command(Verb::RetrainGuided, "alice").unwrap().1,
+            ["improve", "--guided", "--user", "alice"]
+        );
         assert_eq!(command(Verb::Enrol, "alice").unwrap().1[0], "enroll");
         assert_eq!(command(Verb::Retrain, "alice").unwrap().1[0], "improve");
         assert_eq!(command(Verb::Upgrade, "alice").unwrap().1, [UPGRADER]);
-        assert_eq!(command(Verb::LoginOff, "alice").unwrap().1, [LOGIN_MODE, "off"]);
-        assert_eq!(command(Verb::LoginBoth, "alice").unwrap().1, [LOGIN_MODE, "both"]);
-        assert_eq!(command(Verb::LoginFace, "alice").unwrap().1, [LOGIN_MODE, "face"]);
+        assert_eq!(
+            command(Verb::LoginOff, "alice").unwrap().1,
+            [LOGIN_MODE, "off"]
+        );
+        assert_eq!(
+            command(Verb::LoginBoth, "alice").unwrap().1,
+            [LOGIN_MODE, "both"]
+        );
+        assert_eq!(
+            command(Verb::LoginFace, "alice").unwrap().1,
+            [LOGIN_MODE, "face"]
+        );
         let security = setting("security").unwrap();
-        assert_eq!(command(Verb::Set(security, &security.choices[2]), "alice").unwrap().1, [SETTING_MODE, "set", "security", "strict"]);
+        assert_eq!(
+            command(Verb::Set(security, &security.choices[2]), "alice")
+                .unwrap()
+                .1,
+            [SETTING_MODE, "set", "security", "strict"]
+        );
     }
 
     #[test]
@@ -311,8 +427,21 @@ mod tests {
         assert_eq!(uid, 1000);
         assert!(matches!(verb, Verb::Set(s, c) if s.key == "security" && c.id == "strict"));
         // The preset's parts are not settable one by one.
-        for bad in ["set-security", "set-security-", "set-security-loose", "set-lockout-off", "set-security-strict ", "set", "set-liveness-off", "set-match-relaxed", "set-delay-off"] {
-            assert!(parse_request(&args(&[bad]), Some("1000")).is_err(), "{bad:?}");
+        for bad in [
+            "set-security",
+            "set-security-",
+            "set-security-loose",
+            "set-lockout-off",
+            "set-security-strict ",
+            "set",
+            "set-liveness-off",
+            "set-match-relaxed",
+            "set-delay-off",
+        ] {
+            assert!(
+                parse_request(&args(&[bad]), Some("1000")).is_err(),
+                "{bad:?}"
+            );
         }
         assert!(parse_request(&args(&["set-scan-5s", "x"]), Some("1000")).is_err());
     }
@@ -324,7 +453,10 @@ mod tests {
         let policy = include_str!("../data/io.github.karanshukla.vinoauthface.policy");
         let mut ids: Vec<_> = policy
             .lines()
-            .filter_map(|l| l.trim().strip_prefix("<annotate key=\"org.freedesktop.policykit.exec.argv1\">"))
+            .filter_map(|l| {
+                l.trim()
+                    .strip_prefix("<annotate key=\"org.freedesktop.policykit.exec.argv1\">")
+            })
             .map(|l| l.trim_end_matches("</annotate>").to_string())
             .collect();
         let mut verbs: Vec<_> = Verb::all().iter().map(|v| v.arg()).collect();
@@ -332,7 +464,10 @@ mod tests {
         verbs.sort();
         assert_eq!(ids, verbs);
         for verb in Verb::all() {
-            let action = format!("<action id=\"io.github.karanshukla.vinoauthface.{}\">", verb.arg());
+            let action = format!(
+                "<action id=\"io.github.karanshukla.vinoauthface.{}\">",
+                verb.arg()
+            );
             assert!(policy.contains(&action), "{action}");
         }
     }
@@ -341,7 +476,8 @@ mod tests {
     /// back as the choice written.
     #[test]
     fn the_script_agrees_with_the_menu() {
-        let dir = std::env::temp_dir().join(format!("vinoauthface-settings-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("vinoauthface-settings-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let conf = dir.join("face-auth.toml");
         let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../setting-mode.sh");
@@ -355,9 +491,19 @@ mod tests {
         };
         for setting in SETTINGS {
             for choice in setting.choices {
-                assert!(run(&["set", setting.key, choice.id]).status.success(), "{} {}", setting.key, choice.id);
+                assert!(
+                    run(&["set", setting.key, choice.id]).status.success(),
+                    "{} {}",
+                    setting.key,
+                    choice.id
+                );
                 let status = String::from_utf8(run(&["status"]).stdout).unwrap();
-                assert!(status.lines().any(|l| l == format!("{} {}", setting.key, choice.id)), "{status}");
+                assert!(
+                    status
+                        .lines()
+                        .any(|l| l == format!("{} {}", setting.key, choice.id)),
+                    "{status}"
+                );
             }
             assert!(!run(&["set", setting.key, "bogus"]).status.success());
         }

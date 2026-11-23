@@ -35,8 +35,8 @@ impl LoginMode {
     pub fn label(self) -> &'static str {
         match self {
             LoginMode::Off => "Password only",
-            LoginMode::Both => "Password, then face",
-            LoginMode::Face => "Face, or the password",
+            LoginMode::Both => "Password and face",
+            LoginMode::Face => "Face or password",
         }
     }
 
@@ -83,7 +83,9 @@ impl Status {
             Some(_) => "tract (CPU)".into(),
             None => "unknown (cannot read /etc/face-auth.toml)".into(),
         };
-        let model = config.as_ref().map_or("unknown".into(), |c| model_names(&c.model_path(), &c.detector_model_path()));
+        let model = config.as_ref().map_or("unknown".into(), |c| {
+            model_names(&c.model_path(), &c.detector_model_path())
+        });
         Status {
             camera,
             enrolled: enrolled(),
@@ -111,7 +113,7 @@ impl Status {
                 match self.enrolled {
                     Some(true) => "enrolled",
                     Some(false) => "not enrolled",
-                    None => "unknown (is vinoauthface installed?)",
+                    None => "unknown (check that vinoauthface is installed)",
                 }
             ),
             format!("Backend: {}", self.backend),
@@ -126,7 +128,9 @@ impl Status {
 /// table in docs/configuration.md lists.
 fn model_names(model: &str, detector: &str) -> String {
     let stem = |path: &str| {
-        Path::new(path).file_stem().map_or(path.to_string(), |n| n.to_string_lossy().into_owned())
+        Path::new(path)
+            .file_stem()
+            .map_or(path.to_string(), |n| n.to_string_lossy().into_owned())
     };
     format!("{} (detector {})", stem(model), stem(detector))
 }
@@ -172,10 +176,21 @@ mod tests {
 
     #[test]
     fn status_lines_name_what_is_missing() {
-        let s = Status { camera: None, enrolled: None, backend: "tract (CPU)".into(), model: "unknown".into(), login: None, settings: HashMap::new(), settings_window: false };
+        let s = Status {
+            camera: None,
+            enrolled: None,
+            backend: "tract (CPU)".into(),
+            model: "unknown".into(),
+            login: None,
+            settings: HashMap::new(),
+            settings_window: false,
+        };
         let lines = s.lines();
         assert_eq!(lines[0], "Camera: no IR camera found");
-        assert_eq!(lines[1], "Face: unknown (is vinoauthface installed?)");
+        assert_eq!(
+            lines[1],
+            "Face: unknown (check that vinoauthface is installed)"
+        );
         assert_eq!(lines[2], "Backend: tract (CPU)");
         assert_eq!(lines[3], "Model: unknown");
         // ksni reads "_" as an access-key marker.
@@ -219,7 +234,10 @@ mod tests {
     #[test]
     fn model_names_are_the_file_stems() {
         assert_eq!(
-            model_names("/usr/local/share/face-auth/w600k_mbf.onnx", "/usr/local/share/face-auth/det_500m.onnx"),
+            model_names(
+                "/usr/local/share/face-auth/w600k_mbf.onnx",
+                "/usr/local/share/face-auth/det_500m.onnx"
+            ),
             "w600k_mbf (detector det_500m)"
         );
     }

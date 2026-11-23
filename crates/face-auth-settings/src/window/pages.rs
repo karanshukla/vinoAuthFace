@@ -14,7 +14,7 @@ impl SettingsWindow {
         widgets::group_label(ui, "Guided enrolment");
         widgets::group_help(
             ui,
-            "About ten templates from measured poses: straight, slight turns and tilts, glasses off and on.",
+            "Captures about ten templates across six poses: straight ahead, slight turns and tilts, and with or without glasses.",
         );
         if running {
             let mut skip = false;
@@ -23,9 +23,12 @@ impl SettingsWindow {
                 let (title, progress) = match step {
                     Some((n, total, step)) => (
                         step.prompt(),
-                        format!("Step {n} of {total}, {} of {} kept.", kept.0, kept.1),
+                        format!(
+                            "Step {n} of {total}: {} of {} templates captured.",
+                            kept.0, kept.1
+                        ),
                     ),
-                    None => ("Waiting for the password prompt…", String::new()),
+                    None => ("Waiting for administrator authentication…", String::new()),
                 };
                 Row::new(title).help(&progress).show(ui, |ui, _| {
                     if step.is_some() {
@@ -53,7 +56,7 @@ impl SettingsWindow {
                 Some(false) => (ChipKind::Warn, "Not enrolled"),
                 None => (ChipKind::Neutral, "Unknown"),
             };
-            Row::new("Your face").show(ui, |ui, _| {
+            Row::new("Enrolment status").show(ui, |ui, _| {
                 a11y::live(&widgets::chip(ui, kind, text));
             });
             let enrolled = self.enrolled == Some(true);
@@ -73,22 +76,29 @@ impl SettingsWindow {
                         }
                     });
             } else if enrolled {
-                Row::new("Enrol again").help("Replaces your templates.").show(ui, |ui, _| {
-                    if ui.add(Button::secondary("Enrol again…")).clicked() {
-                        self.confirm_replace = true;
-                    }
-                });
+                Row::new("Enrol again")
+                    .help("Replace your existing face templates.")
+                    .show(ui, |ui, _| {
+                        if ui.add(Button::secondary("Enrol again…")).clicked() {
+                            self.confirm_replace = true;
+                        }
+                    });
             } else {
-                Row::new("Enrol").help("About two minutes.").show(ui, |ui, _| {
-                    if ui.add(Button::primary("Start")).clicked() {
-                        start = Some(false);
-                    }
-                });
+                Row::new("Enrol")
+                    .help("Takes about two minutes.")
+                    .show(ui, |ui, _| {
+                        if ui.add(Button::primary("Start")).clicked() {
+                            start = Some(false);
+                        }
+                    });
             }
             Row::new("Add poses")
-                .help("The same steps, kept alongside your templates.")
+                .help("Capture additional poses without replacing existing templates.")
                 .show(ui, |ui, _| {
-                    if ui.add_enabled(enrolled && !self.confirm_replace, Button::secondary("Add")).clicked() {
+                    if ui
+                        .add_enabled(enrolled && !self.confirm_replace, Button::secondary("Add"))
+                        .clicked()
+                    {
                         start = Some(true);
                     }
                 });
@@ -96,7 +106,7 @@ impl SettingsWindow {
         ui.add_space(8.0);
         widgets::small(
             ui,
-            "Needs an administrator's password. No camera preview: frames stay in the root process.",
+            "Requires administrator authentication. Camera preview is disabled so frames stay in the root process.",
         );
         if let Some(append) = start {
             self.notice = None;
@@ -118,30 +128,41 @@ impl SettingsWindow {
     pub(super) fn matching_rows(&mut self, ui: &mut egui::Ui, c: &FaceAuthConfig) {
         widgets::group_label(ui, "Matching");
         widgets::group(ui, |ui| {
-            self.number(ui, false, keys::THRESHOLD, Num {
-                title: "Match threshold",
-                help: "How alike a face must be to yours. Higher is stricter."
-                    .into(),
-                tone: Tone::Neutral,
-                value: c.threshold().into(),
-                default: 0.6,
-                range: range_f64(limits::THRESHOLD_RANGE),
-                unit: Unit::Ratio(2),
-                log: false,
-            });
-            self.number(ui, false, keys::DETECTOR_THRESHOLD, Num {
-                title: "Face detection",
-                help: "How sure the detector must be that it sees a face.".into(),
-                tone: Tone::Neutral,
-                value: c.detector_threshold().into(),
-                default: 0.5,
-                range: range_f64(limits::DETECTOR_THRESHOLD_RANGE),
-                unit: Unit::Ratio(2),
-                log: false,
-            });
+            self.number(
+                ui,
+                false,
+                keys::THRESHOLD,
+                Num {
+                    title: "Match threshold",
+                    help:
+                        "Minimum similarity score required for a match. Higher values are stricter."
+                            .into(),
+                    tone: Tone::Neutral,
+                    value: c.threshold().into(),
+                    default: 0.6,
+                    range: range_f64(limits::THRESHOLD_RANGE),
+                    unit: Unit::Ratio(2),
+                    log: false,
+                },
+            );
+            self.number(
+                ui,
+                false,
+                keys::DETECTOR_THRESHOLD,
+                Num {
+                    title: "Face detection",
+                    help: "Minimum confidence required to accept a detected face.".into(),
+                    tone: Tone::Neutral,
+                    value: c.detector_threshold().into(),
+                    default: 0.5,
+                    range: range_f64(limits::DETECTOR_THRESHOLD_RANGE),
+                    unit: Unit::Ratio(2),
+                    log: false,
+                },
+            );
             self.number(ui, false, keys::MIN_FACE_SIZE_RATIO, Num {
                 title: "Smallest face",
-                help: "Share of the frame. Smaller faces are ignored; 0 is off.".into(),
+                help: "Minimum face size as a fraction of the frame. Smaller faces are ignored (0 disables).".into(),
                 tone: Tone::Neutral,
                 value: c.min_face_size_ratio().into(),
                 default: 0.0,
@@ -156,74 +177,108 @@ impl SettingsWindow {
     /// bounds, and the user's are honoured as they are.
     pub(super) fn timing(&mut self, ui: &mut egui::Ui, user: bool, c: &FaceAuthConfig) {
         let sys = self.system.values();
-        let def = |user_default: u64, built_in: u64| secs(if user { user_default } else { built_in });
-        let unset: Vec<Key> = [keys::SCAN_DURATION_MS, keys::LIVENESS_GRACE_MS, keys::CAPTURE_TIMEOUT_MS, keys::SCAN_INTERVAL_MS]
-            .into_iter()
-            .filter(|key| user && !self.user.is_set(*key))
-            .collect();
+        let def =
+            |user_default: u64, built_in: u64| secs(if user { user_default } else { built_in });
+        let unset: Vec<Key> = [
+            keys::SCAN_DURATION_MS,
+            keys::LIVENESS_GRACE_MS,
+            keys::CAPTURE_TIMEOUT_MS,
+            keys::SCAN_INTERVAL_MS,
+        ]
+        .into_iter()
+        .filter(|key| user && !self.user.is_set(*key))
+        .collect();
         let inherits = |key: Key, shown: String| {
             if unset.contains(&key) {
-                format!(" This computer: {shown}.")
+                format!(" System default: {shown}.")
             } else {
                 String::new()
             }
         };
         let help = format!(
-            "How long to look before the password.{}",
-            inherits(keys::SCAN_DURATION_MS, Unit::Seconds.show(secs(sys.scan_duration_ms())))
+            "How long to scan before falling back to your password.{}",
+            inherits(
+                keys::SCAN_DURATION_MS,
+                Unit::Seconds.show(secs(sys.scan_duration_ms()))
+            )
         );
-        self.number(ui, user, keys::SCAN_DURATION_MS, Num {
-            title: "Scan time",
-            help,
-            tone: Tone::Neutral,
-            value: secs(c.scan_duration_ms()),
-            default: def(sys.scan_duration_ms(), 5000),
-            range: range_secs(limits::SCAN_DURATION_RANGE),
-            unit: Unit::Seconds,
-            log: false,
-        });
-        let help = format!(
-            "Extra wait, once, for a match that hasn't moved yet.{}",
+        self.number(
+            ui,
+            user,
+            keys::SCAN_DURATION_MS,
+            Num {
+                title: "Scan time",
+                help,
+                tone: Tone::Neutral,
+                value: secs(c.scan_duration_ms()),
+                default: def(sys.scan_duration_ms(), 5000),
+                range: range_secs(limits::SCAN_DURATION_RANGE),
+                unit: Unit::Seconds,
+                log: false,
+            },
+        );
+        let help =
+            format!(
+            "Additional wait time after a match if liveness motion has not been detected yet.{}",
             inherits(keys::LIVENESS_GRACE_MS, Unit::Seconds.show(secs(sys.liveness_grace_ms())))
         );
-        self.number(ui, user, keys::LIVENESS_GRACE_MS, Num {
-            title: "Extra time to move",
-            help,
-            tone: Tone::Neutral,
-            value: secs(c.liveness_grace_ms()),
-            default: def(sys.liveness_grace_ms(), 4000),
-            range: range_secs(limits::LIVENESS_GRACE_RANGE),
-            unit: Unit::Seconds,
-            log: false,
-        });
-        let help = format!(
-            "How long to wait for a frame.{}",
-            inherits(keys::CAPTURE_TIMEOUT_MS, Unit::Seconds.show(secs(sys.capture_timeout_ms() as u64)))
+        self.number(
+            ui,
+            user,
+            keys::LIVENESS_GRACE_MS,
+            Num {
+                title: "Liveness grace period",
+                help,
+                tone: Tone::Neutral,
+                value: secs(c.liveness_grace_ms()),
+                default: def(sys.liveness_grace_ms(), 4000),
+                range: range_secs(limits::LIVENESS_GRACE_RANGE),
+                unit: Unit::Seconds,
+                log: false,
+            },
         );
-        self.number(ui, user, keys::CAPTURE_TIMEOUT_MS, Num {
-            title: "Camera timeout",
-            help,
-            tone: Tone::Neutral,
-            value: secs(c.capture_timeout_ms() as u64),
-            default: def(sys.capture_timeout_ms() as u64, 5000),
-            range: range_secs(limits::CAPTURE_TIMEOUT_RANGE),
-            unit: Unit::Seconds,
-            log: false,
-        });
         let help = format!(
-            "Saves CPU, costs speed. 0 suits nearly everyone.{}",
+            "Maximum time to wait for a single camera frame.{}",
+            inherits(
+                keys::CAPTURE_TIMEOUT_MS,
+                Unit::Seconds.show(secs(sys.capture_timeout_ms() as u64))
+            )
+        );
+        self.number(
+            ui,
+            user,
+            keys::CAPTURE_TIMEOUT_MS,
+            Num {
+                title: "Camera timeout",
+                help,
+                tone: Tone::Neutral,
+                value: secs(c.capture_timeout_ms() as u64),
+                default: def(sys.capture_timeout_ms() as u64, 5000),
+                range: range_secs(limits::CAPTURE_TIMEOUT_RANGE),
+                unit: Unit::Seconds,
+                log: false,
+            },
+        );
+        let help =
+            format!(
+            "Delay between captured frames to reduce CPU usage. Set to 0 for fastest unlocks.{}",
             inherits(keys::SCAN_INTERVAL_MS, Unit::Seconds.show(secs(sys.scan_interval_ms())))
         );
-        self.number(ui, user, keys::SCAN_INTERVAL_MS, Num {
-            title: "Pause between frames",
-            help,
-            tone: Tone::Neutral,
-            value: secs(c.scan_interval_ms()),
-            default: def(sys.scan_interval_ms(), 0),
-            range: range_secs(limits::SCAN_INTERVAL_RANGE),
-            unit: Unit::Seconds,
-            log: false,
-        });
+        self.number(
+            ui,
+            user,
+            keys::SCAN_INTERVAL_MS,
+            Num {
+                title: "Pause between frames",
+                help,
+                tone: Tone::Neutral,
+                value: secs(c.scan_interval_ms()),
+                default: def(sys.scan_interval_ms(), 0),
+                range: range_secs(limits::SCAN_INTERVAL_RANGE),
+                unit: Unit::Seconds,
+                log: false,
+            },
+        );
     }
 
     pub(super) fn liveness(&mut self, ui: &mut egui::Ui) {
@@ -237,14 +292,20 @@ impl SettingsWindow {
             _ => "",
         };
         let (help, tone) = match preset {
-            "off" => ("Off: a photo or video of you can unlock this computer.", Tone::Warn),
-            "" => ("Custom: set by hand below.", Tone::Neutral),
-            _ => ("Strict also stops a photo moved by hand, but may fail if you sit very still.", Tone::Neutral),
+            "off" => (
+                "Disabled. A still photo or video replay could unlock this computer.",
+                Tone::Warn,
+            ),
+            "" => ("Custom thresholds configured below.", Tone::Neutral),
+            _ => (
+                "Strict also rejects hand-moved photos, but may fail if you hold completely still.",
+                Tone::Neutral,
+            ),
         };
-        widgets::group_label(ui, "Motion check");
+        widgets::group_label(ui, "Motion liveness");
         widgets::group_help(
             ui,
-            "A match counts only once your face has moved a little, which a photo can't.",
+            "Requires slight facial movement across frames to help reject static photos.",
         );
         widgets::group(ui, |ui| {
             let mut picked = preset;
@@ -254,18 +315,26 @@ impl SettingsWindow {
                     ui,
                     "Preset",
                     &mut picked,
-                    &[("off", "Off"), ("standard", "Standard"), ("strict", "Strict")],
+                    &[
+                        ("off", "Off"),
+                        ("standard", "Standard"),
+                        ("strict", "Strict"),
+                    ],
                 );
             });
             if changed {
                 // The preset only fills values that aren't set by hand.
                 self.set(false, keys::LIVENESS_MOTION, None);
                 self.set(false, keys::LIVENESS_RESIDUAL, None);
-                self.set(false, keys::LIVENESS_PRESET, (picked != "standard").then(|| keys::string(picked)));
+                self.set(
+                    false,
+                    keys::LIVENESS_PRESET,
+                    (picked != "standard").then(|| keys::string(picked)),
+                );
             }
             self.number(ui, false, keys::LIVENESS_MOTION, Num {
                 title: "Face motion",
-                help: "Share of the face that must change. Stops a photo held still; 0 is off."
+                help: "Minimum facial change required across frames to reject still photos (0 disables)."
                     .into(),
                 tone: Tone::Neutral,
                 value: motion.into(),
@@ -275,8 +344,8 @@ impl SettingsWindow {
                 log: true,
             });
             self.number(ui, false, keys::LIVENESS_RESIDUAL, Num {
-                title: "Movement in parts",
-                help: "Motion a moved photo can't make, like a blink. 0 is off; try 0.3.".into(),
+                title: "Non-rigid motion",
+                help: "Requires natural non-rigid movement such as blinking (0 disables; 0.3 recommended).".into(),
                 tone: Tone::Neutral,
                 value: residual.into(),
                 default: 0.0,
@@ -285,8 +354,8 @@ impl SettingsWindow {
                 log: false,
             });
             self.number(ui, false, keys::LIVENESS_WINDOW_MS, Num {
-                title: "Look back",
-                help: "How far back motion is measured. 0 compares frame to frame.".into(),
+                title: "Liveness window",
+                help: "Time window used to compare frames for movement (0 compares consecutive frames).".into(),
                 tone: Tone::Neutral,
                 value: secs(c.liveness_window_ms()),
                 default: 1.0,
@@ -306,23 +375,32 @@ impl SettingsWindow {
                 ui,
                 false,
                 keys::BIND_CAMERA,
-                "Only cameras you enrolled on",
-                "Refuses a different camera, by USB ID.",
+                "Require enrolled camera",
+                "Only allow cameras matching the USB ID used during enrolment.",
                 c.bind_camera(),
                 true,
             );
-            let pin = (self.system.raw(keys::PINNED_CAMERA_PATH), self.system.raw(keys::PINNED_CAMERA_INDEX));
+            let pin = (
+                self.system.raw(keys::PINNED_CAMERA_PATH),
+                self.system.raw(keys::PINNED_CAMERA_INDEX),
+            );
             match pin {
                 (Some(path), index) => {
                     let help = format!(
-                        "{}, node {}. Set by pin-camera.sh; frames from anywhere else are refused.",
+                        "{}, node {}. Set by pin-camera.sh; frames from other devices are rejected.",
                         path.as_str().unwrap_or("?"),
                         index.and_then(|i| i.as_integer()).unwrap_or(0)
                     );
                     let mut remove = false;
-                    Row::new("Pinned to a USB port").help(&help).show(ui, |ui, _| {
-                        remove = a11y::for_what(ui.add(Button::secondary("Remove pin")), "the camera pin").clicked();
-                    });
+                    Row::new("Pinned to a USB port")
+                        .help(&help)
+                        .show(ui, |ui, _| {
+                            remove = a11y::for_what(
+                                ui.add(Button::secondary("Remove pin")),
+                                "the camera pin",
+                            )
+                            .clicked();
+                        });
                     if remove {
                         self.set(false, keys::PINNED_CAMERA_PATH, None);
                         self.set(false, keys::PINNED_CAMERA_INDEX, None);
@@ -330,7 +408,7 @@ impl SettingsWindow {
                 }
                 _ => {
                     Row::new("Pinned to a USB port")
-                        .help("No. sudo vinoauthface-pin-camera pins it.")
+                        .help("Not pinned. Run sudo vinoauthface-pin-camera to lock to a physical USB port.")
                         .show(ui, |_, _| {});
                 }
             }
@@ -346,18 +424,22 @@ impl SettingsWindow {
 
     pub(super) fn models_in_use(&mut self, ui: &mut egui::Ui) {
         let c = self.system.values();
-        let was = self.system.read.as_deref().and_then(|t| FaceAuthConfig::from_toml(t).ok());
+        let was = self
+            .system
+            .read
+            .as_deref()
+            .and_then(|t| FaceAuthConfig::from_toml(t).ok());
         widgets::group_label(ui, "Recognition");
         widgets::group_help(
             ui,
-            "Shown, not changed here: a new model means everyone enrols again. Edit /etc/face-auth.toml to switch.",
+            "Read-only here because changing models requires all users to re-enrol. Edit /etc/face-auth.toml to switch models.",
         );
         widgets::group(ui, |ui| {
             self.path(
                 ui,
                 keys::MODEL_PATH,
                 "Recognition model",
-                "Turns a face into values to compare.",
+                "Encodes a detected face into an embedding vector for comparison.",
                 DEFAULT_MODEL,
                 false,
                 Some(models::Kind::Encoder),
@@ -367,22 +449,27 @@ impl SettingsWindow {
                 ui,
                 keys::DETECTOR_MODEL_PATH,
                 "Detector model",
-                "Finds the face in the frame.",
+                "Locates the face and facial landmarks in each frame.",
                 DEFAULT_DETECTOR,
                 false,
                 Some(models::Kind::Detector),
                 false,
             );
             let tag = c.model_tag();
-            let old = was.as_ref().map(FaceAuthConfig::model_tag).unwrap_or_else(|| tag.clone());
+            let old = was
+                .as_ref()
+                .map(FaceAuthConfig::model_tag)
+                .unwrap_or_else(|| tag.clone());
             if tag == old {
                 Row::new("Templates")
-                    .help(&format!("Made with {tag}. Other models' templates are refused."))
+                    .help(&format!(
+                        "Created with {tag}. Templates from other models are rejected."
+                    ))
                     .show(ui, |_, _| {});
             } else {
                 Row::new("Templates")
                     .help(&format!(
-                        "{old} becomes {tag}: everyone enrols again after Apply."
+                        "Changing from {old} to {tag}. All users must re-enrol after applying."
                     ))
                     .tone(Tone::Warn)
                     .show(ui, |_, _| {});
@@ -396,7 +483,7 @@ impl SettingsWindow {
                 ui,
                 keys::BACKEND,
                 "Backend",
-                "OpenVINO needs an npu build; deploy.sh makes one when it finds OpenVINO.",
+                "OpenVINO requires an NPU build, installed automatically by deploy.sh when OpenVINO is present.",
                 Tone::Neutral,
                 &backend,
                 "tract",
@@ -407,7 +494,7 @@ impl SettingsWindow {
                 ui,
                 keys::NPU_DEVICE,
                 "OpenVINO device",
-                "Where OpenVINO runs the models.",
+                "Hardware device used by OpenVINO for inference.",
                 Tone::Neutral,
                 &c.npu_device(),
                 "NPU",
@@ -416,7 +503,7 @@ impl SettingsWindow {
             );
         });
         ui.add_space(8.0);
-        widgets::small(ui, "Check always uses tract on the CPU.");
+        widgets::small(ui, "Model checks always run on the CPU using tract.");
     }
 
     /// Spare models and the compiled cache, each removed by a helper verb
@@ -429,73 +516,108 @@ impl SettingsWindow {
                 (None, Some(text)) => FaceAuthConfig::from_toml(text).ok(),
                 (None, None) => FaceAuthConfig::from_toml("").ok(),
             };
-            self.disk = Some(Disk::read(&self.disk_dirs.0, &self.disk_dirs.1, config.as_ref()));
+            self.disk = Some(Disk::read(
+                &self.disk_dirs.0,
+                &self.disk_dirs.1,
+                config.as_ref(),
+            ));
         }
-        let Some(disk) = self.disk.clone() else { return };
+        let Some(disk) = self.disk.clone() else {
+            return;
+        };
         let running = self.clean_up.lock().unwrap().running;
         let can = self.helper && !running;
         let mut run = None;
         widgets::group_label(ui, "Disk space");
         widgets::group_help(
             ui,
-            "The models in use stay until you uninstall: sudo vinoauthface-uninstall removes them and the cache.",
+            "Active models are kept until you run sudo vinoauthface-uninstall, which removes them along with the cache.",
         );
         widgets::group(ui, |ui| {
             match &disk.unused {
                 Err(e) => {
-                    Row::new("Unused models").help(&format!("Can't tell: {e}.")).show(ui, |_, _| {});
+                    Row::new("Unused models")
+                        .help(&format!("Unable to check unused models: {e}."))
+                        .show(ui, |_, _| {});
                 }
                 Ok(unused) if unused.is_empty() => {
                     self.confirm_delete_models = false;
-                    Row::new("Unused models").help("None: every model here is in use.").show(ui, |_, _| {});
+                    Row::new("Unused models")
+                        .help("None. All installed models are currently in use.")
+                        .show(ui, |_, _| {});
                 }
                 Ok(unused) if self.confirm_delete_models => {
                     let p = theme::palette(ui.ctx());
                     let help = format!(
-                        "Deletes {}. The shipped ones download again with deploy.sh.",
+                        "Deletes {}. Shipped models can be re-downloaded with deploy.sh.",
                         listed(unused)
                     );
-                    Row::new("Unused models").help(&help).tone(Tone::Error).tint(p.error_tint).show(ui, |ui, _| {
-                        if ui.add(Button::ghost("Cancel")).clicked() {
-                            self.confirm_delete_models = false;
-                        }
-                        if ui.add_enabled(can, Button::destructive("Delete")).clicked() {
-                            self.confirm_delete_models = false;
-                            run = Some(apply::DELETE_UNUSED_MODELS);
-                        }
-                    });
+                    Row::new("Unused models")
+                        .help(&help)
+                        .tone(Tone::Error)
+                        .tint(p.error_tint)
+                        .show(ui, |ui, _| {
+                            if ui.add(Button::ghost("Cancel")).clicked() {
+                                self.confirm_delete_models = false;
+                            }
+                            if ui.add_enabled(can, Button::destructive("Delete")).clicked() {
+                                self.confirm_delete_models = false;
+                                run = Some(apply::DELETE_UNUSED_MODELS);
+                            }
+                        });
                 }
                 Ok(unused) => {
-                    let help = format!("{}. Not the recognition or detector model above.", listed(unused));
+                    let help = format!(
+                        "{}. Not configured as the active recognition or detector model.",
+                        listed(unused)
+                    );
                     Row::new("Unused models").help(&help).show(ui, |ui, _| {
-                        if a11y::for_what(ui.add_enabled(can, Button::secondary("Delete…")), "the unused models").clicked() {
+                        if a11y::for_what(
+                            ui.add_enabled(can, Button::secondary("Delete…")),
+                            "the unused models",
+                        )
+                        .clicked()
+                        {
                             self.confirm_delete_models = true;
                         }
                     });
                 }
             }
             let help = match &disk.cache {
-                Err(e) => format!("Can't read {}: {e}.", self.disk_dirs.1.display()),
-                Ok(0) => "Empty. OpenVINO fills it the first time it runs the models.".into(),
+                Err(e) => format!("Unable to read {}: {e}.", self.disk_dirs.1.display()),
+                Ok(0) => "Empty. OpenVINO populates this cache the first time it compiles the models.".into(),
                 Ok(bytes) => format!(
-                    "{} of OpenVINO's compiled models. The next unlock rebuilds it and is slower once; sudo vinoauthface-auth --warm-cache rebuilds it now.",
+                    "{} of compiled OpenVINO models. Clearing slows the next unlock while models recompile; run sudo vinoauthface-auth --warm-cache to rebuild immediately.",
                     human_size(*bytes)
                 ),
             };
             Row::new("Compiled cache").help(&help).show(ui, |ui, _| {
                 let full = matches!(disk.cache, Ok(bytes) if bytes > 0);
-                if a11y::for_what(ui.add_enabled(can && full, Button::secondary("Clear")), "the compiled cache").clicked() {
+                if a11y::for_what(
+                    ui.add_enabled(can && full, Button::secondary("Clear")),
+                    "the compiled cache",
+                )
+                .clicked()
+                {
                     run = Some(apply::CLEAR_CACHE);
                 }
             });
         });
         if !self.helper {
             ui.add_space(8.0);
-            widgets::small(ui, "Can't delete from here: vinoauthface-helper isn't installed.");
+            widgets::small(
+                ui,
+                "Cleanup is unavailable because vinoauthface-helper is not installed.",
+            );
         }
         if let Some(verb) = run {
             self.notice = None;
-            apply::start(&self.clean_up, self.clean_up_runner, verb.to_string(), ui.ctx());
+            apply::start(
+                &self.clean_up,
+                self.clean_up_runner,
+                verb.to_string(),
+                ui.ctx(),
+            );
         }
     }
 
@@ -515,7 +637,7 @@ impl SettingsWindow {
                 false,
                 keys::ABORT_IF_SSH,
                 "Skip over SSH",
-                "Straight to the password for sudo over SSH.",
+                "Fall back to password authentication for sudo over SSH.",
                 c.abort_if_ssh(),
                 true,
             );
@@ -524,7 +646,7 @@ impl SettingsWindow {
                 false,
                 keys::ABORT_IF_LID_CLOSED,
                 "Skip with the lid closed",
-                "Leave off with an external camera.",
+                "Disable this if you use an external IR camera while docked.",
                 c.abort_if_lid_closed(),
                 false,
             );
@@ -532,8 +654,8 @@ impl SettingsWindow {
                 ui,
                 false,
                 keys::SEAT_CHECK,
-                "Only the person at the screen",
-                "Only the account using the screen. Also refuses root as the target.",
+                "Require active local seat",
+                "Only allow the user active at the local display. Also rejects root as the target account.",
                 c.seat_check(),
                 false,
             );
@@ -542,26 +664,31 @@ impl SettingsWindow {
                 false,
                 keys::REQUIRE_CONFIRMATION,
                 "Confirm sudo with Enter",
-                "After a match in a terminal, press Enter to let sudo through.",
+                "Require pressing Enter in the terminal after a face match before granting elevation.",
                 c.require_confirmation_elevation.unwrap_or(false),
                 false,
             );
-            self.number(ui, false, keys::START_DELAY_MS, Num {
-                title: "Wait before scanning",
-                help: "So locking the screen doesn't let you straight back in. 0 is off."
-                    .into(),
-                tone: Tone::Neutral,
-                value: secs(c.start_delay_ms()),
-                default: 2.0,
-                range: range_secs(limits::START_DELAY_RANGE),
-                unit: Unit::Seconds,
-                log: false,
-            });
+            self.number(
+                ui,
+                false,
+                keys::START_DELAY_MS,
+                Num {
+                    title: "Scan start delay",
+                    help: "Prevents immediately unlocking a screen you just locked (0 disables)."
+                        .into(),
+                    tone: Tone::Neutral,
+                    value: secs(c.start_delay_ms()),
+                    default: 2.0,
+                    range: range_secs(limits::START_DELAY_RANGE),
+                    unit: Unit::Seconds,
+                    log: false,
+                },
+            );
             self.choice(
                 ui,
                 keys::START_DELAY_SCOPE,
-                "Wait for",
-                "Everything also delays sudo, polkit and login.",
+                "Delay applies to",
+                "Choosing Everything also delays sudo, polkit, and login prompts.",
                 Tone::Neutral,
                 &c.start_delay_scope(),
                 "screen_lock",
@@ -574,21 +701,26 @@ impl SettingsWindow {
     pub(super) fn after_a_scan(&mut self, ui: &mut egui::Ui, c: &FaceAuthConfig) {
         let lockout = c.lockout_policy();
         widgets::group_label(ui, "After failed scans");
-        widgets::group_help(ui, "Face unlock pauses; the password always works.");
+        widgets::group_help(ui, "Temporarily pauses face unlock after repeated failures. Password login always remains available.");
         widgets::group(ui, |ui| {
-            self.number(ui, false, keys::LOCKOUT_THRESHOLD, Num {
-                title: "Failures allowed",
-                help: "Non-matching scans before the first pause.".into(),
-                tone: Tone::Neutral,
-                value: lockout.threshold.into(),
-                default: 5.0,
-                range: 1.0..=50.0,
-                unit: Unit::Count,
-                log: false,
-            });
+            self.number(
+                ui,
+                false,
+                keys::LOCKOUT_THRESHOLD,
+                Num {
+                    title: "Failures allowed",
+                    help: "Consecutive failed scans before lockout begins.".into(),
+                    tone: Tone::Neutral,
+                    value: lockout.threshold.into(),
+                    default: 5.0,
+                    range: 1.0..=50.0,
+                    unit: Unit::Count,
+                    log: false,
+                },
+            );
             self.number(ui, false, keys::LOCKOUT_BASE_DELAY_MS, Num {
-                title: "First pause",
-                help: "Doubles after each failure.".into(),
+                title: "Initial cooldown",
+                help: "Lockout duration after the first threshold breach; doubles with each subsequent failure.".into(),
                 tone: Tone::Neutral,
                 value: secs(lockout.base_delay_ms),
                 default: 2.0,
@@ -596,16 +728,21 @@ impl SettingsWindow {
                 unit: Unit::Seconds,
                 log: false,
             });
-            self.number(ui, false, keys::LOCKOUT_MAX_DELAY_MS, Num {
-                title: "Longest pause",
-                help: "The doubling stops here.".into(),
-                tone: Tone::Neutral,
-                value: secs(lockout.max_delay_ms),
-                default: 300.0,
-                range: 0.0..=3600.0,
-                unit: Unit::Seconds,
-                log: true,
-            });
+            self.number(
+                ui,
+                false,
+                keys::LOCKOUT_MAX_DELAY_MS,
+                Num {
+                    title: "Maximum cooldown",
+                    help: "Upper limit on the exponential lockout duration.".into(),
+                    tone: Tone::Neutral,
+                    value: secs(lockout.max_delay_ms),
+                    default: 300.0,
+                    range: 0.0..=3600.0,
+                    unit: Unit::Seconds,
+                    log: true,
+                },
+            );
         });
         ui.add_space(20.0);
         widgets::group_label(ui, "Templates");
@@ -614,16 +751,16 @@ impl SettingsWindow {
                 ui,
                 false,
                 keys::SEAL_EMBEDDINGS,
-                "Seal to the TPM",
-                "Protects a stolen disk, not a running system. From the next enrol.",
+                "TPM template sealing",
+                "Encrypts templates to the machine's TPM to protect against offline disk theft. Applies to future enrolments.",
                 c.seal_embeddings(),
                 false,
             );
             self.path(
                 ui,
                 keys::EMBEDDINGS_DIR,
-                "Template folder",
-                "Must be root's: whoever can write here picks whose face unlocks.",
+                "Template directory",
+                "Must be root-owned so unprivileged users cannot substitute face templates.",
                 limits::DEFAULT_EMBEDDINGS_DIR,
                 true,
                 None,
@@ -638,7 +775,7 @@ impl SettingsWindow {
                 false,
                 keys::UPDATE_CHECK,
                 "Check for updates",
-                "Once a day, from doctor and the tray. Never part of unlocking.",
+                "Checks GitHub Releases once a day from doctor and the tray. Never runs during authentication.",
                 c.update_check(),
                 true,
             );
@@ -652,7 +789,12 @@ impl SettingsWindow {
         if let Err(e) = &self.user.config {
             if self.user.read.is_some() {
                 ui.add_space(10.0);
-                widgets::banner(ui, Tone::Error, &format!("Your file doesn't parse, so it's ignored: {e}"), |_| {});
+                widgets::banner(
+                    ui,
+                    Tone::Error,
+                    &format!("Could not parse your config file, so it is ignored: {e}"),
+                    |_| {},
+                );
             }
         }
         columns(ui, |ui, column| match column {
@@ -661,15 +803,27 @@ impl SettingsWindow {
         });
     }
 
-    pub(super) fn stricter_for_you(&mut self, ui: &mut egui::Ui, sys: &FaceAuthConfig, mine: &FaceAuthConfig) {
-        widgets::group_label(ui, "Stricter for you");
+    pub(super) fn stricter_for_you(
+        &mut self,
+        ui: &mut egui::Ui,
+        sys: &FaceAuthConfig,
+        mine: &FaceAuthConfig,
+    ) {
+        widgets::group_label(ui, "Stricter thresholds");
         widgets::group_help(
             ui,
-            "Saved to ~/.config/face-auth.toml as you go. Looser values than this computer's are ignored.",
+            "Saved immediately to ~/.config/face-auth.toml. Values looser than the system setting are ignored.",
         );
         widgets::group(ui, |ui| {
             let floors = [
-                (keys::THRESHOLD, "Match threshold", sys.threshold(), mine.threshold, limits::THRESHOLD_RANGE, 2),
+                (
+                    keys::THRESHOLD,
+                    "Match threshold",
+                    sys.threshold(),
+                    mine.threshold,
+                    limits::THRESHOLD_RANGE,
+                    2,
+                ),
                 (
                     keys::DETECTOR_THRESHOLD,
                     "Face detection",
@@ -696,7 +850,7 @@ impl SettingsWindow {
                 ),
                 (
                     keys::LIVENESS_RESIDUAL,
-                    "Movement in parts",
+                    "Non-rigid motion",
                     sys.liveness_residual_motion_threshold(),
                     mine.liveness_residual_motion_threshold,
                     limits::LIVENESS_MOTION_RANGE,
@@ -706,26 +860,39 @@ impl SettingsWindow {
             for (key, title, floor, mine, range, decimals) in floors {
                 let shown = Unit::Ratio(decimals).show(floor.into());
                 let (help, tone) = match mine {
-                    Some(v) if v < floor => (format!("Ignored: looser than this computer's {shown}."), Tone::Warn),
-                    Some(_) => (format!("This computer: {shown}."), Tone::Neutral),
-                    None => (format!("This computer's {shown} applies."), Tone::Neutral),
+                    Some(v) if v < floor => (
+                        format!("Ignored: looser than the system setting ({shown})."),
+                        Tone::Warn,
+                    ),
+                    Some(_) => (format!("System setting: {shown}."), Tone::Neutral),
+                    None => (format!("Using system setting ({shown})."), Tone::Neutral),
                 };
-                self.number(ui, true, key, Num {
-                    title,
-                    help,
-                    tone,
-                    value: mine.unwrap_or(floor).into(),
-                    default: floor.into(),
-                    range: f64::from(floor)..=f64::from(*range.end()),
-                    unit: Unit::Ratio(decimals),
-                    log: key == keys::LIVENESS_MOTION,
-                });
+                self.number(
+                    ui,
+                    true,
+                    key,
+                    Num {
+                        title,
+                        help,
+                        tone,
+                        value: mine.unwrap_or(floor).into(),
+                        default: floor.into(),
+                        range: f64::from(floor)..=f64::from(*range.end()),
+                        unit: Unit::Ratio(decimals),
+                        log: key == keys::LIVENESS_MOTION,
+                    },
+                );
             }
         });
     }
 
-    pub(super) fn timing_and_camera_for_you(&mut self, ui: &mut egui::Ui, sys: &FaceAuthConfig, mine: &FaceAuthConfig) {
-        widgets::group_label(ui, "Timing for you");
+    pub(super) fn timing_and_camera_for_you(
+        &mut self,
+        ui: &mut egui::Ui,
+        sys: &FaceAuthConfig,
+        mine: &FaceAuthConfig,
+    ) {
+        widgets::group_label(ui, "Scan timing");
         widgets::group(ui, |ui| {
             let effective = sys.clone().with_user_overlay(mine);
             self.timing(ui, true, &effective);
@@ -734,17 +901,22 @@ impl SettingsWindow {
         widgets::group_label(ui, "Camera and tray");
         widgets::group(ui, |ui| {
             self.camera(ui, true);
-            self.number(ui, true, keys::TRAY_IDLE_MINUTES, Num {
-                title: "Hide the tray icon after",
-                help: "Minutes idle before it hides. 0 keeps it in view."
-                    .into(),
-                tone: Tone::Neutral,
-                value: mine.tray_idle_minutes() as f64,
-                default: 30.0,
-                range: 0.0..=1440.0,
-                unit: Unit::Minutes,
-                log: false,
-            });
+            self.number(
+                ui,
+                true,
+                keys::TRAY_IDLE_MINUTES,
+                Num {
+                    title: "Hide tray icon after",
+                    help: "Minutes of inactivity before hiding the tray icon (0 keeps it visible)."
+                        .into(),
+                    tone: Tone::Neutral,
+                    value: mine.tray_idle_minutes() as f64,
+                    default: 30.0,
+                    range: 0.0..=1440.0,
+                    unit: Unit::Minutes,
+                    log: false,
+                },
+            );
         });
     }
 }

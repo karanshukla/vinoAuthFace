@@ -42,6 +42,9 @@
 
 # Cosine similarity threshold (0.3 - 1.0, HIGHER = stricter match).
 # This is the floor: a user cannot go below it, only above.
+# 0.6 sits between genuine matches (benchmark floor ~0.83 for r50, ~0.76 for mbf)
+# and strangers / 2D photo-replays of you (which stay below 0.6); see
+# docs/security.md "Match accuracy against strangers" for why.
 threshold = 0.6
 
 # How long the face scan window lasts, in milliseconds (500 - 30000, default 5000).
@@ -138,8 +141,10 @@ scan_duration_ms = 5000
 # Confirm with Enter (default false). After a face match for sudo, su or polkit,
 # vinoAuthFace asks for Enter on the terminal before it lets the caller through, so
 # a process that runs `sudo` while you sit in front of the camera cannot get
-# root unnoticed. Waits 20 s, and any other key declines. Not asked when there
-# is no terminal (pkexec from a GUI), and never on lock screens or login.
+# root unnoticed. Waits 20 s, and any other key declines. Not asked for polkit
+# (pkexec from a GUI), and never on lock screens or login. sudo, su or doas
+# with no terminal (a background `setsid sudo`) can't be confirmed, so the
+# face doesn't count there and the password is asked instead.
 # guards.require_confirmation_elevation = false
 
 # ---------------------------------------------------------------------------

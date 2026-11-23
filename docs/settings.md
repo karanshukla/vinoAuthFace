@@ -5,9 +5,9 @@ nav_order: 8
 
 # Settings window
 
-`vinoauthface-settings` is an optional window for every key in `/etc/face-auth.toml` and your own
-`~/.config/face-auth.toml`. It runs as you and is never part of authentication. The
-[tray](tray.md) doesn't need it.
+`vinoauthface-settings` is an optional graphical interface for viewing and editing every key in
+`/etc/face-auth.toml` and your personal `~/.config/face-auth.toml`. It runs as your user and plays
+no part in authentication. The [tray icon](tray.md) works with or without it.
 
 ```bash
 vinoauthface-settings    # or --page face|matching|liveness|camera|models|security|you|about
@@ -17,111 +17,127 @@ vinoauthface-settings    # or --page face|matching|liveness|camera|models|securi
 
 ```bash
 curl -fsSL https://github.com/karanshukla/vinoAuthFace/releases/latest/download/install.sh | sudo bash -s -- --with-settings
-sudo ./deploy.sh --with-settings   # or from a checkout, building it
+sudo ./deploy.sh --with-settings   # or build and install from a checkout
 ```
 
-It needs the tray. It's the one glibc binary, not musl: the window loads the desktop's Wayland
-and OpenGL libraries. The release's copy is built against glibc 2.35, so it runs on Ubuntu 22.04,
-Debian 12 and anything newer. Later installs, upgrades and `update.sh` keep it; `--no-settings`
-and `uninstall.sh` remove it.
+The settings window requires the tray (it uses the tray's root helper). Unlike the static musl core
+binaries, `vinoauthface-settings` is linked against glibc so it can load your desktop's Wayland and
+OpenGL libraries. Release builds target glibc 2.35 and run on Ubuntu 22.04, Debian 12, and newer
+distributions. Subsequent deploys, upgrades, and `update.sh` preserve it; pass `--no-settings` or
+run `uninstall.sh` to remove it.
 
-| File | What |
+| Installed file | Purpose |
 |---|---|
-| `/usr/local/bin/vinoauthface-settings` | The window |
-| `/usr/local/share/applications/vinoauthface-settings.desktop` | Its launcher |
+| `/usr/local/bin/vinoauthface-settings` | Settings window executable |
+| `/usr/local/share/applications/vinoauthface-settings.desktop` | Application launcher |
 
 ## Pages
 
-| Page | Keys |
+| Page | Covers |
 |---|---|
-| Face | Not a key: guided enrolment, below |
-| Matching | `threshold`, `detector_threshold`, `min_face_size_ratio`, `scan_duration_ms`, `liveness.grace_ms`, `capture_timeout_ms`, `scan_interval_ms` |
-| Liveness | `liveness.preset`, `liveness.motion_threshold`, `liveness.residual_motion_threshold`, `liveness.window_ms` |
-| Camera | `device`, `bind_camera`, the camera pin (remove only) |
-| Models | `model_path`, `detector_model_path`, `backend`, `npu_device`; deleting unused models and the compiled cache, below |
-| Security | `guards.*`, `lockout.*`, `seal_embeddings`, `embeddings_dir`, `update_check` |
-| Just you | Your own file: stricter thresholds, scan timing, your IR camera, `tray_idle_minutes` |
-| About | The version, Check for updates, and links to vinopilot.ca and the other vinoPilot apps. Nothing goes online until you click it; Update to vN asks for your password and runs the tray helper's `upgrade`, as the tray's own entry does. A build from source (`dev`) is told the newest release but never offered it. `update_check = false` removes the row |
+| **Face** | [Guided enrolment](#guided-enrolment) (not a config key) |
+| **Matching** | `threshold`, `detector_threshold`, `min_face_size_ratio`, `scan_duration_ms`, `liveness.grace_ms`, `capture_timeout_ms`, `scan_interval_ms` |
+| **Liveness** | `liveness.preset`, `liveness.motion_threshold`, `liveness.residual_motion_threshold`, `liveness.window_ms` |
+| **Camera** | `device`, `bind_camera`, and removing an existing camera pin |
+| **Models** | `model_path`, `detector_model_path`, `backend`, `npu_device`, plus [model and cache cleanup](#disk-space) |
+| **Security** | `guards.*`, `lockout.*`, `seal_embeddings`, `embeddings_dir`, `update_check` |
+| **Personal** | Per-user `~/.config/face-auth.toml`: stricter thresholds, scan timing, IR camera override, and `tray_idle_minutes` |
+| **About** | Installed version, manual **Check for updates**, and links to vinopilot.ca and other vinoPilot apps |
 
-Each key is described in [configuration.md](configuration.md) and
+On the **About** page, nothing contacts the network until you click **Check for updates**. When a
+new release is available, **Update to vN** prompts for administrator authentication and runs the
+tray helper's `upgrade` action (identical to the tray menu). Local `dev` builds display the newest
+release version without offering to overwrite the local build. Setting `update_check = false` hides
+the update row.
+
+Every configuration key is documented in [configuration.md](configuration.md) and
 [`config/face-auth.toml.example`](https://github.com/karanshukla/vinoAuthFace/blob/main/config/face-auth.toml.example).
 
 ## Saving
 
-**Just you** saves as you change it. A value looser than the computer's shows as "Ignored", as
-authentication ignores it.
+Changes on the **Personal** page save immediately to `~/.config/face-auth.toml`. Any threshold
+looser than the system configuration is labelled "Ignored" because PAM authentication disregards it.
 
-**The other pages** apply to everyone, so changes wait for **Apply…**: one administrator
-password for all of them. **Discard** drops them.
+Changes on all other pages apply system-wide and wait until you click **Apply…** (one administrator
+prompt saves all pending edits) or **Discard**.
 
-Apply runs `pkexec /usr/local/libexec/vinoauthface-helper write-config` (`auth_admin`) with the
-new file on stdin. The helper doesn't trust it:
+Clicking **Apply…** runs `pkexec /usr/local/libexec/vinoauthface-helper write-config` (`auth_admin`)
+and pipes the proposed file over stdin. The helper validates the payload before writing:
 
-- It must validate as authentication reads it.
-- It must be based on the current file. If the file changed since the window read it, nothing is
-  written.
-- A new `model_path`, `detector_model_path` or `embeddings_dir` must be root's all the way up.
-  Each decides whose face unlocks, so a path you could write would bypass the password prompt.
-- The camera pin can be removed, not set.
+- The config must parse and validate identically to how `vinoauthface-auth` loads it.
+- The edit must be based on the current file on disk; if `/etc/face-auth.toml` changed after the
+  window loaded it, the write is rejected.
+- Any modified `model_path`, `detector_model_path`, or `embeddings_dir` must be root-owned at every
+  directory component so an unprivileged user cannot redirect authentication to files they control.
+- Existing camera pins can be removed, but new camera pins cannot be set from the GUI.
 
-The file is replaced in one rename, keeping its owner and mode. Only the changed lines move: a
-value is replaced in place or over its commented-out example, and a default is commented out.
-There's no service to restart.
+`/etc/face-auth.toml` is replaced via an atomic rename that preserves ownership and permissions.
+Edits are applied minimally in place (replacing existing lines, uncommenting matching example lines,
+or commenting out keys returned to default). Changes take effect immediately with no service to
+restart.
 
 ## Guided enrolment
 
-The Face page enrols you in six steps instead of 30 frames of one pose: straight on, a slight turn
-each way, a slight tilt up and down, then glasses off or on. It keeps about ten templates; matching
-takes the best one, so varied templates cover more of how you're seen.
+The **Face** page walks you through six poses instead of capturing 30 frames of a single pose:
+straight on, slight left turn, slight right turn, slight tilt up, slight tilt down, and glasses off
+or on. It saves roughly ten diverse templates; because matching compares against your best-matching
+template, varied poses improve recognition across everyday angles.
 
-Poses are measured from the detector's five landmarks, relative to your own straight-on pose. A frame
-counts once the pose is held for two frames with the eyes at least 30 px apart, and near-copies of
-a kept frame are skipped. Your first turn sets which side is which, so a mirrored image works. A
-step not done in 20 s is skipped; only straight on is required.
+Poses are measured from the detector's five facial landmarks relative to your straight-on pose. A
+frame is accepted once you hold the target pose for two frames with eyes at least 30 pixels apart,
+and near-duplicates of already kept frames are skipped. Your first horizontal turn establishes left
+versus right so mirrored camera feeds work automatically. Each step times out and skips after 20
+seconds; only the initial straight-on pose is required.
 
-| Button | Runs |
+| Button | Command |
 |---|---|
-| Start, or Enrol again (confirmed) | `vinoauthface enroll --guided`, replacing your templates |
-| Add poses | `vinoauthface improve --guided`, keeping them |
+| **Start** or **Enrol again** (confirmed) | `vinoauthface enroll --guided` (replaces existing templates) |
+| **Add poses** | `vinoauthface improve --guided` (appends to existing templates) |
 
-Both run as root through pkexec (`enrol-guided`, `retrain-guided`, `auth_admin`). Skip and Stop
-go to the enrolment's stdin; Stop saves nothing. There's no camera preview. In a terminal:
-`sudo vinoauthface enroll --guided --user $USER` (Enter skips, `cancel` stops).
+Both actions run as root through `pkexec` (`enrol-guided` and `retrain-guided`, both `auth_admin`).
+**Skip** and **Stop** send commands to the enrolment process's stdin, and **Stop** exits without
+saving. There is no live camera preview. To run guided enrolment in a terminal, use
+`sudo vinoauthface enroll --guided --user $USER` (press Enter to skip a step, or type `cancel` to
+abort).
 
-Off-angle templates can raise impostor scores, so measure before and after with
-`vinoauthface-similarity-check` (see #19).
+Because off-angle templates can occasionally increase impostor similarity scores, consider checking
+before and after with `vinoauthface-similarity-check` (see #19).
 
 ## Your own models
 
-The model paths are shown but can't be changed here for now: set `model_path` or
-`detector_model_path` in `/etc/face-auth.toml` by hand. **Check**, beside each, loads the model with tract on the CPU and reports what it
-found: values per face (the shipped models give 512), or whether a detector gives the five face points.
+Model paths are displayed read-only in the window for now; edit `model_path` or
+`detector_model_path` directly in `/etc/face-auth.toml` to change them. Clicking **Check** next to
+either path loads the model with `tract` on the CPU and reports its properties (embedding dimension,
+which is 512 for the shipped models, or whether a detector outputs the required five landmarks).
 
-Copy a model where only root can write before pointing at it:
+Install custom models in a root-owned location before configuring them:
 
 ```bash
 sudo install -m 644 my-model.onnx /usr/local/share/face-auth/
 ```
 
-Templates are tagged with their models (see [configuration.md](configuration.md)), so a new
-model means everyone enrols again. The Templates row says which models made yours.
+Because templates are tagged with the models that generated them (see
+[configuration.md](configuration.md)), switching models requires everyone to re-enrol. The
+**Templates** row shows which models generated your stored templates.
 
 ## Disk space
 
-The Models page's last group shows what the models take on disk:
+The bottom section of the **Models** page summarizes disk usage and lets you reclaim space:
 
-- **Unused models**: the `.onnx` files in `/usr/local/share/face-auth` that are neither the
-  recognition nor the detector model `/etc/face-auth.toml` uses, with their size. One is left
-  behind when you switch between the shipped models (deploy.sh never deletes the old one), or
-  when you copy in a model of your own to try. **Delete…** asks again in place; **Delete** runs
+- **Unused models:** Lists `.onnx` files in `/usr/local/share/face-auth` that are neither the active
+  recognition model nor the active detector model in `/etc/face-auth.toml`, along with their total
+  size. Unused files accumulate when switching between shipped models (`deploy.sh` leaves older
+  models on disk) or after testing custom models. Clicking **Delete…** then **Delete** runs
   `pkexec /usr/local/libexec/vinoauthface-helper delete-unused-models` (`auth_admin`). The helper
-  takes no paths: it works out the unused set itself from `/etc/face-auth.toml` as authentication
-  reads it, deletes only regular files directly in that directory (a symlink is left alone, and a
-  configured model is kept wherever its path leads), and deletes nothing if the file doesn't load.
-  `deploy.sh` downloads a shipped model again if you switch back to it.
-- **Compiled cache**: `/var/cache/face-auth`, OpenVINO's compiled models. **Clear** runs the
-  helper's `clear-cache`, which empties it and keeps the directory. The next unlock rebuilds it
-  and is slower once; `sudo vinoauthface-auth --warm-cache` rebuilds it straight away.
+  accepts no file paths; it computes the unused set itself from `/etc/face-auth.toml`, deletes only
+  regular files directly inside `/usr/local/share/face-auth` (skipping symlinks and keeping active
+  models wherever they point), and deletes nothing if the config fails to load. `deploy.sh` will
+  re-download a shipped model automatically if you switch back later.
+- **Compiled cache:** Shows the size of OpenVINO's compiled model cache in `/var/cache/face-auth`.
+  **Clear** invokes the helper's `clear-cache` verb, emptying the contents while keeping the
+  directory. The next unlock recompiles the cache (making that first scan slower), or you can
+  rebuild it immediately with `sudo vinoauthface-auth --warm-cache`.
 
-The models in use, and the cache, are removed by `sudo vinoauthface-uninstall`. Face templates in
-`/var/lib/face-auth` are never touched here; `--purge` is what removes those.
+Active models and the compiled cache are removed automatically by `sudo vinoauthface-uninstall`.
+Face templates in `/var/lib/face-auth` are never modified from this window and are only removed with
+`sudo vinoauthface-uninstall --purge`.

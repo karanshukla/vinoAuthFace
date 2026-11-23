@@ -75,7 +75,11 @@ pub type Spawner = fn(append: bool) -> std::io::Result<Child>;
 pub fn pkexec(append: bool) -> std::io::Result<Child> {
     Command::new("pkexec")
         .arg(HELPER)
-        .arg(if append { "retrain-guided" } else { "enrol-guided" })
+        .arg(if append {
+            "retrain-guided"
+        } else {
+            "enrol-guided"
+        })
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -87,13 +91,20 @@ pub fn start(shared: &Shared, spawner: Spawner, append: bool, ctx: &eframe::egui
         Ok(child) => child,
         Err(e) => {
             let mut run = shared.lock().unwrap();
-            *run = Run { done: Some(Err(format!("pkexec couldn't be started: {e}"))), ..Run::default() };
+            *run = Run {
+                done: Some(Err(format!("Could not start pkexec: {e}"))),
+                ..Run::default()
+            };
             return;
         }
     };
     {
         let mut run = shared.lock().unwrap();
-        *run = Run { running: true, stdin: child.stdin.take(), ..Run::default() };
+        *run = Run {
+            running: true,
+            stdin: child.stdin.take(),
+            ..Run::default()
+        };
     }
     let shared = Arc::clone(shared);
     let ctx = ctx.clone();
@@ -117,14 +128,16 @@ pub fn start(shared: &Shared, spawner: Spawner, append: bool, ctx: &eframe::egui
         run.done = Some(match (code, run.saved.take()) {
             (Some(0), Some(saved)) => Ok(saved),
             (Some(0), None) => Ok("Saved.".into()),
-            (code, _) if pkexec_cancelled(code) => Err("Nothing was enrolled: the password prompt was cancelled or failed.".into()),
+            (code, _) if pkexec_cancelled(code) => Err(
+                "Enrolment cancelled: administrator authentication was dismissed or failed.".into(),
+            ),
             _ => {
                 let last = last_line(&err);
                 let last = last.trim_start_matches("Error: ");
                 Err(if last.contains("cancelled") || last.is_empty() {
-                    "Stopped. Nothing was saved.".into()
+                    "Enrolment stopped. No templates were saved.".into()
                 } else {
-                    format!("Not enrolled: {last}")
+                    format!("Enrolment failed: {last}")
                 })
             }
         });
@@ -147,10 +160,10 @@ mod tests {
     #[test]
     fn reads_what_the_cli_prints() {
         let mut run = Run::default();
-        run.read("step 2/6 side: Turn your head a little to one side. (Enter skips)");
+        run.read("step 2/6 side: Turn your head slightly to one side. (Enter skips)");
         assert_eq!(run.step, Some((2, 6, Step::Side)));
         assert_eq!(run.kept, (0, 2));
-        run.read("  hint turn-more: Turn a little further.");
+        run.read("  hint turn-more: Turn slightly further.");
         assert_eq!(run.hint, Some(Hint::TurnMore));
         run.read("  kept 1/2");
         assert_eq!((run.kept, run.hint), ((1, 2), None));

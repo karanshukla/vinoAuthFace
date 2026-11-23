@@ -1,32 +1,45 @@
 # Security
 
-vinoAuthFace runs as root inside PAM. A successful match is `sufficient`: it skips the password and grants whatever the stack was guarding (sudo, the lock screen, polkit). A bug here is a local root, so the bar is higher than for a normal CLI.
+vinoAuthFace runs inside PAM, where a successful match is `sufficient`: it bypasses the password
+prompt and grants access to whatever the PAM stack protects (`sudo`, lock screens, or polkit).
+Because a flaw in the authentication path can lead to local privilege escalation, security issues
+here carry high impact.
 
 ## Reporting
 
-Use [private vulnerability reporting](https://github.com/karanshukla/vinoAuthFace/security/advisories/new). Do not open a public issue for anything exploitable.
+Report vulnerabilities through
+[GitHub private vulnerability reporting](https://github.com/karanshukla/vinoAuthFace/security/advisories/new).
+Please do not open a public issue for exploitable bugs.
 
-If the bug is also in [upstream authFace](https://github.com/pfalkingham/authFace), say so in the report; it gets coordinated with upstream before anything is published.
+If the issue also affects [upstream authFace](https://github.com/pfalkingham/authFace), mention that
+in your report so disclosure can be coordinated with upstream.
 
 ## Threat model
 
 | Threat | Defence |
 |---|---|
-| Local user plants or swaps a face template | Store and per-user directories are `root:face-auth` `2750`, templates `0640`, enrolment needs root. Only the per-user `lockout/` (`2770`, files `0660`) is group-writable. Nothing but the set-group-ID `vinoauthface-auth` has the `face-auth` group, so it can read every template (a bug in it exposes templates, never root) but write only lockout state. `deploy.sh` re-secures an old world-writable store in place and removes planted symlinks. |
-| Local user loosens matching via their own config or env | The PAM path reads `/etc/face-auth.toml` only and ignores `FACE_AUTH_*`. A user's config can only tighten thresholds or pick a validated IR device; paths, camera pin, lockout and backend are system policy. |
-| Wrong account's template decides the result | Identity comes from `PAM_USER` only, resolved through NSS and validated before becoming a path component. |
-| Remote session triggers the local camera | A `PAM_RHOST` other than empty, `localhost` or a loopback IP address is refused. `sudo` doesn't set it, so the scan is also skipped when an ancestor process is `sshd` (`abort_if_ssh`, on by default). Not covered: a `tmux`/`screen` session started over SSH and reattached, or a remote desktop session; `guards.seat_check` (opt-in) narrows the latter to the account at the seat. |
-| Photo or screen held up to the camera | Active-NIR camera: screens emit no usable IR. Motion liveness rejects a rigidly held image. |
-| Spoofed USB device injecting frames | `pin-camera.sh` pins the physical port and V4L2 index; vinoauthface-auth re-checks it from sysfs on every attempt and fails closed. Auto-detect ignores virtual (v4l2loopback) nodes. |
-| Scripted retry loop | Exponential lockout after 5 failed matches, stored in the root-owned store so a user cannot reset it. |
-| Crafted template file or driver data | Every length read from disk or the driver is bounded before use; non-finite values and trailing bytes are rejected. |
-| Tampered model or release binary | Models are pinned by SHA-256 (detector URL pinned to a commit) and verified at install (`deploy.sh`) and by `vinoauthface doctor`, not each time they're loaded. Release binaries are verified against `SHA256SUMS` before install. |
-| PR that weakens any of the above | The `guard` check fails any PR from someone other than the owner that touches anything but prose (`docs/`, `README.md`, `CHANGELOG.md`, `LICENSE`, issue templates): code, scripts, policy, config, CI, build settings and this file are all protected, and so is any new path. It also fails if it can't read the PR's complete file list. It runs from main's copy (`pull_request_target`) and never executes PR code. Only the owner's ruleset bypass can merge a flagged PR. |
-| Compromised dependency or action | Crates from crates.io only (cargo-deny), `Cargo.lock` enforced, every CI action pinned to a commit, Dependabot waits 7 days and nothing auto-merges. |
+| Local user plants or swaps a face template | `/var/lib/face-auth` and per-user directories are `root:face-auth` (`2750`), templates are `0640`, and enrolment requires root. Only `<user>/lockout/` (`2770`, files `0660`) is group-writable. Only the set-group-ID `vinoauthface-auth` binary holds the `face-auth` group, so a bug in it can expose templates or lockout state without granting root. `deploy.sh` also re-secures legacy world-writable stores in place and removes planted symlinks. |
+| Local user weakens matching via config or environment | During PAM authentication, `vinoauthface-auth` treats `/etc/face-auth.toml` as authoritative and ignores `FACE_AUTH_*` environment variables. A user's `~/.config/face-auth.toml` can only tighten thresholds or pick a validated IR device; paths, camera pin, lockout, guards, and backend remain system policy. |
+| Wrong account's template decides authentication | Target identity comes exclusively from `PAM_USER`, resolved through NSS and validated before being used as a path component. |
+| Remote session triggers the local camera | Any `PAM_RHOST` value other than empty, `localhost`, or a loopback IP address is rejected. Because `sudo` does not set `PAM_RHOST`, scans are also skipped whenever `sshd` appears in the process ancestry (`abort_if_ssh`, enabled by default). Reattached `tmux`/`screen` sessions originally started over SSH and remote desktop sessions are not detected by this check; enabling `guards.seat_check` restricts remote desktop sessions to the account active at the seat. |
+| Photo or phone screen held up to the camera | Active near-IR cameras reject OLED and LCD screens because screens emit almost no usable IR. Motion liveness rejects rigidly held images. |
+| Spoofed USB device injects replayed frames | `pin-camera.sh` pins the camera's physical USB port and V4L2 index. `vinoauthface-auth` re-verifies this identity from sysfs on every attempt and fails closed on a mismatch. Auto-detection also ignores virtual (`v4l2loopback`) nodes. |
+| Scripted brute-force retry loop | Five consecutive failed matches trigger an exponential lockout stored in the root-owned template store, where an unprivileged user cannot reset it. |
+| Malformed template file or V4L2 driver data | All lengths read from disk or from the V4L2 driver are bounds-checked before use, and non-finite floats or trailing bytes are rejected. |
+| Tampered model or release binary | Models are pinned by SHA-256 (with the detector URL pinned to a commit) and verified during installation (`deploy.sh`) and by `vinoauthface doctor` (though not re-hashed on every load). Release binaries are verified against `SHA256SUMS` before installation. |
+| Pull request weakens authentication or build security | The required `guard` workflow fails any PR from a non-owner that modifies anything outside documentation and prose files (Markdown and images under `docs/`, `README.md`, `CHANGELOG.md`, `LICENSE`, issue templates, and `FUNDING.yml`). Code, scripts, the docs site's build files (`docs/Gemfile`, `docs/_config.yml`, `docs/CNAME`), SELinux policy, config, CI workflows, build files, this file, and newly added paths are all protected. The check runs from `main`'s copy via `pull_request_target` without executing PR code, fails if the complete PR file list cannot be read, and can only be overridden by the repository owner's ruleset bypass. |
+| Compromised dependency or GitHub Action | `cargo-deny` restricts crates to crates.io, `Cargo.lock` is enforced, all CI actions are pinned to commit SHAs, Dependabot uses a 7-day cooldown, and nothing auto-merges. |
 
 ## What it does not defend against
 
-- **Printed photos moved by hand, IR-visible prints, 3D masks.** Paper reflects some NIR and a gently moved print can pass the motion check. There is no depth sensing. Treat face unlock as convenience over a password you still have, not a stronger factor.
-- **Anyone with root.** Root can rewrite the store, the config, or the binary.
-- **Someone at your unlocked desk.** A face match is a presence check, not an intent check (see #29).
-- **A compromised maintainer account.** Rulesets and review slow this down; they do not stop someone holding the keys.
+- **Printed photos moved by hand, IR-visible prints, and 3D masks.** Paper reflects some near-IR
+  light, and a gently moved print can satisfy the default motion check. There is no depth sensing.
+  Treat face unlock as a convenient alternative to typing your password, keeping your password as
+  the primary security boundary.
+- **A local root attacker.** Anyone with root access can modify the template store, configuration,
+  or installed binaries.
+- **Someone standing at your unlocked desk.** A face match proves presence in front of the camera,
+  not explicit user intent (see #29).
+- **A compromised maintainer account.** Repository rulesets and review slow down unauthorized
+  changes, but they cannot prevent someone who controls the repository keys from publishing
+  malicious releases.

@@ -112,8 +112,8 @@ impl Liveness {
         }
     }
 
-    /// Adds a face frame. `false` for the first one, which is only a baseline
-    /// and is never encoded.
+    /// Adds a verified face frame. `false` for the first one, which is only a
+    /// baseline before motion can be measured.
     fn observe(&mut self, frame_num: usize, face: FaceFrame) -> Result<bool> {
         while let Some(oldest) = self.recent_faces.front() {
             if !drop_oldest_face(self.recent_faces.len(), face.at.duration_since(oldest.at), self.window) {
@@ -461,12 +461,7 @@ impl FaceAuth {
                 }
             }
 
-            if !liveness.observe(frame_num, FaceFrame { at: Instant::now(), raw, face_box })? {
-                tracing::debug!(frame = frame_num, "liveness baseline");
-                nap(deadline);
-                continue;
-            }
-
+            let at = Instant::now();
             // Degenerate landmarks are one bad frame, not a broken setup.
             let input = match face_input(&frame, &face_box) {
                 Ok(input) => input,
@@ -478,19 +473,29 @@ impl FaceAuth {
             };
             let embedding = self.encoder.encode(input.view())?;
 
-            if verify_embedding(&embedding, &store, self.config.threshold())? {
-                if !liveness.motion_seen {
-                    tracing::debug!(frame = frame_num, "match without liveness motion yet; continuing");
-                    liveness_pending = true;
-                    nap(deadline);
-                    continue;
-                }
-                tracing::debug!(frame = frame_num, elapsed = ?t0.elapsed(), "match");
-                record_success(user, &embeddings_dir);
-                return Ok(true);
+            // Only matching frames feed liveness, so motion from someone
+            // else's live face can't carry over to a photo of the user.
+            if !verify_embedding(&embedding, &store, self.config.threshold())? {
+                nap(deadline);
+                continue;
             }
 
-            nap(deadline);
+            if !liveness.observe(frame_num, FaceFrame { at, raw, face_box })? {
+                tracing::debug!(frame = frame_num, "liveness baseline");
+                liveness_pending = !liveness.motion_seen;
+                nap(deadline);
+                continue;
+            }
+
+            if !liveness.motion_seen {
+                tracing::debug!(frame = frame_num, "match without liveness motion yet; continuing");
+                liveness_pending = true;
+                nap(deadline);
+                continue;
+            }
+            tracing::debug!(frame = frame_num, elapsed = ?t0.elapsed(), "match");
+            record_success(user, &embeddings_dir);
+            return Ok(true);
         }
     }
 

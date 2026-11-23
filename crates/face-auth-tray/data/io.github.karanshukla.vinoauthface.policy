@@ -225,7 +225,7 @@
   </action>
   <action id="io.github.karanshukla.vinoauthface.write-config">
     <description>Change face unlock settings</description>
-    <message>Authentication is required to change face unlock settings for everyone on this computer</message>
+    <message>Authentication is required to change system-wide face unlock settings</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
@@ -235,7 +235,7 @@
     <annotate key="org.freedesktop.policykit.exec.argv1">write-config</annotate>
   </action>
   <action id="io.github.karanshukla.vinoauthface.enrol-guided">
-    <description>Enrol your face, guided through a few poses</description>
+    <description>Enrol your face using guided poses</description>
     <message>Authentication is required to enrol your face</message>
     <defaults>
       <allow_any>no</allow_any>
@@ -259,7 +259,7 @@
   </action>
 
   <action id="io.github.karanshukla.vinoauthface.delete-unused-models">
-    <description>Delete face models vinoAuthFace isn't using</description>
+    <description>Delete unused face recognition models</description>
     <message>Authentication is required to delete unused face models</message>
     <defaults>
       <allow_any>no</allow_any>
@@ -271,7 +271,7 @@
   </action>
 
   <action id="io.github.karanshukla.vinoauthface.clear-cache">
-    <description>Clear vinoAuthFace's compiled model cache</description>
+    <description>Clear the compiled model cache</description>
     <message>Authentication is required to clear the compiled model cache</message>
     <defaults>
       <allow_any>no</allow_any>
