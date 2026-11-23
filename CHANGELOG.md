@@ -3,8 +3,9 @@
 Releases are numbered consecutively (v2, v3, ...). GitHub's release pages list
 the pull requests in each one; this file says what changed for you.
 
-## [Unreleased]
+## [v17] - 2026-11-23
 
+- **deb and rpm packages.** Each release now ships `.deb` and `.rpm` packages, so on Debian, Ubuntu, Fedora and their relatives you install with your package manager instead of the script, and vinoPilot can update it the same way. Removing the package cleans up after itself.
 - **With `require_confirmation_elevation` on, sudo, su and doas need a terminal to confirm on.** Without one (a GUI tool using `SUDO_ASKPASS`, or a background `setsid sudo`) the face no longer counts and the password is asked; before, a missing terminal skipped the confirmation. polkit dialogs are unchanged.
 - **Only frames that match your face count towards liveness**, so motion from another person's face can't carry over to a photo of you.
 - **The settings window refuses a model or template path that goes through a symlink or directory you could change**, not just one whose target is yours.
