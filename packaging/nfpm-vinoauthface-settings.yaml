@@ -1,0 +1,29 @@
+# The optional settings window (needs the tray's helper to write /etc).
+name: vinoauthface-settings
+arch: amd64
+platform: linux
+version: ${PKG_VERSION}
+section: admin
+priority: optional
+maintainer: Karan Shukla <karzshukla@gmail.com>
+homepage: https://github.com/karanshukla/vinoAuthFace
+license: MIT
+description: |
+  Settings window for vinoauthface. Draws with the desktop's own GL and
+  Wayland/X11 libraries, loaded at run time.
+overrides:
+  deb:
+    depends:
+      - "vinoauthface-tray (= ${PKG_VERSION})"
+      - "libc6 (>= 2.35)"
+    recommends: [libwayland-client0, libxkbcommon0, libgl1]
+  rpm:
+    depends:
+      - "vinoauthface-tray = ${PKG_VERSION}"
+      - glibc
+    recommends: [libwayland-client, libxkbcommon, mesa-libGL]
+contents:
+  - src: stage/bin/vinoauthface-settings
+    dst: /usr/bin/vinoauthface-settings
+  - src: stage/data/vinoauthface-settings.desktop
+    dst: /usr/share/applications/vinoauthface-settings.desktop
