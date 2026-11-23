@@ -1,0 +1,8 @@
+#!/bin/sh
+# Installed from a package: the package manager updates this, not a script that
+# downloads a release. Shipped so the tray's and settings window's Update
+# buttons, and `vinoauthface doctor`'s hint, end in a clear message.
+echo "vinoauthface was installed from a package. Update it with your package manager:" >&2
+echo "  sudo apt update && sudo apt upgrade vinoauthface    (Debian, Ubuntu)" >&2
+echo "  sudo dnf upgrade vinoauthface                       (Fedora)" >&2
+exit 1

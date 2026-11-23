@@ -13,7 +13,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 /// Where deploy.sh installs the models, root-owned.
-pub const SHARE_DIR: &str = "/usr/local/share/face-auth";
+pub const SHARE_DIR: &str = crate::paths::SHARE_DIR;
 /// OpenVINO's compiled models, root-owned. Refilled on the next unlock, or
 /// at once by `vinoauthface-auth --warm-cache`.
 pub const CACHE_DIR: &str = "/var/cache/face-auth";

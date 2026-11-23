@@ -5,7 +5,8 @@ name: Release binaries
 # back to them when `cargo` isn't found. Two builds are glibc: the settings window, and the
 # `npu` (OpenVINO) build of vinoauthface-auth and vinoauthface, which loads OpenVINO when it
 # starts rather than linking it, so it builds here with no OpenVINO and runs against whichever
-# release ovfetch installs on the machine.
+# release ovfetch installs on the machine. The `packages` job also builds the deb and rpm
+# packages (packaging/build.sh) and attaches them.
 on:
   push:
     tags:
@@ -91,8 +92,62 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # The deb and rpm packages (packaging/build.sh, docs/packaging.md). Their own job: they are
+# built for /usr (VINOAUTHFACE_PREFIX), not the /usr/local the other binaries here use, and the
+# tray and settings window in them are glibc builds, so ubuntu-22.04 again for an old glibc.
+  packages:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y musl-tools cmake rpm
+
+      # nfpm builds both formats from one config. Pinned by version and hash: a release job
+      # should not run whatever a download happens to contain.
+      - name: Install nfpm
+        env:
+          NFPM_VERSION: 2.43.0
+          NFPM_SHA256: a80d5f724ed70b192ffa8a2bde469c013cef559c8afa3441eb51dd9a918beb6b
+        run: |
+          curl -fsSL --retry 5 -o nfpm.tar.gz "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          echo "$NFPM_SHA256  nfpm.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf nfpm.tar.gz -C "$HOME/.local/bin" nfpm
+          rm nfpm.tar.gz
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build the packages
+        env:
+          TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'dev' }}
+        run: packaging/build.sh "$TAG"
+
+      # Look inside what was built before anything ships it (packaging/smoke-test.sh): the PAM
+      # binary is set-group-ID in group face-auth, nothing names /usr/local, the binaries run and
+      # carry the tag, and the tray package depends on exactly this version of the core one. CI
+      # being set makes the rpm checks mandatory.
+      - name: Smoke-test the packages
+        env:
+          TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'dev' }}
+        run: packaging/smoke-test.sh "$TAG"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vinoauthface-packages
+          path: packaging/dist/*
+          if-no-files-found: error
+
   build:
-    needs: glibc
+    needs: [glibc, packages]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -140,6 +195,12 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vinoauthface-glibc
+          path: dist
+
+      # The deb and rpm packages, so they are in SHA256SUMS and the release like the rest.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vinoauthface-packages
           path: dist
 
       # The source bundle is what install.sh and vinoauthface-upgrade install from: the tag's

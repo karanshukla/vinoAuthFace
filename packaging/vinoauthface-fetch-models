@@ -1,0 +1,34 @@
+#!/bin/bash
+# Downloads the face models the way deploy.sh does: one pinned zip, every file
+# checked against /usr/share/face-auth/models.sha256 before it is installed.
+# Not done by the package itself (no network from a maintainer script, and the
+# models' own licence is theirs to accept).
+#
+#   sudo vinoauthface-fetch-models        # the default (mbf) recognition model + detector
+set -euo pipefail
+
+SHARE_DIR="/usr/share/face-auth"
+URL="https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
+NAMES=(w600k_mbf.onnx det_500m.onnx)
+
+[ "$(id -u)" -eq 0 ] || { echo "Run this with sudo." >&2; exit 1; }
+for tool in curl unzip sha256sum; do
+    command -v "$tool" >/dev/null || { echo "Needs $tool." >&2; exit 1; }
+done
+
+todo=()
+for n in "${NAMES[@]}"; do [ -f "$SHARE_DIR/$n" ] || todo+=("$n"); done
+[ "${#todo[@]}" -gt 0 ] || { echo "Models already installed in $SHARE_DIR."; exit 0; }
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+curl -fL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 --max-time 600 -o "$work/m.zip" "$URL"
+unzip -oq "$work/m.zip" -d "$work"
+for n in "${todo[@]}"; do
+    want="$(awk -v n="$n" '$2 == n { print $1 }' "$SHARE_DIR/models.sha256")"
+    [ -n "$want" ] || { echo "No pinned checksum for $n." >&2; exit 1; }
+    echo "$want  $work/$n" | sha256sum -c --status - \
+        || { echo "Checksum mismatch for $n; refusing to install it." >&2; exit 1; }
+    install -D -o root -g root -m 0644 "$work/$n" "$SHARE_DIR/$n"
+    echo "Installed $n"
+done

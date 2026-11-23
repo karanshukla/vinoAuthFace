@@ -102,7 +102,7 @@ const NPU_LIB_DIRS: &[&str] = &[
     "/usr/lib/x86_64-linux-gnu",
     "/usr/lib",
     "/usr/local/lib",
-    "/usr/local/lib/face-auth/npu",
+    face_auth_core::paths::NPU_PREFIX_DIR,
 ];
 /// The compiler's name by driver: 1.32 loads the first, 1.35 the second.
 const NPU_COMPILER_LIBS: &[&str] = &["libnpu_driver_compiler.so", "libopenvino_intel_npu_compiler.so"];

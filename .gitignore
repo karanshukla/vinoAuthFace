@@ -30,3 +30,7 @@ _site/
 docs/.bundle/
 docs/vendor/
 docs/.jekyll-cache/
+
+# deb/rpm build output (packaging/build.sh)
+/packaging/stage/
+/packaging/dist/

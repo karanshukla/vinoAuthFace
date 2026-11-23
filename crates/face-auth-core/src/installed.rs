@@ -4,9 +4,9 @@
 use std::process::{Command, Stdio};
 
 /// The set-group-ID PAM binary, where deploy.sh installs it.
-pub const FACE_AUTH: &str = "/usr/local/bin/vinoauthface-auth";
+pub const FACE_AUTH: &str = crate::paths::FACE_AUTH;
 /// Where deploy.sh installs the tray's root helper; polkit pins this path.
-pub const HELPER: &str = "/usr/local/libexec/vinoauthface-helper";
+pub const HELPER: &str = crate::paths::HELPER;
 
 /// pkexec's exit codes for a dismissed or refused prompt.
 const PKEXEC_CANCELLED: [i32; 2] = [126, 127];

@@ -14,7 +14,7 @@ mod app {
     pub mod notifier;
     pub mod tray;
 
-    pub const TRAY: &str = "/usr/local/bin/vinoauthface-tray";
+    pub use face_auth_core::paths::TRAY;
     pub const DOCS: &str = "https://vinoauthface.vinopilot.ca/";
 }
 

@@ -1,0 +1,47 @@
+# Tray icon and its pkexec helper. The polkit policy pins the helper's path.
+name: vinoauthface-tray
+arch: amd64
+platform: linux
+version: ${PKG_VERSION}
+section: admin
+priority: optional
+maintainer: Karan Shukla <karzshukla@gmail.com>
+homepage: https://github.com/karanshukla/vinoAuthFace
+license: MIT
+description: |
+  Tray icon for vinoauthface (enrol, retrain, login-screen mode), with the
+  root helper polkit authorises for it.
+overrides:
+  deb:
+    depends:
+      - "vinoauthface (= ${PKG_VERSION})"
+      - "libc6 (>= 2.35)"
+      - "polkitd | policykit-1"
+      - "pkexec | policykit-1"
+  rpm:
+    depends:
+      - "vinoauthface = ${PKG_VERSION}"
+      - glibc
+      - polkit
+contents:
+  - src: stage/bin/vinoauthface-tray
+    dst: /usr/bin/vinoauthface-tray
+  - src: stage/libexec/vinoauthface-helper
+    dst: /usr/libexec/vinoauthface-helper
+    file_info: { mode: 0755, owner: root, group: root }
+  - src: stage/data/io.github.karanshukla.vinoauthface.policy
+    dst: /usr/share/polkit-1/actions/io.github.karanshukla.vinoauthface.policy
+  - src: stage/data/vinoauthface-tray.desktop
+    dst: /etc/xdg/autostart/vinoauthface-tray.desktop
+  - src: stage/data/vinoauthface-tray.desktop
+    dst: /usr/share/applications/vinoauthface-tray.desktop
+  - src: stage/data/vinoauthface-enrol.desktop
+    dst: /usr/share/applications/vinoauthface-enrol.desktop
+  - src: stage/data/vinoauthface.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/vinoauthface.svg
+  - src: stage/data/vinoauthface-symbolic.svg
+    dst: /usr/share/icons/hicolor/symbolic/apps/vinoauthface-symbolic.svg
+  - src: stage/data/vinoauthface-scanning-symbolic.svg
+    dst: /usr/share/icons/hicolor/symbolic/apps/vinoauthface-scanning-symbolic.svg
+  - src: stage/data/vinoauthface-attention-symbolic.svg
+    dst: /usr/share/icons/hicolor/symbolic/apps/vinoauthface-attention-symbolic.svg

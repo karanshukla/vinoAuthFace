@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 
 /// The optional settings window (`deploy.sh --with-settings`). When it is
 /// installed, Settings opens it instead of the tray's own submenu.
-pub const SETTINGS_WINDOW: &str = "/usr/local/bin/vinoauthface-settings";
+pub use face_auth_core::paths::SETTINGS_WINDOW;
 
 /// Face unlock at the KDE login screen (Plasma Login or SDDM), as `login-mode.sh` names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,0 +1,82 @@
+# Core package: the PAM binary, the enrolment CLI, setup and model-fetch scripts.
+name: vinoauthface
+arch: amd64
+platform: linux
+version: ${PKG_VERSION}
+section: admin
+priority: optional
+maintainer: Karan Shukla <karzshukla@gmail.com>
+homepage: https://github.com/karanshukla/vinoAuthFace
+license: MIT
+description: |
+  Face unlock for sudo, polkit and lock screens from an IR camera.
+  Installing only adds files: fetch the models, enrol and run vinoauthface-setup
+  to switch it on. Static binaries, no daemon.
+depends:
+  - curl
+  - unzip
+overrides:
+  deb:
+    depends: [curl, unzip, libc6]
+  rpm:
+    depends: [curl, unzip]
+suggests:
+  - vinoauthface-tray
+scripts:
+  preinstall: scripts/preinstall.sh
+  postinstall: scripts/postinstall.sh
+  preremove: scripts/preremove.sh
+  postremove: scripts/postremove.sh
+contents:
+  # Set-group-ID: lock screens run PAM as the user, and the group is what lets
+  # this binary (and nothing else) read the template store.
+  - src: stage/bin/vinoauthface-auth
+    dst: /usr/bin/vinoauthface-auth
+    file_info: { mode: 02755, owner: root, group: face-auth }
+  - src: stage/bin/vinoauthface
+    dst: /usr/bin/vinoauthface
+  - src: stage/bin/vinoauthface-upgrade
+    dst: /usr/bin/vinoauthface-upgrade
+  - src: /usr/bin/vinoauthface-upgrade
+    dst: /usr/bin/vinoauthface-update
+    type: symlink
+  - src: stage/bin/vinoauthface-fetch-models
+    dst: /usr/bin/vinoauthface-fetch-models
+  - src: stage/libexec/vinoauthface-unseal
+    dst: /usr/libexec/vinoauthface-unseal
+  - src: stage/share/setup.sh
+    dst: /usr/share/face-auth/setup.sh
+    file_info: { mode: 0755 }
+  - src: /usr/share/face-auth/setup.sh
+    dst: /usr/bin/vinoauthface-setup
+    type: symlink
+  - src: stage/share/login-mode.sh
+    dst: /usr/share/face-auth/login-mode.sh
+    file_info: { mode: 0755 }
+  - src: stage/share/setting-mode.sh
+    dst: /usr/share/face-auth/setting-mode.sh
+    file_info: { mode: 0755 }
+  - src: stage/share/face-auth.te
+    dst: /usr/share/face-auth/selinux/face-auth.te
+  - src: stage/share/face-auth.fc
+    dst: /usr/share/face-auth/selinux/face-auth.fc
+  - src: stage/share/models.sha256
+    dst: /usr/share/face-auth/models.sha256
+  - src: stage/share/installed-from
+    dst: /usr/share/face-auth/installed-from
+  - src: stage/data/face-auth.toml
+    dst: /etc/face-auth.toml
+    type: config|noreplace
+  - src: stage/data/vinoauthface.bash
+    dst: /usr/share/bash-completion/completions/vinoauthface
+  - src: stage/data/_vinoauthface
+    dst: /usr/share/zsh/vendor-completions/_vinoauthface
+  - src: stage/data/vinoauthface.fish
+    dst: /usr/share/fish/vendor_completions.d/vinoauthface.fish
+  # The template store: never user-writable (docs/security.md).
+  - dst: /var/lib/face-auth
+    type: dir
+    file_info: { mode: 02750, owner: root, group: face-auth }
+  - dst: /var/cache/face-auth
+    type: dir
+    file_info: { mode: 0755 }

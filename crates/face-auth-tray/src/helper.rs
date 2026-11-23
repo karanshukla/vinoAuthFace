@@ -7,10 +7,10 @@
 //! (`PKEXEC_UID`, which pkexec sets and a caller cannot).
 
 pub use face_auth_core::installed::{FACE_AUTH, HELPER};
-pub const FACE_ENROLL: &str = "/usr/local/bin/vinoauthface";
-pub const UPGRADER: &str = "/usr/local/bin/vinoauthface-upgrade";
-pub const LOGIN_MODE: &str = "/usr/local/share/face-auth/login-mode.sh";
-pub const SETTING_MODE: &str = "/usr/local/share/face-auth/setting-mode.sh";
+pub use face_auth_core::paths::FACE_ENROLL;
+pub use face_auth_core::paths::UPGRADER;
+pub use face_auth_core::paths::LOGIN_MODE;
+pub use face_auth_core::paths::SETTING_MODE;
 pub const SAFE_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 /// Absolute, never looked up on `PATH`. NixOS has no `/bin/bash`, so its
 /// system profile is tried after.
