@@ -11,6 +11,7 @@ pub mod inference;
 pub mod installed;
 pub mod lockout;
 pub mod model_files;
+pub mod paths;
 pub mod preprocess;
 pub mod scrfd;
 pub mod seal;

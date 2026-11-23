@@ -20,7 +20,7 @@ const TPM_DEVICE: &str = "/dev/tpmrm0";
 /// SELinux gives it the only domain allowed the TPM and the host key, so the
 /// greeters unseal through it. Older installs have no helper and run
 /// `systemd-creds` directly, which works everywhere but a confined greeter.
-const UNSEAL_HELPER: &str = "/usr/local/libexec/vinoauthface-unseal";
+const UNSEAL_HELPER: &str = crate::paths::UNSEAL_HELPER;
 
 fn systemd_creds() -> &'static str {
     SYSTEMD_CREDS_PATHS.into_iter().find(|p| Path::new(p).exists()).unwrap_or(SYSTEMD_CREDS_PATHS[0])

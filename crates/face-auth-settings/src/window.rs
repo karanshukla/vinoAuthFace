@@ -29,8 +29,8 @@ use crate::models::{self, Check, Checks, Disk};
 
 const TITLE: &str = "vinoAuthFace settings";
 pub const APP_ID: &str = "io.github.karanshukla.vinoauthface.Settings";
-const DEFAULT_MODEL: &str = "/usr/local/share/face-auth/w600k_mbf.onnx";
-const DEFAULT_DETECTOR: &str = "/usr/local/share/face-auth/det_500m.onnx";
+const DEFAULT_MODEL: &str = face_auth_core::paths::DEFAULT_MODEL;
+const DEFAULT_DETECTOR: &str = face_auth_core::paths::DEFAULT_DETECTOR;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {

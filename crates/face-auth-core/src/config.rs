@@ -436,7 +436,7 @@ impl FaceAuthConfig {
     pub fn model_path(&self) -> String {
         self.model_path
             .clone()
-            .unwrap_or_else(|| "/usr/local/share/face-auth/w600k_mbf.onnx".to_string())
+            .unwrap_or_else(|| crate::paths::DEFAULT_MODEL.to_string())
     }
 
     /// Identity stored with saved embeddings, so a changed `model_path` is a
@@ -746,7 +746,7 @@ mod tests {
             detector_threshold: Some(0.5),
             embeddings_dir: Some(DEFAULT_EMBEDDINGS_DIR.to_string()),
             device: Some("/dev/video3".to_string()),
-            model_path: Some("/usr/local/share/face-auth/w600k_mbf.onnx".to_string()),
+            model_path: Some(crate::paths::DEFAULT_MODEL.to_string()),
             ..FaceAuthConfig::default()
         }
     }
@@ -988,8 +988,8 @@ mod tests {
         cfg.apply_user_overlay(&overlay);
         assert!(cfg.seal_embeddings(), "a user must not lift the downgrade guard");
         assert_eq!(cfg.embeddings_dir(), PathBuf::from(DEFAULT_EMBEDDINGS_DIR));
-        assert!(cfg.model_path().starts_with("/usr/local/share"));
-        assert!(cfg.detector_model_path().starts_with("/usr/local/share"));
+        assert!(cfg.model_path().starts_with(crate::paths::SHARE_DIR));
+        assert!(cfg.detector_model_path().starts_with(crate::paths::SHARE_DIR));
         assert_eq!(cfg.lockout_policy().threshold, 5);
         assert!(cfg.pinned_camera_path.is_none() && cfg.pinned_camera_index.is_none());
         assert_eq!(cfg.liveness_window_ms(), 1000, "a longer window is a looser liveness gate");

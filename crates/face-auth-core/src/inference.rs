@@ -10,7 +10,7 @@ const ENCODER_SIZE: i64 = 112;
 /// Where `deploy.sh` installs ovfetch's OpenVINO prefix. The auth binary
 /// carries it as its rpath too, which is how OpenVINO's own dependencies
 /// (TBB) are found in glibc's secure mode, where their `$ORIGIN` is ignored.
-pub const OPENVINO_DIR: &str = "/usr/local/lib/face-auth/openvino";
+pub const OPENVINO_DIR: &str = crate::paths::OPENVINO_DIR;
 
 /// Where to look for `libopenvino_c`, in order: ovfetch's prefix, an archive
 /// install's copy (beside it, registered with `ldconfig`), then a distro
@@ -20,7 +20,7 @@ pub const OPENVINO_DIR: &str = "/usr/local/lib/face-auth/openvino";
 #[cfg(feature = "npu")]
 const OPENVINO_SEARCH: &[&str] = &[
     OPENVINO_DIR,
-    "/usr/local/lib/face-auth/openvino/intel64",
+    crate::paths::OPENVINO_INTEL64_DIR,
     "/usr/lib64",
     "/usr/lib/x86_64-linux-gnu",
     "/lib/x86_64-linux-gnu",
@@ -85,7 +85,7 @@ fn load_openvino() -> anyhow::Result<()> {
 /// and every `compile_model` fails with `ZE_RESULT_ERROR_UNSUPPORTED_FEATURE`),
 /// or a whole user-mode driver. Root-owned and hash-checked like the OpenVINO
 /// prefix on the rpath; a PAM caller cannot read the user's own prefix.
-pub const NPU_PREFIX_DIR: &str = "/usr/local/lib/face-auth/npu";
+pub const NPU_PREFIX_DIR: &str = crate::paths::NPU_PREFIX_DIR;
 /// What ovfetch writes there: the libraries to load, one per line, in order.
 pub const NPU_PRELOAD_LIST: &str = "ovfetch-preload.txt";
 
