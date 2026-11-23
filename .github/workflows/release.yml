@@ -253,4 +253,20 @@ jobs:
         with:
           files: dist/*
           prerelease: false
+          # The asset list is long and mostly extensionless binaries; this text at the top of the
+          # notes says which file to download. Generated notes are appended after it.
+          body: |
+            ## Which file do I want?
+
+            **Most people want one of these two:**
+
+            - **Install from the terminal:** `curl -fsSL https://github.com/karanshukla/vinoAuthFace/releases/latest/download/install.sh | sudo bash` (the `install.sh` file below)
+            - **Install a package:** `vinoauthface-tray-x86_64.deb` or `.rpm` (and `vinoauthface-settings-x86_64.deb` or `.rpm` for the settings window)
+
+            **The files with no extension** are the compiled programs, one per tool, and the installer and `vinoauthface-upgrade` download them for you. You only need one by hand if you're building a custom install. The name ends in the build it is:
+
+            - `...-x86_64-unknown-linux-musl`: static build that runs on any x86_64 Linux. These are the face-auth programs (`auth`, `tray`, `helper`, `unseal`, `camera-diag`, `similarity-check`) and the main `vinoauthface` command.
+            - `...-x86_64-unknown-linux-gnu`: needs glibc 2.35 or newer. These are the settings window and the OpenVINO (NPU) builds, which load desktop and OpenVINO libraries when they start, so they can't be static.
+
+            **Everything else:** `vinoauthface-source.tar.gz` is what `install.sh` installs from, and `SHA256SUMS` has the checksum of every file here.
           generate_release_notes: true
