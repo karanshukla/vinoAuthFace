@@ -96,7 +96,7 @@ impl SettingsWindow {
                 .help("Capture additional poses without replacing existing templates.")
                 .show(ui, |ui, _| {
                     if ui
-                        .add_enabled(enrolled && !self.confirm_replace, Button::secondary("Add"))
+                        .add_enabled(enrolled && !self.confirm_replace, Button::tonal("Add"))
                         .clicked()
                     {
                         start = Some(true);
@@ -311,7 +311,7 @@ impl SettingsWindow {
             let mut picked = preset;
             let mut changed = false;
             Row::new("Preset").help(help).tone(tone).show(ui, |ui, _| {
-                changed = widgets::segmented(
+                changed = widgets::button_group(
                     ui,
                     "Preset",
                     &mut picked,

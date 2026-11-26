@@ -428,23 +428,25 @@ impl SettingsWindow {
         };
         let mut apply = false;
         let mut discard = false;
-        ui.horizontal(|ui| {
-            ui.set_min_height(widgets::CONTROL_HEIGHT);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                apply = ui.add_enabled(can, Button::primary("Apply…")).clicked();
-                discard = ui.add_enabled(!running, Button::ghost("Discard")).clicked();
-                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(text)
-                                .size(12.5)
-                                .color(theme::palette(ui.ctx()).muted),
-                        )
-                        .truncate(),
-                    );
-                });
-            });
-        });
+        let muted = theme::palette(ui.ctx()).muted;
+        widgets::responsive_bar(
+            ui,
+            460.0,
+            |ui| {
+                ui.set_min_height(widgets::CONTROL_HEIGHT);
+                ui.add(egui::Label::new(RichText::new(&text).size(12.5).color(muted)).wrap());
+            },
+            |ui| {
+                let rtl = ui.layout().main_dir() == egui::Direction::RightToLeft;
+                if rtl {
+                    apply = ui.add_enabled(can, Button::primary("Apply…")).clicked();
+                    discard = ui.add_enabled(!running, Button::ghost("Discard")).clicked();
+                } else {
+                    discard = ui.add_enabled(!running, Button::ghost("Discard")).clicked();
+                    apply = ui.add_enabled(can, Button::primary("Apply…")).clicked();
+                }
+            },
+        );
         if apply {
             self.notice = None;
             self.apply_now(ui.ctx());
@@ -467,11 +469,12 @@ impl SettingsWindow {
         let header = theme::header(ctx, self.kde_header.as_ref(), focused);
         let window = ctx.content_rect().width();
         let wide = window >= widgets::SIDEBAR_FROM;
+        let inset = widgets::content_inset(window);
 
         if wide {
             self.sidebar(root, p, window);
         } else {
-            self.top_bar(root, p, header);
+            self.top_bar(root, p, header, inset);
         }
 
         let waiting = !self.system.changes().is_empty() || self.apply.lock().unwrap().running;
@@ -481,7 +484,7 @@ impl SettingsWindow {
                 .frame(
                     egui::Frame::NONE
                         .fill(p.surface)
-                        .inner_margin(egui::Margin::symmetric(16, 8)),
+                        .inner_margin(egui::Margin::symmetric(inset.min(16.0) as i8, 8)),
                 )
                 .show(root, |ui| self.apply_bar(ui));
             let rect = bar.response.rect;
@@ -499,7 +502,7 @@ impl SettingsWindow {
             let title = self.page.title();
             vino_ui::window::bar(
                 root,
-                widgets::page_inset(window),
+                inset,
                 |ui| {
                     widgets::title(ui, title);
                 },
@@ -509,11 +512,7 @@ impl SettingsWindow {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin {
-                left: if wide {
-                    widgets::page_inset(window) as i8
-                } else {
-                    16
-                },
+                left: inset as i8,
                 right: 0,
                 top: match (wide, title_bar) {
                     (_, true) => 2,
@@ -681,12 +680,18 @@ impl SettingsWindow {
             });
     }
 
-    fn top_bar(&mut self, root: &mut egui::Ui, p: &theme::Palette, header: theme::Header) {
+    fn top_bar(
+        &mut self,
+        root: &mut egui::Ui,
+        p: &theme::Palette,
+        header: theme::Header,
+        inset: f32,
+    ) {
         egui::Panel::top("header")
             .show_separator_line(false)
             .frame(widgets::header_frame(header, p).inner_margin(egui::Margin {
-                left: 16,
-                right: 16,
+                left: inset as i8,
+                right: inset as i8,
                 top: 8,
                 bottom: 0,
             }))
