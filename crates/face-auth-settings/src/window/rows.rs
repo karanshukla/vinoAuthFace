@@ -83,7 +83,7 @@ impl SettingsWindow {
         let mut changed = false;
         Row::new(title).help(help).tone(tone).show(ui, |ui, _| {
             ui.add_enabled_ui(enabled, |ui| {
-                changed = widgets::segmented(ui, title, &mut picked, options);
+                changed = widgets::button_group(ui, title, &mut picked, options);
             });
         });
         if changed {
@@ -174,7 +174,7 @@ impl SettingsWindow {
                 if check.is_some() {
                     let running = result == Some(Check::Running);
                     let label = if running { "Checking…" } else { "Check" };
-                    let button = ui.add_enabled(!running, Button::secondary(label).small());
+                    let button = ui.add_enabled(!running, Button::tonal(label).small());
                     run_check = a11y::for_what(button, title).clicked();
                 }
                 let width = ui.available_width().min(320.0);
