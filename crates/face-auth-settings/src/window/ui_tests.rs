@@ -629,28 +629,34 @@ fn the_models_in_use_are_never_offered() {
 fn inapplicable_rows_hide_when_their_parent_setting_is_off() {
     let (w, _, _) = window(Page::Liveness, "conditional", None, refuse);
     let mut h = harness(w, TALL, Theme::Light);
-    h.get_by_label("Face motion");
+    h.get_by_role_and_label(Role::SpinButton, "Face motion");
     h.get_by_role_and_label(Role::RadioButton, "Off").click();
     settle(&mut h);
-    assert!(h.query_by_label("Face motion").is_none());
+    assert!(h
+        .query_by_role_and_label(Role::SpinButton, "Face motion")
+        .is_none());
     h.get_by_role_and_label(Role::RadioButton, "Standard")
         .click();
     settle(&mut h);
-    h.get_by_label("Face motion");
+    h.get_by_role_and_label(Role::SpinButton, "Face motion");
 
     h.get_by_role_and_label(Role::Tab, "Models").click();
     settle(&mut h);
-    assert!(h.query_by_label("OpenVINO device").is_none());
+    assert!(h
+        .query_by_role_and_label(Role::RadioGroup, "OpenVINO device")
+        .is_none());
     h.get_by_role_and_label(Role::RadioButton, "OpenVINO")
         .click();
     settle(&mut h);
-    h.get_by_label("OpenVINO device");
+    h.get_by_role_and_label(Role::RadioGroup, "OpenVINO device");
 
     h.get_by_role_and_label(Role::Tab, "Security").click();
     settle(&mut h);
-    h.get_by_label("Delay applies to");
+    h.get_by_role_and_label(Role::RadioGroup, "Delay applies to");
     h.state_mut()
         .set(false, keys::START_DELAY_MS, Some("0".into()));
     settle(&mut h);
-    assert!(h.query_by_label("Delay applies to").is_none());
+    assert!(h
+        .query_by_role_and_label(Role::RadioGroup, "Delay applies to")
+        .is_none());
 }
