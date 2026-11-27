@@ -3,6 +3,11 @@
 Releases are numbered consecutively (v2, v3, ...). GitHub's release pages list
 the pull requests in each one; this file says what changed for you.
 
+## [v18] - 2026-11-27
+
+- **The settings window has the refreshed look.** Controls and layout follow vino-ui 0.6.1 (expressive controls, responsive layout), and text across the window is shorter.
+- **The release notes say which asset to download** at the top.
+
 ## [v17] - 2026-11-23
 
 - **deb and rpm packages.** Each release now ships `.deb` and `.rpm` packages, so on Debian, Ubuntu, Fedora and their relatives you install with your package manager instead of the script, and vinoPilot can update it the same way. Removing the package cleans up after itself.
