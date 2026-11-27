@@ -31,7 +31,7 @@ impl SettingsWindow {
                 {
                     out = Some(None);
                 }
-                let response = slider(ui, named, &mut v, n.range.clone(), n.unit, n.log);
+                let response = slider(ui, named, &mut v, &n);
                 if response.changed() && (v - before).abs() >= step / 2.0 {
                     let same = (v - n.default).abs() < step / 2.0;
                     out = Some((!same).then(|| n.unit.literal(v)));
@@ -74,7 +74,6 @@ impl SettingsWindow {
         current: &str,
         default: &str,
         options: &[(&'static str, &str)],
-        enabled: bool,
     ) {
         let mut picked: &'static str = options
             .iter()
@@ -82,9 +81,7 @@ impl SettingsWindow {
             .map_or("", |(v, _)| v);
         let mut changed = false;
         Row::new(title).help(help).tone(tone).show(ui, |ui, _| {
-            ui.add_enabled_ui(enabled, |ui| {
-                changed = widgets::button_group(ui, title, &mut picked, options);
-            });
+            changed = widgets::button_group(ui, title, &mut picked, options);
         });
         if changed {
             self.set(
@@ -239,25 +236,21 @@ impl SettingsWindow {
         };
         let shown = current.as_deref().map_or_else(|| auto.clone(), label);
         let (help, tone) = match (&current, user) {
-            (Some(path), true) if !self.ir_cameras.contains(path) => {
-                ("Ignored: not a valid IR sensor on this system.".to_string(), Tone::Warn)
-            }
-            (Some(path), false) if cam(path).is_none() => {
-                (format!("{path} is not connected, so face unlock will not find a camera."), Tone::Warn)
-            }
-            (Some(path), false) if cam(path).is_some_and(|c| c.virtual_) => (
-                "Virtual camera: any process can supply frames, including static photos. For testing only.".to_string(),
+            (Some(path), true) if !self.ir_cameras.contains(path) => (
+                "Ignored: not a valid IR sensor on this system.".to_string(),
                 Tone::Warn,
             ),
-            (Some(path), false) if cam(path).is_some_and(|c| !c.ir) => {
-                ("Not an IR sensor. Face unlock requires greyscale infrared frames.".to_string(), Tone::Warn)
+            (Some(path), false) if cam(path).is_none() => {
+                (format!("{path} isn't connected."), Tone::Warn)
             }
-            (None, false) => (
-                "Automatically selects the first physical IR camera (never virtual devices).".to_string(),
-                Tone::Neutral,
+            (Some(path), false) if cam(path).is_some_and(|c| c.virtual_) => {
+                ("Virtual camera — for testing only.".to_string(), Tone::Warn)
+            }
+            (Some(path), false) if cam(path).is_some_and(|c| !c.ir) => (
+                "Not an IR camera. Face unlock needs infrared.".to_string(),
+                Tone::Warn,
             ),
-            (None, true) => ("Uses the system default camera.".to_string(), Tone::Neutral),
-            _ => ("Manually selected device (useful for testing or multi-camera setups).".to_string(), Tone::Neutral),
+            _ => (String::new(), Tone::Neutral),
         };
         let mut picked = current.clone();
         Row::new("IR camera")

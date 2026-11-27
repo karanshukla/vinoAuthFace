@@ -149,6 +149,15 @@ impl Unit {
             Unit::Minutes => format!("{v:.0} min"),
         }
     }
+
+    fn show_with(self, v: f64, zero: Option<&str>) -> String {
+        if let Some(label) = zero {
+            if v.abs() < self.step() / 2.0 {
+                return label.to_string();
+            }
+        }
+        self.show(v)
+    }
 }
 
 fn trim(v: f64, decimals: usize) -> String {
@@ -196,6 +205,8 @@ struct Num<'a> {
     range: RangeInclusive<f64>,
     unit: Unit,
     log: bool,
+    /// Label shown instead of `0` when zero disables or changes the mode.
+    zero: Option<&'static str>,
 }
 
 pub struct SettingsWindow {
@@ -363,7 +374,7 @@ impl SettingsWindow {
                 self.notice = Some(if tag_changed {
                     (
                         Tone::Warn,
-                        "Saved. Because the model configuration changed, re-enrol before using face unlock.".into(),
+                        "Saved. Re-enrol your face to use the new model.".into(),
                     )
                 } else {
                     (Tone::Info, "Saved.".into())
@@ -405,26 +416,13 @@ impl SettingsWindow {
         let changes = self.system.changes().len();
         let valid = FaceAuthConfig::parse_system(&self.system.text);
         let (text, can) = if running {
-            (
-                "Waiting for administrator authentication…".to_string(),
-                false,
-            )
+            ("Waiting for authentication…".to_string(), false)
         } else if !self.helper {
-            (
-                "Cannot apply: vinoauthface-helper is not installed.".into(),
-                false,
-            )
+            ("Can't apply: system helper isn't installed.".into(), false)
         } else if let Err(e) = &valid {
-            (format!("Cannot apply: {e:#}"), false)
+            (format!("Can't apply: {e:#}"), false)
         } else {
-            (
-                plural(
-                    changes,
-                    "system-wide change pending",
-                    "system-wide changes pending",
-                ),
-                true,
-            )
+            (plural(changes, "change pending", "changes pending"), true)
         };
         let mut apply = false;
         let mut discard = false;
@@ -535,7 +533,7 @@ impl SettingsWindow {
             widgets::title(ui, self.page.title());
         }
         if !matches!(self.page, Page::You | Page::Face | Page::About) {
-            widgets::small(ui, "System-wide settings. Click Apply to save changes.");
+            widgets::small(ui, "Applies to everyone on this computer.");
         }
         if let Some((tone, text)) = self.notice.clone() {
             ui.add_space(12.0);
@@ -557,9 +555,7 @@ impl SettingsWindow {
                 widgets::banner(
                     ui,
                     Tone::Error,
-                    &format!(
-                        "Could not parse {SYSTEM_CONFIG_PATH}, so face unlock is disabled: {e}"
-                    ),
+                    &format!("Invalid {SYSTEM_CONFIG_PATH} — face unlock is disabled: {e}"),
                     |_| {},
                 );
             }
@@ -832,27 +828,48 @@ fn slider(
     ui: &mut egui::Ui,
     named: &dyn Fn(egui::Response) -> egui::Response,
     value: &mut f64,
-    range: RangeInclusive<f64>,
-    unit: Unit,
-    log: bool,
+    n: &Num<'_>,
 ) -> egui::Response {
-    let (decimals, suffix) = match unit {
+    let (decimals, suffix) = match n.unit {
         Unit::Ratio(d) => (d, ""),
         Unit::Seconds => (1, " s"),
         Unit::Count => (0, ""),
         Unit::Minutes => (0, " min"),
     };
+    let step = n.unit.step();
     let number = egui::DragValue::new(value)
-        .range(range.clone())
-        .speed(unit.step())
-        .fixed_decimals(decimals)
-        .suffix(suffix);
+        .range(n.range.clone())
+        .speed(step);
+    let number = match n.zero {
+        Some(label) => number
+            .custom_formatter(move |v, _| {
+                if v.abs() < step / 2.0 {
+                    label.to_string()
+                } else {
+                    format!("{v:.decimals$}{suffix}")
+                }
+            })
+            .custom_parser(move |s| {
+                let s = s.trim();
+                if s.eq_ignore_ascii_case(label) {
+                    return Some(0.0);
+                }
+                let trimmed_suffix = suffix.trim();
+                let s = if trimmed_suffix.is_empty() {
+                    s
+                } else {
+                    s.strip_suffix(trimmed_suffix).unwrap_or(s).trim()
+                };
+                s.parse::<f64>().ok()
+            }),
+        None => number.fixed_decimals(decimals).suffix(suffix),
+    };
     let number = named(ui.add(number));
     ui.spacing_mut().slider_width = (ui.available_width() - 8.0).clamp(48.0, 200.0);
-    let bar = egui::Slider::new(value, range)
+    let bar = egui::Slider::new(value, n.range.clone())
         .show_value(false)
-        .logarithmic(log);
-    let bar = if log { bar } else { bar.step_by(unit.step()) };
+        .logarithmic(n.log);
+    let bar = if n.log { bar } else { bar.step_by(step) };
     let bar = named(ui.add(bar));
     bar | number
 }

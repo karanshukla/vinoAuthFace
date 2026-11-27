@@ -80,14 +80,12 @@ fn run_helper(verb: &str, payload: Option<&str>, failed: &str) -> Result<String,
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     match out.status.code() {
         Some(0) => Ok(String::from_utf8_lossy(&out.stdout).trim().to_string()),
-        code if pkexec_cancelled(code) => Err(
-            "No changes were saved: administrator authentication was dismissed or failed.".into(),
-        ),
+        code if pkexec_cancelled(code) => Err("Not saved: authentication was cancelled.".into()),
         _ => {
             let err = String::from_utf8_lossy(&out.stderr);
             let err = err.trim().trim_start_matches("vinoauthface-helper: ");
             Err(if err.is_empty() {
-                "The helper exited with an error and produced no output.".into()
+                "Helper failed with no output.".into()
             } else {
                 format!("{failed}: {err}")
             })

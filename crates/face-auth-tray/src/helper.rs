@@ -58,13 +58,13 @@ pub const SETTINGS: &[Setting] = &[
             choice(
                 "convenient",
                 "Convenient",
-                "Lower match threshold (higher risk of false matches) and no lock-screen scan delay. Liveness checks remain enabled.",
+                "Lower match threshold and no lock-screen delay. Liveness stays on.",
             ),
             choice("balanced", "Balanced", "Default security settings."),
             choice(
                 "strict",
                 "Strict",
-                "Rejects hand-moved photos, raises the match threshold, requires sitting closer, and waits 5 seconds before scanning the lock screen. May fail if you sit very still or far back.",
+                "Stricter match, closer range, 5s lock-screen delay, and stricter liveness.",
             ),
         ],
     },
@@ -83,14 +83,14 @@ pub const SETTINGS: &[Setting] = &[
         title: "Confirm sudo with Enter",
         choices: &[
             choice("off", "Off", ""),
-            choice("on", "On", "Requires pressing Enter in the terminal after a face match for sudo, su, or polkit."),
+            choice("on", "On", "Press Enter in the terminal after a face match."),
         ],
     },
     Setting {
         key: "updates",
         title: "Check for updates",
         choices: &[
-            choice("on", "On", "Checks GitHub Releases once a day with an anonymous request."),
+            choice("on", "On", "Checks daily for updates."),
             choice("off", "Off", "Update checks disabled. Restart the tray to apply."),
         ],
     },

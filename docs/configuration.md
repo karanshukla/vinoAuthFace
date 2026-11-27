@@ -54,7 +54,8 @@ guards.start_delay_ms = 100
 
 Related settings use dotted prefixes: `liveness.*`, `lockout.*`, and `guards.*` (which controls when
 a scan runs: `seat_check`, `abort_if_ssh`, `abort_if_lid_closed`, `start_delay_ms`,
-`start_delay_scope`, and `require_confirmation_elevation`).
+`start_delay_scope`, and `require_confirmation_elevation`; note that `guards.seat_check` also
+rejects `root` as the target account — see [security.md](security.md#trust-model)).
 
 Write these as dotted keys rather than TOML `[liveness]` table headers. `deploy.sh` and
 `pin-camera.sh` append top-level keys to the end of `/etc/face-auth.toml`, and placing a `[table]`
@@ -71,7 +72,8 @@ are still supported. If both forms are present, the flat key takes precedence.
 | `standard` | `0.01` | `0` | Default; stationary faces still pass via natural drift over the liveness window |
 | `strict` | `0.01` | `0.3` | Also rejects hand-moved photos; may fail if you hold completely still |
 
-Setting an individual `liveness.*` threshold overrides that specific value from the preset.
+Setting an individual `liveness.*` threshold overrides that specific value from the preset (`0.3`
+is recommended when enabling `liveness.residual_motion_threshold` manually).
 
 ### What a user may override at the login prompt
 

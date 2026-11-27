@@ -42,7 +42,7 @@ pub fn build(tray: &Tray) -> Vec<MenuItem<Tray>> {
         } else {
             // Unknown is treated as enrolled: a one-click enrol could replace
             // templates the tray just failed to see.
-            menu.push(item("Retrain face (add more frames)…", MenuIcon::Refresh.name(), idle, |t| t.run(Action::Retrain)));
+            menu.push(item("Add face scans…", MenuIcon::Refresh.name(), idle, |t| t.run(Action::Retrain)));
             if enrolled {
                 menu.push(item("Test scan", MenuIcon::Camera.name(), idle, |t| t.run(Action::Test)));
             }

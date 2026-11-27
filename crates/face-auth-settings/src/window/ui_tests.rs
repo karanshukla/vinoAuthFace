@@ -257,7 +257,7 @@ fn a_change_for_everyone_waits_for_apply() {
         .click();
     settle(&mut h);
     assert_eq!(h.state().system.changes(), vec![keys::ABORT_IF_SSH]);
-    h.get_by_label("1 system-wide change pending");
+    h.get_by_label("1 change pending");
     h.get_by_label("1 unsaved change");
     assert_eq!(
         std::fs::read_to_string(&system).unwrap(),
@@ -369,9 +369,7 @@ fn a_new_model_says_everyone_enrols_again() {
     let mut h = harness(w, WIDE, Theme::Light);
     // The detector part of the tag depends on which models are installed here.
     let before = FaceAuthConfig::from_toml(EXAMPLE).unwrap().model_tag();
-    h.get_by_label(&format!(
-        "Created with {before}. Templates from other models are rejected."
-    ));
+    h.get_by_label(&format!("Tagged with {before}."));
     h.state_mut().set(
         false,
         keys::MODEL_PATH,
@@ -469,15 +467,20 @@ fn guided_enrolment_shows_each_step_and_its_hint() {
     w.enrolled = Some(false);
     let mut h = harness(w, WIDE, Theme::Light);
     h.get_by_label("Not enrolled");
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Add").is_none(),
+        "Add poses is hidden before enrolment"
+    );
     h.get_by_role_and_label(Role::Button, "Start").click();
     until_shown(&mut h, "Look straight at the camera.");
     until_shown(&mut h, "Move closer.");
-    h.get_by_label("Step 1 of 6: 0 of 2 templates captured.");
+    h.get_by_label("Step 1 of 6 · 0 of 2 captured");
     assert!(unnamed_controls(&h).is_empty());
     h.get_by_role_and_label(Role::Button, "Skip this step")
         .click();
     until_shown(&mut h, "Saved 1 embeddings for 'dev'");
     h.get_by_label("Enrolled");
+    h.get_by_role_and_label(Role::Button, "Add");
 }
 
 #[test]
@@ -488,7 +491,7 @@ fn stopping_guided_enrolment_saves_nothing() {
     h.get_by_role_and_label(Role::Button, "Enrol again…")
         .click();
     settle(&mut h);
-    h.get_by_label("Your current templates will be replaced.");
+    h.get_by_label("Replaces your saved face data.");
     h.get_by_role_and_label(Role::Button, "Cancel").click();
     settle(&mut h);
     h.get_by_role_and_label(Role::Button, "Add").click();
@@ -538,13 +541,11 @@ fn auto_detect_names_its_pick_and_a_virtual_camera_is_flagged() {
         shown(&h).as_deref(),
         Some("Dummy video device (/dev/video10), virtual")
     );
-    h.get_by_label(
-        "Virtual camera: any process can supply frames, including static photos. For testing only.",
-    );
+    h.get_by_label("Virtual camera — for testing only.");
     h.state_mut()
         .set(false, keys::DEVICE, Some(keys::string("/dev/video0")));
     settle(&mut h);
-    h.get_by_label("Not an IR sensor. Face unlock requires greyscale infrared frames.");
+    h.get_by_label("Not an IR camera. Face unlock needs infrared.");
 }
 
 /// The clean-up verbs the window asked the helper for, across tests.
@@ -562,16 +563,12 @@ const TALL: [f32; 2] = [860.0, 1400.0];
 fn unused_models_are_listed_and_deleting_them_confirms_in_place() {
     let (w, _, _) = window(Page::Models, "unused", None, refuse);
     let mut h = harness(w, TALL, Theme::Light);
-    h.get_by_label(
-        "spare.onnx, 1.5 kB. Not configured as the active recognition or detector model.",
-    );
-    h.get_by_label("2.5 kB of compiled OpenVINO models. Clearing slows the next unlock while models recompile; run sudo vinoauthface-auth --warm-cache to rebuild immediately.");
+    h.get_by_label("spare.onnx, 1.5 kB.");
+    h.get_by_label("2.5 kB. Rebuilds automatically on the next unlock.");
     h.get_by_role_and_label(Role::Button, "Delete… the unused models")
         .click();
     settle(&mut h);
-    h.get_by_label(
-        "Deletes spare.onnx, 1.5 kB. Shipped models can be re-downloaded with deploy.sh.",
-    );
+    h.get_by_label("Deletes spare.onnx, 1.5 kB.");
     assert!(unnamed_controls(&h).is_empty());
     h.get_by_role_and_label(Role::Button, "Cancel").click();
     settle(&mut h);
@@ -622,8 +619,38 @@ fn the_models_in_use_are_never_offered() {
     let mut w = w;
     w.system.reload();
     let h = harness(w, TALL, Theme::Light);
-    h.get_by_label("None. All installed models are currently in use.");
+    h.get_by_label("None.");
     assert!(h
         .query_by_role_and_label(Role::Button, "Delete… the unused models")
         .is_none());
+}
+
+#[test]
+fn inapplicable_rows_hide_when_their_parent_setting_is_off() {
+    let (w, _, _) = window(Page::Liveness, "conditional", None, refuse);
+    let mut h = harness(w, TALL, Theme::Light);
+    h.get_by_label("Face motion");
+    h.get_by_role_and_label(Role::RadioButton, "Off").click();
+    settle(&mut h);
+    assert!(h.query_by_label("Face motion").is_none());
+    h.get_by_role_and_label(Role::RadioButton, "Standard")
+        .click();
+    settle(&mut h);
+    h.get_by_label("Face motion");
+
+    h.get_by_role_and_label(Role::Tab, "Models").click();
+    settle(&mut h);
+    assert!(h.query_by_label("OpenVINO device").is_none());
+    h.get_by_role_and_label(Role::RadioButton, "OpenVINO")
+        .click();
+    settle(&mut h);
+    h.get_by_label("OpenVINO device");
+
+    h.get_by_role_and_label(Role::Tab, "Security").click();
+    settle(&mut h);
+    h.get_by_label("Delay applies to");
+    h.state_mut()
+        .set(false, keys::START_DELAY_MS, Some("0".into()));
+    settle(&mut h);
+    assert!(h.query_by_label("Delay applies to").is_none());
 }
