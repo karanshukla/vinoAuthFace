@@ -55,7 +55,7 @@ files.
 | **Update to vN** | Appears at the top when a newer GitHub release is available (checked 1 minute after startup, then daily; set `update_check = false` to disable). Runs `vinoauthface-upgrade` ([install.md](install.md#updating)), restarts the tray, and notifies once per release. | root (`pkexec`) |
 | **Status** | Submenu showing the detected camera, enrolment state, backend, recognition and detector models, and installed version. Updates its label when scanning, enrolling, or reporting an error (e.g., "Status: No IR camera found", "Status: Enrolling your face: Captured 3/30") with a warning icon on errors. Run `sudo vinoauthface doctor` for full diagnostics. | your user |
 | **Enrol face** | Runs `vinoauthface enroll --user <you>`. Shown only before you are enrolled. To re-enrol later, use the [settings window](settings.md)'s Face page or run `sudo vinoauthface enroll --user $USER`. | root (`pkexec`) |
-| **Retrain face** | Runs `vinoauthface improve --user <you>` to capture additional frames (such as new lighting or glasses) while keeping existing templates. | root (`pkexec`) |
+| **Add face scans** | Runs `vinoauthface improve --user <you>` to capture additional frames (such as new lighting or glasses) while keeping existing templates. | root (`pkexec`) |
 | **Test scan** | Runs a live verification scan the same way a lock screen does and displays the result as a desktop notification. | your user |
 | **Login screen** | Shown on Plasma Login or SDDM systems. Switches between password only, password + face, or face unlock via `login-mode.sh` (see [pam.md](pam.md#login-screen)). | root (`pkexec`) |
 | **Settings** | Opens the [settings window](settings.md) if installed. Otherwise opens a submenu with Security preset, scan duration, two system toggles (applied to `/etc/face-auth.toml` via `setting-mode.sh`), and **Hide icon when idle** (saved to `~/.config/face-auth.toml`). Hand-edited values that do not match a menu option appear as "custom". | root (`pkexec`); your user for Hide icon when idle |
@@ -155,6 +155,6 @@ just as it can approve `sudo` (polkit cannot route a single action through a sep
 
 Someone who manages to spoof your face (see
 [security.md](security.md#presentation-attacks-something-held-up-to-the-real-camera)) could therefore
-add their own frames using **Retrain face**, though they could already do the same via
+add their own frames using **Add face scans**, though they could already do the same via
 `sudo vinoauthface enroll`. If you want to require a password for polkit actions, remove
 vinoAuthFace from `/etc/pam.d/polkit-1` (see [pam.md](pam.md)).

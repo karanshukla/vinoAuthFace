@@ -51,21 +51,17 @@ fn check(kind: Kind, path: &str) -> anyhow::Result<String> {
             let note = if values == 512 {
                 ""
             } else {
-                " (shipped models output 512)"
+                "; shipped models output 512"
             };
-            Ok(format!(
-                "Loaded successfully; outputs {values}-dimensional embeddings{note}."
-            ))
+            Ok(format!("OK ({values}-dim embeddings{note})."))
         }
         Kind::Detector => {
             let detector = FaceDetector::new(path, 0.5, "tract", "CPU")?;
             // Any kind but the slim one gives the five points; matched this way
             // so a new detector format needs nothing here.
             Ok(match detector.kind() {
-                DetectorKind::Slim => {
-                    "Loaded as a box-only detector (faces will be cropped rather than landmark-aligned).".into()
-                }
-                _with_points => "Loaded successfully with 5-point landmark alignment.".into(),
+                DetectorKind::Slim => "OK (box-only; no landmarks).".into(),
+                _with_points => "OK (5-point landmarks).".into(),
             })
         }
     }
@@ -154,18 +150,18 @@ mod tests {
         if std::path::Path::new(encoder).exists() {
             assert_eq!(
                 check(Kind::Encoder, encoder).unwrap(),
-                "Loaded successfully; outputs 512-dimensional embeddings."
+                "OK (512-dim embeddings)."
             );
         }
         let detector = "/usr/local/share/face-auth/det_500m.onnx";
         if std::path::Path::new(detector).exists() {
             assert_eq!(
                 check(Kind::Detector, detector).unwrap(),
-                "Loaded successfully with 5-point landmark alignment."
+                "OK (5-point landmarks)."
             );
             // A detector in the recognition slot can load, but doesn't give 512.
             let wrong = check(Kind::Encoder, detector).unwrap_or_else(|e| e.to_string());
-            assert!(!wrong.contains("outputs 512-dimensional"), "{wrong}");
+            assert!(!wrong.contains("512-dim"), "{wrong}");
         }
     }
 }

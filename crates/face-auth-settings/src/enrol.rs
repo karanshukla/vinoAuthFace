@@ -128,9 +128,9 @@ pub fn start(shared: &Shared, spawner: Spawner, append: bool, ctx: &eframe::egui
         run.done = Some(match (code, run.saved.take()) {
             (Some(0), Some(saved)) => Ok(saved),
             (Some(0), None) => Ok("Saved.".into()),
-            (code, _) if pkexec_cancelled(code) => Err(
-                "Enrolment cancelled: administrator authentication was dismissed or failed.".into(),
-            ),
+            (code, _) if pkexec_cancelled(code) => {
+                Err("Enrolment cancelled: authentication failed.".into())
+            }
             _ => {
                 let last = last_line(&err);
                 let last = last.trim_start_matches("Error: ");

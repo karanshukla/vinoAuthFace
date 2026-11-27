@@ -69,7 +69,8 @@ and pipes the proposed file over stdin. The helper validates the payload before 
   window loaded it, the write is rejected.
 - Any modified `model_path`, `detector_model_path`, or `embeddings_dir` must be root-owned at every
   directory component so an unprivileged user cannot redirect authentication to files they control.
-- Existing camera pins can be removed, but new camera pins cannot be set from the GUI.
+- Existing camera pins can be removed, but new camera pins must be set from a terminal with
+  `sudo vinoauthface-pin-camera` (`pin-camera.sh`).
 
 `/etc/face-auth.toml` is replaced via an atomic rename that preserves ownership and permissions.
 Edits are applied minimally in place (replacing existing lines, uncommenting matching example lines,
@@ -96,9 +97,9 @@ seconds; only the initial straight-on pose is required.
 
 Both actions run as root through `pkexec` (`enrol-guided` and `retrain-guided`, both `auth_admin`).
 **Skip** and **Stop** send commands to the enrolment process's stdin, and **Stop** exits without
-saving. There is no live camera preview. To run guided enrolment in a terminal, use
-`sudo vinoauthface enroll --guided --user $USER` (press Enter to skip a step, or type `cancel` to
-abort).
+saving. There is no live camera preview, so camera frames stay in the root process. To run guided
+enrolment in a terminal, use `sudo vinoauthface enroll --guided --user $USER` (press Enter to skip
+a step, or type `cancel` to abort).
 
 Because off-angle templates can occasionally increase impostor similarity scores, consider checking
 before and after with `vinoauthface-similarity-check` (see #19).
@@ -118,7 +119,9 @@ sudo install -m 644 my-model.onnx /usr/local/share/face-auth/
 
 Because templates are tagged with the models that generated them (see
 [configuration.md](configuration.md)), switching models requires everyone to re-enrol. The
-**Templates** row shows which models generated your stored templates.
+**Templates** row shows which models generated your stored templates. Selecting **OpenVINO** under
+**Inference** requires an NPU-enabled build, which `deploy.sh` installs automatically when OpenVINO
+is present.
 
 ## Disk space
 
