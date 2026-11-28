@@ -427,24 +427,29 @@ impl SettingsWindow {
         let mut apply = false;
         let mut discard = false;
         let muted = theme::palette(ui.ctx()).muted;
-        widgets::responsive_bar(
-            ui,
-            460.0,
-            |ui| {
-                ui.set_min_height(widgets::CONTROL_HEIGHT);
-                ui.add(egui::Label::new(RichText::new(&text).size(12.5).color(muted)).wrap());
-            },
-            |ui| {
-                let rtl = ui.layout().main_dir() == egui::Direction::RightToLeft;
-                if rtl {
+        let draw_text = |ui: &mut egui::Ui| {
+            ui.set_min_height(widgets::CONTROL_HEIGHT);
+            ui.add(egui::Label::new(RichText::new(&text).size(12.5).color(muted)).wrap());
+        };
+        if ui.available_width() >= 460.0 {
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     apply = ui.add_enabled(can, Button::primary("Apply…")).clicked();
                     discard = ui.add_enabled(!running, Button::ghost("Discard")).clicked();
-                } else {
-                    discard = ui.add_enabled(!running, Button::ghost("Discard")).clicked();
-                    apply = ui.add_enabled(can, Button::primary("Apply…")).clicked();
-                }
-            },
-        );
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        let clip = ui.max_rect().intersect(ui.clip_rect());
+                        ui.set_clip_rect(clip);
+                        draw_text(ui);
+                    });
+                });
+            });
+        } else {
+            ui.horizontal_wrapped(draw_text);
+            ui.horizontal_wrapped(|ui| {
+                discard = ui.add_enabled(!running, Button::ghost("Discard")).clicked();
+                apply = ui.add_enabled(can, Button::primary("Apply…")).clicked();
+            });
+        }
         if apply {
             self.notice = None;
             self.apply_now(ui.ctx());
